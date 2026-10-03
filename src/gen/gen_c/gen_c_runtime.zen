@@ -42,7 +42,9 @@ emit_banner* = (out :: Emit) Res<AllocError> {
 
 // `str` uses this runtime layout; literals, field access, printing, and C
 // callers must agree on its data pointer and byte length.
-emit_floor* = (out :: Emit) Res<AllocError> {
+// `guarded`: the program runs actors, so a trap may end only the guarded
+// call it is in (std.sys.guarded_call) instead of the process.
+emit_floor* = (out :: Emit, guarded: bool) Res<AllocError> {
     out.say(
         "typedef struct zg_str { unsigned char *data; size_t len; } zg_str;"
     ).try();
@@ -59,11 +61,11 @@ emit_floor* = (out :: Emit) Res<AllocError> {
     out.say("#define ZG_INLINE inline").try();
     out.say("#endif").try();
     out.line().try();
-    emit_trap(out).try();
+    emit_trap(out, guarded).try();
     emit_index(out).try();
 }
 
-emit_trap = (out :: Emit) Res<AllocError> {
+emit_trap = (out :: Emit, guarded: bool) Res<AllocError> {
     // Both helpers never return. Select the available annotation without
     // raising the runtime's C99 language requirement.
     out.say(
@@ -76,6 +78,10 @@ emit_trap = (out :: Emit) Res<AllocError> {
     out.say("#define ZG_NORETURN").try();
     out.say("#endif").try();
     out.line().try();
+    guarded.then(() {
+        out.say("#include <setjmp.h>").try();
+        out.say("extern __thread void *zg_trap_guard;").try();
+    });
     out.say(
         "static ZG_NORETURN void zg_trap(const char *file, unsigned long line,"
     ).try();
@@ -86,6 +92,11 @@ emit_trap = (out :: Emit) Res<AllocError> {
         "fprintf(stderr, \"%s:%lu:%lu: trap: %s\\n\", file, line, col, what);"
     ).try();
     out.say("fflush(stderr);").try();
+    guarded.then(() {
+        out.say(
+            "if (zg_trap_guard) longjmp(*(jmp_buf *)zg_trap_guard, 1);"
+        ).try();
+    });
     out.say("exit(134);").try();
     out.dedent();
     out.say("}").try();

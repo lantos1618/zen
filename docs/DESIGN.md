@@ -1586,26 +1586,30 @@ and an incompatible already-typed argument is still rejected.
 //
 // a behavior is any method in an Actor impl (lifecycle hooks
 // aside). calling a behavior on a Ref enqueues a message and
-// returns immediately: calling IS sending. the message enum
-// behind the behaviors is emitted from their signatures by gen_c_actor.
+// returns immediately: calling IS sending. the message record and
+// turn behind each behavior are generated from its signature; the
+// runtime (std.actor.actor_runtime, docs/ACTOR_RUNTIME.md) runs actors
+// on one worker per CPU.
 //
 // three guarantees replace every lock:
 //   one message at a time per actor -> actor state is single-threaded
 //   causal ordering                 -> A's messages to B arrive in send order
 //   payload checking                -> unsafe graphs are refused
 //
-// Direct consumed Vec<u8> payloads are deep-copied into receiver-backed
-// storage before admission succeeds; borrowed and nested vectors are refused.
-// General deep val/iso sendability and unique graph handoff are still owed.
+// Direct consumed Vec<u8> payloads are copied into the message and moved
+// into the receiver's allocator before its behavior runs; borrowed and
+// nested vectors are refused. General deep val/iso sendability and unique
+// graph handoff are still owed.
 //
-// Callers may stop and join a Ref. Concurrent join callers pin the actor
-// record; shutdown drains accepted work, closes workers, waits for pins and
-// detaches the registry before freeing records. Concurrent/repeated shutdown
-// waits for the same completion. Retired Ref operations check registration
-// before dereferencing: sends report Closed; stop/join return. Message data
-// preserves the allocator's 16-byte alignment.
-// Records are retained until runtime shutdown, including stopped actors.
-// This does not provide bounded actor churn or checked raw-pointer lifetimes.
+// A mailbox holds 256 messages: a send from a behavior to a full mailbox
+// waits in the sender's outbox (the sender runs nothing else until it is
+// delivered, and a cycle of full mailboxes lets the send through); a send
+// from any other thread waits for room. Full is an oversized message.
+// Callers may stop and join a Ref: stop drains accepted work, runs stopped,
+// drops the state and frees the actor; join waits for that. A Ref is a
+// generation-tagged id, so a Ref to a stopped actor reports Closed and never
+// reaches another actor. A checked trap in a behavior ends only that actor.
+// At exit the runtime runs every accepted message, then stops every actor.
 
 ActorError* = { Closed | Full }
 
@@ -1637,9 +1641,9 @@ Actor* = {}
 
 ```groovy
 // ~/zen/src/std/thread.zen
-// an explicit escape hatch for ffi and batch work. Actors currently
-// own one worker each, so blocking a behavior stalls that actor;
-// scheduler policy and enforcement remain owed.
+// an explicit escape hatch for ffi and batch work. Actors share one
+// worker per CPU, so a behavior that blocks holds its worker; a long
+// turn is handed off when the compiler inserts yield checks (owed).
 //
 // a thread is authority — the one kind that can outlive its
 // creator — so it hangs off Env like io and pages do. there is

@@ -1,0 +1,56 @@
+// A checked trap in one actor's turn ends that actor, not the process: the
+// trap is reported, the actor's remaining messages do not run and later
+// sends to it are Closed, its state is still dropped, and every other actor
+// carries on.
+
+{ Res, Ok, Drop } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Fragile = { id: u64, divisor :: u64 = 0 }
+
+Fragile.impl(Drop, { drop = (self :: @Self) { println(
+    "fragile {} dropped",
+    self.id
+); } })
+
+Fragile.impl(Actor, {
+    divide = (self :: @Self, ctx: Context, n: u64) {
+        q = n / self.divisor;
+        println("{} / {} = {}", n, self.divisor, q);
+    }
+
+    stopped = (self :: @Self, ctx: Context) { println(
+        "fragile {} stopped normally",
+        self.id
+    ); }
+})
+
+Steady = { count :: u64 = 0 }
+
+Steady.impl(Actor, {
+    tick = (self :: @Self, ctx: Context) { self.count = self.count + 1; }
+
+    stopped = (self :: @Self, ctx: Context) { println(
+        "steady ticked {}",
+        self.count
+    ); }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    fragile = env.spawn(Fragile(id: 1)).try();
+    steady  = env.spawn(Steady()).try();
+    fragile.divide(10).try();
+    fragile.join();
+    println("fragile joined");
+    fragile.divide(20).match({
+        Ok(_)  => println("accepted after the trap"),
+        Err(e) => e.match({ Closed => println("closed after the trap"), Full => println("full") }),
+    });
+    steady.tick().try();
+    steady.tick().try();
+    Ok(0)
+}

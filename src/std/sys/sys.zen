@@ -15,7 +15,7 @@
 
 { Alloc, AllocError, Ptr, null_ptr } = std.mem
 { str, String } = std.text
-{ Res, Ok, Err, None, loop, WriteError, Sink } = std.core
+{ Res, Ok, Err, None, loop, Range, WriteError, Sink } = std.core
 
 // ---------------------------------------------------------------------
 // operations (compiler-provided per target)
@@ -83,6 +83,8 @@ clone* = (
 ) i64
 nanosleep* = (request: Ptr<u8>, remaining: Ptr<u8>) i64
 mprotect* = (addr: usize, len: usize, prot: i32) i64
+// Advice about a mapping (Linux: MADV_HUGEPAGE asks for huge pages).
+madvise* = (addr: usize, len: usize, advice: i32) i64
 flock* = (fd: i32, op: i32) i64
 
 // Threads. std.sys.sys_thread builds its portable API on these; programs
@@ -114,6 +116,27 @@ pthread_cond_destroy* = (cond: Ptr<u8>) i64
 // Sleep for `ns` nanoseconds once; -EINTR when a signal cut it short.
 nanosleep_ns* = (ns: u64) i64
 
+// 1 when threads, locks and conditions go through the pthread family above
+// (macOS, and the C backend on every OS); 0 when std.sys.sys_thread builds
+// them on `clone_thread` and futexes (native Linux).
+pthread_threads* = () i32
+
+// A hint inside a spin-wait loop (x86 `pause`, AArch64 `yield`); nothing
+// where the target has none.
+spin_hint* = () ()
+
+// One machine word private to the calling thread, zero when the thread
+// starts. The actor runtime keeps its per-thread worker here.
+thread_word* = () usize
+set_thread_word* = (value: usize) ()
+
+// Linux: the CPUs the thread may run on, as a bit mask written to `mask`
+// (`len` bytes); the result is the mask's size in bytes. macOS answers
+// -ENOSYS.
+sched_getaffinity* = (pid: i32, len: usize, mask: Ptr<u8>) i64
+// macOS: sysconf(name). Linux native answers -ENOSYS.
+sysconf* = (name: i32) i64
+
 // Sequentially consistent atomic operations on a naturally aligned u32 or
 // usize word. `swap`, `add` (wrapping) and `cas` return the previous
 // contents; `cas` stores `desired` only when those equal `expected`.
@@ -128,10 +151,21 @@ atomic_swap_usize* = (word: Ptr<usize>, value: usize) usize
 atomic_add_usize* = (word: Ptr<usize>, value: usize) usize
 atomic_cas_usize* = (word: Ptr<usize>, expected: usize, desired: usize) usize
 
+// Weaker orderings for hot paths that need only these: a release store
+// publishes everything written before it to an acquire load that sees it.
+// Targets without a cheaper instruction use the sequentially consistent one.
+atomic_store_release_usize* = (word: Ptr<usize>, value: usize) ()
+atomic_load_acquire_usize* = (word: Ptr<usize>) usize
+
 // Call a function the compiler handed to the runtime as a code address, with
 // two word arguments. Only compiler-generated entry points are called this
 // way (thread bodies, actor turns); see std.sys.sys_thread.
 call_entry* = (code: usize, first: Ptr<u8>, second: Ptr<u8>) ()
+
+// As call_entry, but a checked trap inside the call ends only the call:
+// the answer is 1 when it trapped, 0 when it returned. Targets that cannot
+// unwind a trap make the plain call, and a trap ends the process.
+guarded_call* = (code: usize, first: Ptr<u8>, second: Ptr<u8>) i32
 
 // The runtime's zeroed block of process-wide state (256 bytes). Its first
 // word is the exit hook the runtime calls after main returns; std.sys owns
@@ -304,6 +338,36 @@ random_bytes* = (buf: Ptr<u8>, len: usize) Res<(), i64> {
         (n > 0).then(() { done = done + n.to_usize().value_or(0); });
     });
     failure.match({ Ok(e) => Err(e), None => Ok })
+}
+
+// The CPUs this process may use: on Linux the affinity mask's population,
+// so a run under `taskset` counts only the CPUs it was given; on macOS the
+// online CPUs. At least 1.
+cpu_count* = () usize {
+    mask = Pages().raw(128, 16).match({ Ok(p) => p, Err(_) => null_ptr<u8>() });
+    (!mask.is_null()).match({
+        false => 1,
+        true  => {
+            got   = sched_getaffinity(0, 128, mask);
+            count = (got > 0).match({
+                true  => {
+                    n :: usize = 0;
+                    Range(0, got.to_usize().value_or(0)).loop((i) {
+                        byte ::= mask.read(i);
+                        loop(() { byte != 0 }, (h) {
+                            n    = n + (byte & 1).to_usize();
+                            byte = byte >> 1;
+                        });
+                    });
+                    n
+                },
+                // _SC_NPROCESSORS_ONLN on macOS.
+                false => sysconf(58).to_usize().value_or(1),
+            });
+            Pages().free(mask);
+            (count == 0).match({ true => 1, false => count })
+        },
+    })
 }
 
 // A Sink over a standard stream; `{}` of a Display value writes through it.

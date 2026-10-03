@@ -1,0 +1,112 @@
+// Fan-in: SENDERS actors each send PER numbered messages, as fast as they
+// can, to one aggregator. Every sender parks on the aggregator's full
+// mailbox again and again; the check is that nothing is lost or reordered,
+// that no sender starves, and how fast the hotspot drains.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Alloc } = std.mem
+{ Vec } = std.collections
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param, rss } = common
+
+// Per-sender next sequence numbers live in the aggregator's own allocator,
+// made by `begin`: memory from main's arena would be gone once main returns.
+Aggregator = {
+    next :: Res<Vec<u64>> = None,
+    senders: usize,
+    expected: usize,
+    received :: usize = 0,
+    out_of_order :: usize = 0,
+    start :: u64 = 0,
+}
+
+Aggregator.impl(Actor, {
+    begin = (self :: @Self, ctx: Context) {
+        made ::= ctx.alloc.Vec<u64>();
+        i    :: usize = 0;
+        loop(() { i < self.senders }, (h) { made.add(0).ignore(); i = i + 1; });
+        self.next  = Ok(made);
+        self.start = ctx.env.clock.since_start().ns;
+    }
+
+    item = (self :: @Self, ctx: Context, sender: u64, n: u64) {
+        at = sender.to_usize().value_or(0);
+        self.next.match({
+            None     => (),
+            Ok(next) => {
+                (next.get(at).value_or(0) != n).then(() { self.out_of_order = self.out_of_order + 1; });
+                next.set(at, n + 1).match({ Ok(_) => (), None => () });
+            },
+        });
+        self.received = self.received + 1;
+        (self.received == self.expected).then(() {
+            ns  = (ctx.env.clock.since_start().ns - self.start).to_usize().value_or(
+                1
+            );
+            low = self.next.match({ Ok(next) => least(next), None => 0 });
+            println(
+                "bench=fanin received={} out_of_order={} least_per_sender={} items_per_s={} rss_mb={}",
+                self.received,
+                self.out_of_order,
+                low,
+                self.received * 1000 / (ns / 1000000 + 1),
+                rss(ctx.env, ctx.alloc) / 1048576
+            );
+        });
+    }
+})
+
+// The fewest items any sender got through.
+least = (next: Vec<u64>) u64 {
+    low ::= u64.MAX;
+    next.loop((v) { (v < low).then(() { low = v; }); });
+    low
+}
+
+// A sender sends BURST items per turn and then asks itself for another
+// turn, so its outbox holds at most one burst while it waits for room.
+BURST: u64 = 16
+
+Sender = { id: u64, per: u64, to: Ref<Aggregator>, me :: Res<Ref<Sender>> = None, sent :: u64 = 0 }
+
+Sender.impl(Actor, {
+    link = (self :: @Self, ctx: Context, me: Ref<Sender>) { self.me = Ok(me); }
+
+    go = (self :: @Self, ctx: Context) {
+        end ::= self.sent + BURST;
+        (end > self.per).then(() { end = self.per; });
+        loop(() { self.sent < end }, (h) {
+            self.to.item(self.id, self.sent).ignore();
+            self.sent = self.sent + 1;
+        });
+        (self.sent < self.per).then(() {
+            self.me.match({ Ok(me) => me.go().ignore(), None => () });
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    a       = env.mem.alloc();
+    senders = param(env, "SENDERS", 10000);
+    per     = param(env, "PER", 200);
+    agg     = env.spawn(Aggregator(
+        senders: senders,
+        expected: senders * per
+    )).try();
+    agg.begin().try();
+    all ::= a.Vec<Ref<Sender>>();
+    i   :: usize = 0;
+    loop(() { i < senders }, (h) {
+        s = env.spawn(Sender(id: i.to_u64(), per: per.to_u64(), to: agg)).try();
+        s.link(s).try();
+        all.add(s).ignore();
+        i = i + 1;
+    });
+    env.threads.sleep(100);
+    all.loop((s) { s.go().ignore(); });
+    Ok(0)
+}

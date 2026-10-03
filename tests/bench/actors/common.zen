@@ -1,0 +1,35 @@
+// Shared by the actor benchmarks: parameters from the environment and the
+// resident set from /proc (Linux).
+
+{ Res, Ok, None } = std.core
+{ Env } = std.env
+{ Alloc } = std.mem
+{ str } = std.text
+
+// A count from environment variable `name`, or `fallback`.
+param* = (env: Env, name: str, fallback: usize) usize {
+    env.var(name).match({
+        None    => fallback,
+        Ok(text) => text.parse_i64().match({
+            Ok(n) => n.to_usize().value_or(fallback),
+            None  => fallback,
+        }),
+    })
+}
+
+// Resident bytes now, from /proc/self/statm (0 where there is none).
+rss* = (env: Env, a: Alloc) usize {
+    env.fs.read(a, "/proc/self/statm").match({
+        Err(_)  => 0,
+        Ok(text) => {
+            view = text.view();
+            space = view.find(' ').value_or(view.len);
+            rest  = view.slice(space + 1, view.len);
+            end   = rest.find(' ').value_or(rest.len);
+            rest.slice(0, end).parse_i64().match({
+                Ok(pages) => pages.to_usize().value_or(0) * 4096,
+                None      => 0,
+            })
+        },
+    })
+}

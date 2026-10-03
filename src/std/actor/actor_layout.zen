@@ -1,0 +1,197 @@
+// The actor runtime's memory layouts, in one place. Everything the runtime
+// shares between threads is plain words at fixed offsets, reached through
+// std.sys's atomics, so the same Zen code runs on every backend.
+//
+// The runtime's globals live in one mapping made by the first spawn and
+// found through the process block. A Ref is (generation << 32 | slot).
+
+// ---------------------------------------------------------------------
+// the process block
+// ---------------------------------------------------------------------
+
+// Words of the 256-byte process block the runtime owns, after std.sys's
+// exit hook in word 0: a once-word (0 absent, 1 being made, 2 ready,
+// 3 failed) and the globals' address.
+PB_ONCE*: usize = 1
+PB_GLOBALS*: usize = 2
+
+// ---------------------------------------------------------------------
+// limits
+// ---------------------------------------------------------------------
+
+MAX_WORKERS*: usize = 64
+// Messages one actor runs before its worker moves on.
+TURN_BATCH*: usize = 100
+// A worker's run queue (a power of two).
+RING*: usize = 256
+RING_MASK*: usize = 255
+// A mailbox's bound: a default send to a fuller mailbox waits for room.
+BOUND*: usize = 256
+// Hops a full send follows along "waiting on" links looking for itself.
+CYCLE_WALK*: usize = 16
+// Slots per registry chunk, and chunks: 32M actors alive at once.
+CHUNK_SLOTS*: usize = 65536
+CHUNK_SHIFT*: usize = 16
+CHUNKS*: usize = 512
+// Slot indices a thread keeps for its next spawns.
+SLOT_CACHE*: usize = 256
+
+// ---------------------------------------------------------------------
+// globals
+// ---------------------------------------------------------------------
+
+// Words, then the regions after them.
+G_STATE*: usize = 0          // 0 running, 1 draining at exit, 2 stopping
+G_WORKERS*: usize = 1        // worker count
+G_WORKER_BASE*: usize = 2    // address of worker 0
+G_IDLE*: usize = 3           // bit i: worker i is asleep
+G_SPINNING*: usize = 4       // workers looking for work
+G_SLEEPING*: usize = 5       // workers committed to sleep (quiescence)
+G_DETACHED*: usize = 6       // threads finishing a turn without a worker
+G_INJ_HEAD*: usize = 8       // injector: producers' end (a node address)
+G_INJ_TAIL*: usize = 9       // injector: consumer's end, under the lock
+G_INJ_STUB*: usize = 10      // injector: the stub node's link
+G_INJ_LOCK*: usize = 11      // u32
+G_SLOT_LOCK*: usize = 12     // u32
+G_SLOT_FREE*: usize = 13     // address of the free-index array (u32s)
+G_SLOT_NFREE*: usize = 14
+G_SLOT_CAP*: usize = 15
+G_SLOT_FRESH*: usize = 16    // next never-used index
+G_JOINERS*: usize = 17       // threads waiting in join
+G_ENTRY*: usize = 18         // code address of the runtime's thread body
+G_SPARE_IDLE*: usize = 19    // spare threads asleep, waiting for a worker
+G_ORPHANS*: usize = 20       // workers handed off, waiting for a thread (bit set)
+G_THREADS*: usize = 21       // threads started (workers, spares, sysmon)
+G_SYSMON_NS*: usize = 22     // sysmon tick; 0 when preemption is off
+G_ENV*: usize = 23           // the compilers' shared copy of the process Env
+G_STATS*: usize = 24         // counters, STATS words
+STATS*: usize = 16
+// Regions, in bytes.
+G_CENTRAL*: usize = 512      // std.actor.actor_pool's central part
+G_CHUNKS*: usize = 1152      // the registry's chunk table, CHUNKS words
+G_JOIN_LOCK*: usize = 5248   // joins wait here (a lock and a condition)
+G_JOIN_COND*: usize = 5312
+G_SPARE_LOCK*: usize = 5376  // spare threads (a lock and a condition)
+G_SPARE_COND*: usize = 5440
+G_EXIT_PARKER*: usize = 5504 // the exiting main thread waits here
+G_THREAD_LIST*: usize = 5632 // started threads' handles, MAX_THREADS words
+MAX_THREADS*: usize = 192
+GLOBALS_BYTES*: usize = 7168
+
+// Statistics, as word indices after G_STATS.
+S_QUEUED*: usize = 0         // sends that waited in an outbox
+S_CLOSED*: usize = 1         // sends refused as Closed
+S_FULL*: usize = 2           // offers refused as Full
+S_RELEASES*: usize = 3       // waiting senders released
+S_BREAKS*: usize = 4         // sends let through over the bound on a cycle
+S_FINALIZED*: usize = 5
+S_HANDOFFS*: usize = 6
+S_PREEMPTS*: usize = 7
+S_STEALS*: usize = 8
+S_SPREADS*: usize = 9        // run-queue halves moved to the injector
+S_FAILED*: usize = 10        // actors ended by a checked trap
+
+// ---------------------------------------------------------------------
+// a thread's local state
+// ---------------------------------------------------------------------
+
+// Every thread that touches the runtime has one, found through its thread
+// word: the worker it drives (0 when none), the actor whose turn it is
+// running, its cached slot indices, and its memory cache.
+L_WORKER*: usize = 0
+L_ACTOR*: usize = 1
+L_SLOTS_N*: usize = 2
+L_YIELD*: usize = 3          // the running turn asked to yield (parked, H')
+L_SLOTS*: usize = 4          // word offset: SLOT_CACHE words
+L_HEAP*: usize = 2080        // byte offset: HEAP_BYTES
+LOCAL_BYTES*: usize = 3232
+
+// ---------------------------------------------------------------------
+// a worker
+// ---------------------------------------------------------------------
+
+// The run queue a thread drives (Go's P). Words, then the parker and the
+// ring.
+W_HEAD*: usize = 0           // ring consumer index (owner and thieves)
+W_TAIL*: usize = 1           // ring producer index (owner)
+W_NEXT*: usize = 2           // the LIFO slot: an actor its owner just woke
+W_TURNS*: usize = 3          // bumped at every turn start
+W_IN_TURN*: usize = 4        // 1 while a turn runs
+W_PREEMPT*: usize = 5        // set by sysmon: the turn should yield
+W_SEEN*: usize = 6           // sysmon's last look at W_TURNS
+W_TICK*: usize = 7           // picks, for the injector's fair share
+W_ID*: usize = 8
+W_RANDOM*: usize = 9         // the thief's victim order
+W_SPINNING*: usize = 10      // counted in G_SPINNING
+W_PARKER*: usize = 128       // byte offset: PARKER_BYTES
+W_RING*: usize = 256         // byte offset: RING words
+WORKER_BYTES*: usize = 2304
+
+// ---------------------------------------------------------------------
+// a slot of the registry
+// ---------------------------------------------------------------------
+
+// Slots never move and are never freed, so a stale Ref only ever reads a
+// live word. Four words: the life word, the body's address, the Ref this
+// actor waits on while blocked (for the cycle walk), and spare.
+SLOT_WORDS*: usize = 4
+S_LIFE*: usize = 0
+S_BODY*: usize = 1
+S_WAITING*: usize = 2
+
+// The life word: every sender touches it once.
+//   bits  0..31  messages accepted and not yet taken (and short pins)
+//   bit   32     closed: stop was called; new sends get Closed
+//   bit   33     scheduled: queued or running; its holder owns the actor
+//   bit   34     blocked: senders wait in an outbox for room elsewhere
+//   bit   35     waited on: senders are queued on this mailbox
+//   bits 40..63  generation, bumped when the actor is finalised
+COUNT_MASK*: usize = 4294967295
+CLOSED*: usize = 4294967296
+SCHED*: usize = 8589934592
+BLOCKED*: usize = 17179869184
+WAITED*: usize = 34359738368
+GEN_SHIFT*: usize = 40
+GEN_ONE*: usize = 1099511627776
+GEN_MASK*: usize = 16777215
+
+// ---------------------------------------------------------------------
+// an actor's body
+// ---------------------------------------------------------------------
+
+// The header, then the record the compiler lays out (state, Context,
+// allocator) at B_RECORD. A message is [next, turn, payload...]; the
+// mailbox is Vyukov's intrusive MPSC list, whose stub node is B_STUB.
+B_HEAD*: usize = 0           // producers' end (a node address)
+B_TAIL*: usize = 1           // the consumer's end (the running worker)
+B_STUB*: usize = 2           // the stub node's link
+B_REF*: usize = 3            // this actor's Ref
+B_RUN_NEXT*: usize = 4       // link in the injector
+B_STOPPED*: usize = 5        // code address of the stopped entry, or 0
+B_SIDE*: usize = 6           // send-or-park state, made on first need
+B_FAILED*: usize = 7          // 1 once a checked trap ended a turn
+B_RECORD*: usize = 64        // byte offset of the compiler's record
+
+// The send-or-park side record: the outbox (sends waiting for room), the
+// senders waiting on this mailbox, and how many receivers still hold part
+// of the outbox.
+D_OUTBOX*: usize = 0         // address of the entries (OUTBOX_ENTRY bytes each)
+D_OUT_N*: usize = 1
+D_OUT_CAP*: usize = 2
+D_FIRST*: usize = 3          // waiters, oldest first
+D_LAST*: usize = 4
+D_LOCK*: usize = 5           // u32 lock, then u32 closed (no more waiters)
+D_BLOCKED*: usize = 6        // receivers still holding part of the outbox
+SIDE_BYTES*: usize = 64
+// An outbox entry: the receiver's Ref, the message, its state.
+OUTBOX_ENTRY*: usize = 24
+PENDING*: usize = 0
+DONE*: usize = 1
+REFUSED*: usize = 2
+// A waiter node: next, the sender's body, the Ref it waits on.
+WAITER_BYTES*: usize = 32
+
+// A message: the mailbox link, the turn's code address, the payload.
+M_NEXT*: usize = 0
+M_TURN*: usize = 1
+M_PAYLOAD*: usize = 16       // byte offset

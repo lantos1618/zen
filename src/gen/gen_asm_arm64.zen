@@ -126,14 +126,14 @@ Assembly = {
                 self.out.add(".section __TEXT,__const\n").try();
                 self.out.add(self.data.view()).try();
                 self.out.add(
-                    ".zerofill __DATA,__bss,za_out_buf,65536,4\n.zerofill __DATA,__bss,za_out_len,8,3\n.zerofill __DATA,__bss,za_argc,8,3\n.zerofill __DATA,__bss,za_argv,8,3\n.zerofill __DATA,__bss,za_envp,8,3\n.zerofill __DATA,__bss,za_out_lock,8,3\n.zerofill __DATA,__bss,za_globals,256,4\n"
+                    ".zerofill __DATA,__bss,za_out_buf,65536,4\n.zerofill __DATA,__bss,za_out_len,8,3\n.zerofill __DATA,__bss,za_argc,8,3\n.zerofill __DATA,__bss,za_argv,8,3\n.zerofill __DATA,__bss,za_envp,8,3\n.zerofill __DATA,__bss,za_out_lock,8,3\n.zerofill __DATA,__bss,za_globals,256,4\n.zerofill __DATA,__bss,za_tword_key,8,3\n.zerofill __DATA,__bss,za_guard_key,8,3\n"
                 )
             },
             false => {
                 self.out.add(".section .rodata\n").try();
                 self.out.add(self.data.view()).try();
                 self.out.add(
-                    ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_argc:\n    .zero 8\nza_argv:\n    .zero 8\nza_envp:\n    .zero 8\nza_out_lock:\n    .zero 8\n.p2align 4\nza_globals:\n    .zero 256\nza_main_tcb:\n    .zero 64\n.section .note.GNU-stack,\"\",@progbits\n"
+                    ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_argc:\n    .zero 8\nza_argv:\n    .zero 8\nza_envp:\n    .zero 8\nza_out_lock:\n    .zero 8\n.p2align 4\nza_globals:\n    .zero 256\nza_main_tcb:\n    .zero 128\n.section .note.GNU-stack,\"\",@progbits\n"
                 )
             },
         })
@@ -153,6 +153,12 @@ Assembly = {
                 self.out.add("    str x1, [x9]\n").try();
                 self.address("x9", "za_envp").try();
                 self.out.add("    str x2, [x9]\n").try();
+                // The key behind every thread's runtime word.
+                self.address("x0", "za_tword_key").try();
+                self.out.add("    mov x1, #0\n    bl _pthread_key_create\n").try();
+                // The key behind every thread's innermost guarded call.
+                self.address("x0", "za_guard_key").try();
+                self.out.add("    mov x1, #0\n    bl _pthread_key_create\n").try();
             },
             // The kernel enters with sp 16-byte aligned at argc, followed
             // by argv and envp.
@@ -1425,12 +1431,15 @@ Assembly = {
             // length and pthread_create needs a C entry point and stack size,
             // so these go through runtime adapters.
             true  => call.call.match({
-                Openat       => self.out.add(
+                Openat        => self.out.add(
                     "    bl za_d_openat\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n"
                 ),
-                Getrandom    => self.out.add("    bl za_d_getrandom\n"),
-                PthreadStart => self.out.add("    bl za_d_thread_start\n"),
-                _            => darwin_symbol(call.call).match({
+                Getrandom     => self.out.add("    bl za_d_getrandom\n"),
+                PthreadStart  => self.out.add("    bl za_d_thread_start\n"),
+                ThreadWordGet => self.out.add("    bl za_d_tword_get\n"),
+                ThreadWordSet => self.out.add("    bl za_d_tword_set\n"),
+                GuardedCall   => self.out.add("    bl za_guarded_call\n"),
+                _             => darwin_symbol(call.call).match({
                     Ok(symbol) => darwin_result(call.call).match({
                         Errno    => self.out.fmt(
                             "    bl _{}\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n",
@@ -1447,9 +1456,17 @@ Assembly = {
             }),
             false => call.call.match({
                 // The running thread's control block is its TLS pointer.
-                ThreadSelf  => self.out.add("    mrs x0, tpidr_el0\n"),
-                CloneThread => self.out.add("    bl za_clone\n"),
-                _           => linux_arm64(call.call).match({
+                ThreadSelf    => self.out.add("    mrs x0, tpidr_el0\n"),
+                // The runtime word is the control block's eighth word.
+                ThreadWordGet => self.out.add(
+                    "    mrs x9, tpidr_el0\n    ldr x0, [x9, #56]\n"
+                ),
+                ThreadWordSet => self.out.add(
+                    "    mrs x9, tpidr_el0\n    str x0, [x9, #56]\n    mov x0, #0\n"
+                ),
+                CloneThread   => self.out.add("    bl za_clone\n"),
+                GuardedCall   => self.out.add("    bl za_guarded_call\n"),
+                _             => linux_arm64(call.call).match({
                     Ok(number) => self.out.fmt(
                         "    mov x8, #{}\n    svc #0\n",
                         number
@@ -1923,7 +1940,7 @@ Assembly = {
         }).try();
         self.darwin().then(() {
             self.out.add(
-                "za_d_openat:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    sub sp, sp, #16\n    str x3, [sp]\n    bl _openat\n    add sp, sp, #16\n    ldp x29, x30, [sp], #16\n    ret\nza_d_getrandom:\n    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    str x21, [sp, #32]\n    mov x19, x0\n    mov x20, x1\n    mov x21, #0\n1:\n    cmp x21, x20\n    b.hs 3f\n    sub x1, x20, x21\n    mov x9, #256\n    cmp x1, x9\n    csel x1, x1, x9, ls\n    str x1, [sp, #40]\n    add x0, x19, x21\n    bl _getentropy\n    cbnz x0, 2f\n    ldr x1, [sp, #40]\n    add x21, x21, x1\n    b 1b\n2:\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n    b 4f\n3:\n    mov x0, x21\n4:\n    ldp x19, x20, [sp, #16]\n    ldr x21, [sp, #32]\n    ldp x29, x30, [sp], #48\n    ret\n"
+                "za_d_openat:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    sub sp, sp, #16\n    str x3, [sp]\n    bl _openat\n    add sp, sp, #16\n    ldp x29, x30, [sp], #16\n    ret\nza_d_getrandom:\n    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    str x21, [sp, #32]\n    mov x19, x0\n    mov x20, x1\n    mov x21, #0\n1:\n    cmp x21, x20\n    b.hs 3f\n    sub x1, x20, x21\n    mov x9, #256\n    cmp x1, x9\n    csel x1, x1, x9, ls\n    str x1, [sp, #40]\n    add x0, x19, x21\n    bl _getentropy\n    cbnz x0, 2f\n    ldr x1, [sp, #40]\n    add x21, x21, x1\n    b 1b\n2:\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n    b 4f\n3:\n    mov x0, x21\n4:\n    ldp x19, x20, [sp, #16]\n    ldr x21, [sp, #32]\n    ldp x29, x30, [sp], #48\n    ret\nza_d_tword_get:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    adrp x9, za_tword_key@PAGE\n    ldr x0, [x9, za_tword_key@PAGEOFF]\n    bl _pthread_getspecific\n    ldp x29, x30, [sp], #16\n    ret\nza_d_tword_set:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    mov x1, x0\n    adrp x9, za_tword_key@PAGE\n    ldr x0, [x9, za_tword_key@PAGEOFF]\n    bl _pthread_setspecific\n    mov x0, #0\n    ldp x29, x30, [sp], #16\n    ret\n"
             ).try();
         });
         // emit(x0 bytes, x1 length, x2 descriptor): buffered stdout,
@@ -1937,11 +1954,22 @@ Assembly = {
         self.out.add(
             "za_print_u64:\n    mov x9, #0\n    b 1f\nza_print_i64:\n    mov x9, x0\n    cmp x0, #0\n    cneg x0, x0, lt\n1:\n    mov x10, x1\n    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    add x1, sp, #48\n    mov x2, #10\n2:\n    udiv x3, x0, x2\n    msub x4, x3, x2, x0\n    add w4, w4, #48\n    strb w4, [x1, #-1]!\n    mov x0, x3\n    cbnz x0, 2b\n    tbz x9, #63, 3f\n    mov w4, #45\n    strb w4, [x1, #-1]!\n3:\n    add x2, sp, #48\n    sub x2, x2, x1\n    mov x0, x1\n    mov x1, x2\n    mov x2, x10\n    bl za_emit\n    ldp x29, x30, [sp], #48\n    ret\n"
         ).try();
+        // guarded_call(code, first, second): call code(first, second) with
+        // a guard a trap can return to. The guard is this frame, saved
+        // callee-saved registers and all, kept per thread (the control
+        // block at +64 on Linux, a pthread key on macOS) with the enclosing
+        // guard saved in the frame; it answers 0, or 1 through the trap.
         // trap(x0/x1 report): flush stdout first so output preceding the
-        // fault is not lost, then report on stderr and exit 134.
-        self.out.add(
-            "za_trap:\n    mov x19, x0\n    mov x20, x1\n    bl za_flush\n    mov x0, #2\n    mov x1, x19\n    mov x2, x20\n    bl za_write_all\n    mov x0, #134\n    bl za_sys_exit\n"
-        ).try();
+        // fault is not lost, then report on stderr; inside a guarded call
+        // its caller continues with 1, otherwise exit 134.
+        self.darwin().match({
+            true  => self.out.add(
+                "za_guarded_call:\n    stp x29, x30, [sp, #-176]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    stp x21, x22, [sp, #32]\n    stp x23, x24, [sp, #48]\n    stp x25, x26, [sp, #64]\n    stp x27, x28, [sp, #80]\n    stp d8, d9, [sp, #96]\n    stp d10, d11, [sp, #112]\n    stp d12, d13, [sp, #128]\n    stp d14, d15, [sp, #144]\n    mov x19, x0\n    mov x20, x1\n    mov x21, x2\n    adrp x9, za_guard_key@PAGE\n    ldr x0, [x9, za_guard_key@PAGEOFF]\n    bl _pthread_getspecific\n    str x0, [sp, #160]\n    adrp x9, za_guard_key@PAGE\n    ldr x0, [x9, za_guard_key@PAGEOFF]\n    mov x1, sp\n    bl _pthread_setspecific\n    mov x0, x20\n    mov x1, x21\n    blr x19\n    mov x0, #0\nza_guard_out:\n    mov x19, x0\n    adrp x9, za_guard_key@PAGE\n    ldr x0, [x9, za_guard_key@PAGEOFF]\n    ldr x1, [sp, #160]\n    bl _pthread_setspecific\n    mov x0, x19\n    ldp x19, x20, [sp, #16]\n    ldp x21, x22, [sp, #32]\n    ldp x23, x24, [sp, #48]\n    ldp x25, x26, [sp, #64]\n    ldp x27, x28, [sp, #80]\n    ldp d8, d9, [sp, #96]\n    ldp d10, d11, [sp, #112]\n    ldp d12, d13, [sp, #128]\n    ldp d14, d15, [sp, #144]\n    ldp x29, x30, [sp], #176\n    ret\nza_trap:\n    mov x19, x0\n    mov x20, x1\n    bl za_flush\n    mov x0, #2\n    mov x1, x19\n    mov x2, x20\n    bl za_write_all\n    adrp x9, za_guard_key@PAGE\n    ldr x0, [x9, za_guard_key@PAGEOFF]\n    bl _pthread_getspecific\n    cbz x0, 1f\n    mov sp, x0\n    mov x0, #1\n    b za_guard_out\n1:\n    mov x0, #134\n    bl za_sys_exit\n"
+            ),
+            false => self.out.add(
+                "za_guarded_call:\n    stp x29, x30, [sp, #-176]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    stp x21, x22, [sp, #32]\n    stp x23, x24, [sp, #48]\n    stp x25, x26, [sp, #64]\n    stp x27, x28, [sp, #80]\n    stp d8, d9, [sp, #96]\n    stp d10, d11, [sp, #112]\n    stp d12, d13, [sp, #128]\n    stp d14, d15, [sp, #144]\n    mrs x9, tpidr_el0\n    ldr x10, [x9, #64]\n    str x10, [sp, #160]\n    mov x10, sp\n    str x10, [x9, #64]\n    mov x16, x0\n    mov x0, x1\n    mov x1, x2\n    blr x16\n    mov x0, #0\nza_guard_out:\n    mrs x9, tpidr_el0\n    ldr x10, [sp, #160]\n    str x10, [x9, #64]\n    ldp x19, x20, [sp, #16]\n    ldp x21, x22, [sp, #32]\n    ldp x23, x24, [sp, #48]\n    ldp x25, x26, [sp, #64]\n    ldp x27, x28, [sp, #80]\n    ldp d8, d9, [sp, #96]\n    ldp d10, d11, [sp, #112]\n    ldp d12, d13, [sp, #128]\n    ldp d14, d15, [sp, #144]\n    ldp x29, x30, [sp], #176\n    ret\nza_trap:\n    mov x19, x0\n    mov x20, x1\n    bl za_flush\n    mov x0, #2\n    mov x1, x19\n    mov x2, x20\n    bl za_write_all\n    mrs x9, tpidr_el0\n    ldr x10, [x9, #64]\n    cbz x10, 1f\n    mov sp, x10\n    mov x0, #1\n    b za_guard_out\n1:\n    mov x0, #134\n    bl za_sys_exit\n"
+            ),
+        }).try();
         self.data.add(
             "za_true:\n    .ascii \"true\"\nza_false:\n    .ascii \"false\"\n"
         )

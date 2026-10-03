@@ -1,0 +1,57 @@
+// NODES actors in a ring pass one token HOPS hops: ns per hop.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param } = common
+
+Node = { next :: Res<Ref<Node>> = None }
+
+Node.impl(Actor, {
+    link = (self :: @Self, ctx: Context, next: Ref<Node>) { self.next = Ok(
+        next
+    ); }
+
+    go = (self :: @Self, ctx: Context, hops: u64) {
+        start = ctx.env.clock.since_start().ns;
+        self.next.match({ Ok(n) => n.pass(
+            hops,
+            hops,
+            start
+        ).ignore(), None => () });
+    }
+
+    pass = (self :: @Self, ctx: Context, left: u64, hops: u64, start: u64) {
+        (left == 0).match({
+            true  => {
+                ns = ctx.env.clock.since_start().ns - start;
+                println("bench=ring hop_ns={}", ns / hops);
+            },
+            false => self.next.match({ Ok(n) => n.pass(
+                left - 1,
+                hops,
+                start
+            ).ignore(), None => () }),
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    nodes = param(env, "NODES", 1000);
+    first = env.spawn(Node()).try();
+    prev ::= first;
+    i    :: usize = 1;
+    loop(() { i < nodes }, (h) {
+        node = env.spawn(Node()).try();
+        prev.link(node).try();
+        prev = node;
+        i    = i + 1;
+    });
+    prev.link(first).try();
+    env.threads.sleep(100);
+    first.go(10000000).try();
+    Ok(0)
+}

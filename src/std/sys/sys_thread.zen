@@ -1,7 +1,8 @@
-// Threads, locks and condition variables for the native backend, as
-// ordinary Zen over std.sys. Linux builds everything on raw `clone` and
-// futexes; macOS goes through libSystem's pthreads, because Darwin's kernel
-// interface is not a stable ABI. Callers see one API either way.
+// Threads, locks and condition variables as ordinary Zen over std.sys.
+// Native Linux builds everything on raw `clone` and futexes; macOS goes
+// through libSystem's pthreads, because Darwin's kernel interface is not a
+// stable ABI, and the C backend goes through the C library's pthreads on
+// every OS. Callers see one API either way.
 //
 // Locks and conditions live in caller memory of MUTEX_BYTES / COND_BYTES at
 // a stable address (the OS objects must never move or be copied), and are
@@ -15,13 +16,15 @@
 //     +32 os      macOS: the pthread_t
 //     +40 base    Linux: the stack mapping to release after the join
 //     +48 length
+//     +56 word    the runtime's thread word (std.sys.thread_word, Linux)
+//     +64 guard   the innermost guarded call a trap returns to (Linux)
 
 { Ptr, AllocError } = std.mem
 { futex, mmap, munmap, mprotect, map_private_anonymous, pointer_at, address_of } = std.sys
 { thread_self, clone_thread, pthread_start, pthread_join } = std.sys
 { pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy } = std.sys
 { pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast } = std.sys
-{ pthread_cond_destroy, platform_darwin, nanosleep_ns, monotonic_ns, Pages, NO_MEMORY } = std.sys
+{ pthread_cond_destroy, pthread_threads, platform_darwin, nanosleep_ns, monotonic_ns, Pages, NO_MEMORY } = std.sys
 { atomic_load_u32, atomic_store_u32, atomic_swap_u32, atomic_add_u32, atomic_cas_u32 } = std.sys
 { Res, Ok, Err, loop } = std.core
 
@@ -33,7 +36,7 @@ COND_BYTES*: usize = 48
 // no-access guard below it large enough for 16 KiB and 64 KiB pages.
 STACK_BYTES*: usize = 8388608
 GUARD_BYTES: usize = 65536
-BLOCK_BYTES: usize = 64
+BLOCK_BYTES: usize = 128
 BLOCK_TID: usize = 24
 
 // CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD |
@@ -46,7 +49,7 @@ FUTEX_WAIT: i32 = 0
 FUTEX_WAIT_PRIVATE: i32 = 128
 FUTEX_WAKE_PRIVATE: i32 = 129
 
-darwin = () bool { platform_darwin() == 1 }
+pthreads = () bool { pthread_threads() == 1 }
 
 // 0 from the pthread family is success; anything else is already -errno.
 status = (code: i64) Res<(), i64> {
@@ -75,14 +78,14 @@ ignore_status = (code: i64) { status(code).ignore(); }
 // in Drepper's "Futexes Are Tricky". Unlocking a 2 wakes one waiter, which
 // then takes the lock as 2 so a later unlock wakes the next.
 mutex_init* = (m: Ptr<u8>) Res<(), i64> {
-    darwin().match({
+    pthreads().match({
         true  => status(pthread_mutex_init(m, 0)),
         false => atomic_store_u32(m.to<u32>(), 0),
     })
 }
 
 mutex_lock* = (m: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_mutex_lock(m).ignore_status(),
         false => {
             word = m.to<u32>();
@@ -99,7 +102,7 @@ lock_contended = (word: Ptr<u32>) {
 }
 
 mutex_unlock* = (m: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_mutex_unlock(m).ignore_status(),
         false => {
             word = m.to<u32>();
@@ -109,7 +112,7 @@ mutex_unlock* = (m: Ptr<u8>) {
 }
 
 mutex_destroy* = (m: Ptr<u8>) {
-    darwin().match({ true => pthread_mutex_destroy(
+    pthreads().match({ true => pthread_mutex_destroy(
         m
     ).ignore_status(), false => () });
 }
@@ -123,14 +126,14 @@ mutex_destroy* = (m: Ptr<u8>) {
 // signal between the release and the sleep is never lost. Wakeups may be
 // spurious; callers wait in a loop on their own condition.
 cond_init* = (c: Ptr<u8>) Res<(), i64> {
-    darwin().match({
+    pthreads().match({
         true  => status(pthread_cond_init(c, 0)),
         false => atomic_store_u32(c.to<u32>(), 0),
     })
 }
 
 cond_wait* = (c: Ptr<u8>, m: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_cond_wait(c, m).ignore_status(),
         false => {
             word = c.to<u32>();
@@ -144,7 +147,7 @@ cond_wait* = (c: Ptr<u8>, m: Ptr<u8>) {
 }
 
 cond_signal* = (c: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_cond_signal(c).ignore_status(),
         false => {
             word = c.to<u32>();
@@ -155,7 +158,7 @@ cond_signal* = (c: Ptr<u8>) {
 }
 
 cond_broadcast* = (c: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_cond_broadcast(c).ignore_status(),
         false => {
             word = c.to<u32>();
@@ -166,9 +169,92 @@ cond_broadcast* = (c: Ptr<u8>) {
 }
 
 cond_destroy* = (c: Ptr<u8>) {
-    darwin().match({ true => pthread_cond_destroy(
+    pthreads().match({ true => pthread_cond_destroy(
         c
     ).ignore_status(), false => () });
+}
+
+// ---------------------------------------------------------------------
+// parkers
+// ---------------------------------------------------------------------
+
+// A parker lets one thread sleep until another wakes it, holding at most
+// one pending wake: `unpark` before `park` makes that `park` return at
+// once. It lives in caller memory of PARKER_BYTES at a stable address and
+// is initialised before first use; only its owner parks on it.
+//
+// Linux (either backend): a futex word, 0 idle, 1 woken, 2 sleeping. The
+// sleeper announces 2 before waiting, so `unpark` makes the system call
+// only when someone may be asleep. macOS: a flag under a lock and a
+// condition.
+PARKER_BYTES*: usize = 128
+PARKER_FLAG: usize = 112
+
+futex_parker = () bool { platform_darwin() == 0 }
+
+parker_init* = (p: Ptr<u8>) Res<(), i64> {
+    futex_parker().match({
+        true  => atomic_store_u32(p.to<u32>(), 0),
+        false => {
+            mutex_init(p).try();
+            cond_init(p.offset(MUTEX_BYTES)).try();
+            p.offset(PARKER_FLAG).to<u32>().write(0, 0);
+            Ok
+        },
+    })
+}
+
+// Sleep until woken; consumes the pending wake.
+park* = (p: Ptr<u8>) {
+    futex_parker().match({ true => park_futex(p.to<u32>()), false => park_locked(p) });
+}
+
+park_futex = (word: Ptr<u32>) {
+    loop(() { atomic_cas_u32(word, 1, 0) != 1 }, (h) {
+        // Announce the sleep; a wake that arrived meanwhile is taken by the
+        // loop's next test instead.
+        (atomic_cas_u32(word, 0, 2) != 1 && atomic_load_u32(word) == 2).then(() {
+            wait_word(word, FUTEX_WAIT_PRIVATE, 2);
+        });
+    });
+}
+
+park_locked = (p: Ptr<u8>) {
+    flag = p.offset(PARKER_FLAG).to<u32>();
+    mutex_lock(p);
+    loop(() { atomic_load_u32(flag) == 0 }, (h) {
+        cond_wait(p.offset(MUTEX_BYTES), p);
+    });
+    atomic_store_u32(flag, 0);
+    mutex_unlock(p);
+}
+
+// Wake the owner, or make its next `park` return at once.
+unpark* = (p: Ptr<u8>) {
+    futex_parker().match({
+        true  => {
+            word = p.to<u32>();
+            (atomic_swap_u32(word, 1) == 2).then(() { wake_word(word, 1); });
+        },
+        false => {
+            mutex_lock(p);
+            atomic_store_u32(p.offset(PARKER_FLAG).to<u32>(), 1);
+            cond_signal(p.offset(MUTEX_BYTES));
+            mutex_unlock(p);
+        },
+    });
+}
+
+// Drop a pending wake, if any, without sleeping.
+park_clear* = (p: Ptr<u8>) {
+    futex_parker().match({
+        true  => atomic_cas_u32(p.to<u32>(), 1, 0).ignore_word(),
+        false => {
+            mutex_lock(p);
+            atomic_store_u32(p.offset(PARKER_FLAG).to<u32>(), 0);
+            mutex_unlock(p);
+        },
+    });
 }
 
 // ---------------------------------------------------------------------
@@ -178,7 +264,7 @@ cond_destroy* = (c: Ptr<u8>) {
 // Start a thread running the compiler-provided function at `entry` with
 // `arg`. The handle is the thread's control block; join it exactly once.
 thread_spawn* = (entry: usize, arg: Ptr<u8>) Res<Ptr<u8>, i64> {
-    darwin().match({
+    pthreads().match({
         true  => spawn_pthread(entry, arg),
         false => spawn_clone(entry, arg),
     })
@@ -236,7 +322,7 @@ fill_block = (
 // the thread can no longer touch its stack.
 thread_join* = (t: Ptr<u8>) Res<(), i64> {
     words = t.to<usize>();
-    darwin().match({
+    pthreads().match({
         true  => {
             status(pthread_join(words.read(4), 0)).try();
             Pages().free(t);
@@ -260,7 +346,7 @@ self_word = () usize { thread_self().to_usize().value_or(0) }
 
 // Whether the calling thread is the one `t` started.
 thread_is_current* = (t: Ptr<u8>) bool {
-    darwin().match({
+    pthreads().match({
         true  => self_word() == t.to<usize>().read(4),
         false => self_word() == address_of(t),
     })
@@ -278,3 +364,6 @@ sleep_ns* = (ns: u64) {
 }
 
 ignore_none = (r: Res<()>) { r.match({ Ok(_) => (), None => () }); }
+
+// A word the caller has no use for.
+ignore_word = (word: u32) {}

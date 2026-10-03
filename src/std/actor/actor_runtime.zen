@@ -1,0 +1,1724 @@
+// The actor runtime: workers, run queues, mailboxes, send-or-park, and the
+// lifecycle the compilers call into. Both backends compile this module into
+// every program that spawns an actor.
+//
+// Scheduling. One worker (a run queue, Go's P) per CPU the process may use,
+// each driven by one thread. A worker runs an actor's turn: up to
+// TURN_BATCH messages from its mailbox. An actor woken by a turn goes to
+// its waker's LIFO slot and runs next on that core, while its message is
+// warm; the actor it displaces goes to the back of the ring. An idle worker
+// looks, in order, at its LIFO slot, its ring, the shared injector, then
+// steals half of another worker's ring; only after that, and only from a
+// worker whose turn has gone on for STEAL_DELAY_NS, does it take a LIFO
+// slot. A full ring moves half of itself to the injector in one push and
+// wakes idle workers to take it, so a mass wake spreads instead of piling
+// up. Idle workers spin briefly, then sleep on a parker; a worker that
+// publishes work wakes one sleeper only when no worker is already looking.
+//
+// Ownership. The life word in an actor's registry slot (actor_layout) holds
+// the scheduled bit: whoever sets it owns the actor (it is queued or
+// running) until it clears it, and only the owner may finalise. A turn ends
+// with one atomic add that subtracts the messages it took and drops the
+// bit; what that add returns decides whether the actor must run again, so
+// nothing is read from the body once the bit is gone.
+//
+// Send-or-park. A mailbox holds BOUND messages. A send to a full mailbox
+// from a turn goes to the sender's outbox; at the end of the turn the
+// sender links a waiter onto each receiver it is waiting for and runs no
+// more turns until every one has taken its messages. A receiver that
+// drains below half its bound releases waiters oldest first, moving each
+// one's messages into its mailbox (per-pair FIFO holds). Before parking, a
+// sender records whom it waits on; a send to a full receiver whose chain of
+// "waiting on" leads back to the sender within CYCLE_WALK hops goes through
+// over the bound instead, so a cycle of full mailboxes never wedges. A
+// sender that is not running a turn (main, a plain thread) waits for room
+// instead. `offer` never waits: a full mailbox answers Full.
+
+{ Ptr, null_ptr } = std.mem
+{ Res, Ok, None, loop, Range } = std.core
+{ atomic_load_usize, atomic_store_usize, atomic_add_usize, atomic_cas_usize } = std.sys
+{ atomic_swap_usize, atomic_load_u32, atomic_cas_u32, atomic_store_u32 } = std.sys
+{ atomic_store_release_usize } = std.sys
+{ thread_word, set_thread_word, process_block, call_entry, guarded_call, pointer_at, address_of } = std.sys
+{ cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, mmap, map_private_anonymous, write_all } = std.sys
+{ str } = std.text
+{ thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
+{ cond_wait, cond_signal, cond_broadcast, parker_init, park, unpark, park_clear } = std.sys.sys_thread
+{ word_at, load, store, lock, unlock, alloc, free, set_checked } = std.actor.actor_pool
+{ slot_at, slot_of_ref, take_slot, give_slot } = std.actor.actor_registry
+{ MAX_MESSAGE_BYTES } = std.actor.actor_limits
+{ PB_ONCE, PB_GLOBALS, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND, CYCLE_WALK } = std.actor.actor_layout
+{ G_STATE, G_WORKERS, G_WORKER_BASE, G_IDLE, G_SPINNING, G_SLEEPING, G_DETACHED } = std.actor.actor_layout
+{ G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
+{ G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
+{ G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
+{ G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
+{ S_QUEUED, S_CLOSED, S_FULL, S_RELEASES, S_BREAKS, S_FINALIZED, S_HANDOFFS } = std.actor.actor_layout
+{ S_PREEMPTS, S_STEALS, S_SPREADS, S_FAILED } = std.actor.actor_layout
+{ L_WORKER, L_ACTOR, L_YIELD, L_HEAP, LOCAL_BYTES } = std.actor.actor_layout
+{ W_HEAD, W_TAIL, W_NEXT, W_TURNS, W_IN_TURN, W_PREEMPT, W_SEEN, W_TICK, W_ID } = std.actor.actor_layout
+{ W_RANDOM, W_SPINNING, W_PARKER, W_RING, WORKER_BYTES } = std.actor.actor_layout
+{ S_LIFE, S_BODY, S_WAITING } = std.actor.actor_layout
+{ COUNT_MASK, CLOSED, SCHED, BLOCKED, WAITED, GEN_SHIFT, GEN_MASK } = std.actor.actor_layout
+{ B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_FAILED, B_RECORD } = std.actor.actor_layout
+{ D_OUTBOX, D_OUT_N, D_OUT_CAP, D_FIRST, D_LAST, D_LOCK, D_BLOCKED, SIDE_BYTES } = std.actor.actor_layout
+{ OUTBOX_ENTRY, PENDING, DONE, REFUSED, WAITER_BYTES, M_NEXT, M_TURN, M_PAYLOAD } = std.actor.actor_layout
+
+// ---------------------------------------------------------------------
+// words
+// ---------------------------------------------------------------------
+
+aload = (p: Ptr<u8>, i: usize) usize { atomic_load_usize(word_at(p, i)) }
+
+astore = (p: Ptr<u8>, i: usize, value: usize) { atomic_store_usize(
+    word_at(p, i),
+    value
+); }
+
+// Wrapping atomic add; returns the previous word.
+aadd = (p: Ptr<u8>, i: usize, value: usize) usize { atomic_add_usize(
+    word_at(p, i),
+    value
+) }
+
+asub = (p: Ptr<u8>, i: usize, value: usize) usize { atomic_add_usize(
+    word_at(p, i),
+    0 -% value
+) }
+
+acas = (p: Ptr<u8>, i: usize, expected: usize, desired: usize) usize {
+    atomic_cas_usize(word_at(p, i), expected, desired)
+}
+
+// A release store: for words other threads only read as hints (turn
+// counters, the preemption flag) or that publish what was written before.
+arel = (p: Ptr<u8>, i: usize, value: usize) {
+    atomic_store_release_usize(word_at(p, i), value);
+}
+
+aswap = (p: Ptr<u8>, i: usize, value: usize) usize { atomic_swap_usize(
+    word_at(p, i),
+    value
+) }
+
+at = (address: usize) Ptr<u8> { pointer_at(address) }
+
+addr = (p: Ptr<u8>) usize { address_of(p) }
+
+// Set bits in a word; returns the word before.
+aset = (p: Ptr<u8>, i: usize, bits: usize) usize {
+    loop<usize>((h) {
+        v = aload(p, i);
+        ((v & bits) == bits || acas(p, i, v, v | bits) == v).then(() { h.break(v); });
+    }).value_or(0)
+}
+
+// Clear bits in a word; returns the word before.
+aclear = (p: Ptr<u8>, i: usize, bits: usize) usize {
+    loop<usize>((h) {
+        v = aload(p, i);
+        ((v & bits) == 0 || acas(p, i, v, v & (bits ^ usize.MAX)) == v).then(() { h.break(v); });
+    }).value_or(0)
+}
+
+count_of = (life: usize) usize { life & COUNT_MASK }
+
+gen_of = (life: usize) usize { (life >> GEN_SHIFT) & GEN_MASK }
+
+ref_gen = (r: usize) usize { (r >> 32) & GEN_MASK }
+
+ref_index = (r: usize) usize { r & COUNT_MASK }
+
+as_ref = (index: usize, gen: usize) usize { (gen << 32) | index }
+
+stat = (g: Ptr<u8>, which: usize) { aadd(g, G_STATS + which, 1); }
+
+// ---------------------------------------------------------------------
+// globals and the thread's local state
+// ---------------------------------------------------------------------
+
+// The runtime's globals, null before the first spawn.
+globals = () Ptr<u8> {
+    block = process_block();
+    (atomic_load_usize(word_at(block, PB_ONCE)) == 2).match({
+        true  => at(load(block, PB_GLOBALS)),
+        false => null_ptr<u8>(),
+    })
+}
+
+// This thread's local state, made on first use.
+local = () Ptr<u8> {
+    word = thread_word();
+    (word != 0).match({
+        true  => at(word),
+        false => {
+            made = map(LOCAL_BYTES);
+            set_thread_word(addr(made));
+            made
+        },
+    })
+}
+
+// Zeroed memory straight from the kernel (globals, locals, workers); null
+// when refused.
+map = (bytes: usize) Ptr<u8> {
+    got = mmap(0, bytes, 3, map_private_anonymous(), -1, 0);
+    (got < 0).match({
+        true  => null_ptr<u8>(),
+        false => at(got.to_usize().value_or(0)),
+    })
+}
+
+heap_of = (l: Ptr<u8>) Ptr<u8> { l.offset(L_HEAP) }
+
+central_of = (g: Ptr<u8>) Ptr<u8> { g.offset(G_CENTRAL) }
+
+new_block = (g: Ptr<u8>, l: Ptr<u8>, bytes: usize) Ptr<u8> {
+    alloc(heap_of(l), central_of(g), bytes)
+}
+
+free_block = (g: Ptr<u8>, l: Ptr<u8>, block: Ptr<u8>) {
+    free(heap_of(l), central_of(g), block);
+}
+
+zero = (p: Ptr<u8>, bytes: usize) {
+    Range(0, bytes / 8).loop((i) { store(p, i, 0); });
+}
+
+worker_at = (g: Ptr<u8>, i: usize) Ptr<u8> {
+    at(load(g, G_WORKER_BASE) + i * WORKER_BYTES)
+}
+
+parker_of = (w: Ptr<u8>) Ptr<u8> { w.offset(W_PARKER) }
+
+// ---------------------------------------------------------------------
+// the injector
+// ---------------------------------------------------------------------
+
+// A Vyukov MPSC list of actors linked through their B_RUN_NEXT words, for
+// actors woken off any worker and for spread and preempted ones. Any thread
+// pushes (a whole chain in one exchange); workers take under a try-lock,
+// a batch at a time.
+
+stub_node = (g: Ptr<u8>) usize { addr(g) + G_INJ_STUB * 8 }
+
+node_of = (body: Ptr<u8>) usize { addr(body) + B_RUN_NEXT * 8 }
+
+body_of_node = (node: usize) Ptr<u8> { at(node - B_RUN_NEXT * 8) }
+
+link_of = (node: usize) Ptr<u8> { at(node) }
+
+inject_chain = (g: Ptr<u8>, first: Ptr<u8>, last: Ptr<u8>) {
+    astore(last, B_RUN_NEXT, 0);
+    prev = aswap(g, G_INJ_HEAD, node_of(last));
+    astore(link_of(prev), 0, node_of(first));
+}
+
+inject = (g: Ptr<u8>, body: Ptr<u8>) { inject_chain(g, body, body); }
+
+injector_empty = (g: Ptr<u8>) bool {
+    aload(g, G_INJ_TAIL) == stub_node(g) && aload(g, G_INJ_HEAD) == stub_node(g)
+}
+
+// The lock is held.
+inject_pop = (g: Ptr<u8>) Ptr<u8> {
+    stub = stub_node(g);
+    tail ::= aload(g, G_INJ_TAIL);
+    next ::= aload(link_of(tail), 0);
+    skip = tail == stub && next != 0;
+    skip.then(() {
+        astore(g, G_INJ_TAIL, next);
+        tail = next;
+        next = aload(link_of(next), 0);
+    });
+    (tail == stub && !skip).match({
+        true  => null_ptr<u8>(),
+        false => (next != 0).match({
+            true  => { astore(g, G_INJ_TAIL, next); body_of_node(tail) },
+            false => (tail != aload(g, G_INJ_HEAD)).match({
+                true  => null_ptr<u8>(),
+                false => {
+                    astore(link_of(stub), 0, 0);
+                    prev = aswap(g, G_INJ_HEAD, stub);
+                    astore(link_of(prev), 0, stub);
+                    after = aload(link_of(tail), 0);
+                    (after != 0).match({
+                        true  => { astore(g, G_INJ_TAIL, after); body_of_node(tail) },
+                        false => null_ptr<u8>(),
+                    })
+                },
+            }),
+        }),
+    })
+}
+
+INJECT_BATCH: usize = 32
+
+// One actor from the injector, with up to INJECT_BATCH more moved onto the
+// worker's ring; null when it is empty or another worker holds it.
+inject_take = (g: Ptr<u8>, w: Ptr<u8>) Ptr<u8> {
+    injector_empty(g).match({
+        true  => null_ptr<u8>(),
+        false => {
+            word = g.offset(G_INJ_LOCK * 8).to<u32>();
+            (atomic_cas_u32(word, 0, 1) == 0).match({
+                false => null_ptr<u8>(),
+                true  => {
+                    first = inject_pop(g);
+                    (!first.is_null() && !w.is_null()).then(() {
+                        moved :: usize = 0;
+                        loop(() { moved < INJECT_BATCH && ring_room(w) }, (h) {
+                            a = inject_pop(g);
+                            a.is_null().then(() { h.break(); });
+                            ring_put(w, a);
+                            moved = moved + 1;
+                        });
+                    });
+                    atomic_store_u32(word, 0);
+                    first
+                },
+            })
+        },
+    })
+}
+
+// ---------------------------------------------------------------------
+// run queues
+// ---------------------------------------------------------------------
+
+ring_slot = (w: Ptr<u8>, i: usize) Ptr<usize> { word_at(
+    w.offset(W_RING),
+    i & RING_MASK
+) }
+
+ring_size = (w: Ptr<u8>) usize { aload(w, W_TAIL) -% aload(w, W_HEAD) }
+
+ring_room = (w: Ptr<u8>) bool { aload(w, W_TAIL) - aload(w, W_HEAD) < RING }
+
+// The owner's push; the caller checked for room.
+ring_put = (w: Ptr<u8>, a: Ptr<u8>) {
+    t = aload(w, W_TAIL);
+    ring_slot(w, t).write(0, addr(a));
+    astore(w, W_TAIL, t + 1);
+}
+
+// Push onto the worker's ring; a full ring moves half of itself, with `a`,
+// to the injector and wakes idle workers to share it.
+ring_push = (g: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
+    loop((h) {
+        ring_room(w).then(() { ring_put(w, a); h.break(); });
+        spread(g, w, a).then(() { h.break(); });
+    });
+}
+
+spread = (g: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) bool {
+    half = RING / 2;
+    h    = aload(w, W_HEAD);
+    (acas(w, W_HEAD, h, h + half) == h).match({
+        false => false,
+        true  => {
+            first = at(ring_slot(w, h).read(0));
+            prev ::= first;
+            Range(1, half).loop((i) {
+                next = at(ring_slot(w, h + i).read(0));
+                astore(prev, B_RUN_NEXT, node_of(next));
+                prev = next;
+            });
+            astore(prev, B_RUN_NEXT, node_of(a));
+            inject_chain(g, first, a);
+            stat(g, S_SPREADS);
+            Range(0, load(g, G_WORKERS)).loop((i) { wake_idle(g); });
+            true
+        },
+    })
+}
+
+// The owner's pop, and a single-actor steal.
+ring_pop = (w: Ptr<u8>) Ptr<u8> {
+    loop<usize>((h) {
+        hd = aload(w, W_HEAD);
+        (hd == aload(w, W_TAIL)).then(() { h.break(0); });
+        a = ring_slot(w, hd).read(0);
+        (acas(w, W_HEAD, hd, hd + 1) == hd).then(() { h.break(a); });
+    }).match({ Ok(a) => at(a), None => null_ptr<u8>() })
+}
+
+// Take half of `victim`'s ring onto the thief's (empty) ring; returns one
+// of them to run now, null when the victim had nothing.
+steal_half = (thief: Ptr<u8>, victim: Ptr<u8>) Ptr<u8> {
+    got: Res<usize> = loop<usize>((h) {
+        hd = aload(victim, W_HEAD);
+        tl = aload(victim, W_TAIL);
+        n  = (tl -% hd) - (tl -% hd) / 2;
+        (n == 0).then(() { h.break(0); });
+        (n <= RING / 2).then(() {
+            base = aload(thief, W_TAIL);
+            Range(0, n).loop((i) {
+                ring_slot(thief, base + i).write(0, ring_slot(victim, hd + i).read(0));
+            });
+            (acas(victim, W_HEAD, hd, hd + n) == hd).then(() {
+                last = ring_slot(thief, base + n - 1).read(0);
+                astore(thief, W_TAIL, base + n - 1);
+                h.break(last);
+            });
+        });
+    });
+    got.match({ Ok(a) => at(a), None => null_ptr<u8>() })
+}
+
+// ---------------------------------------------------------------------
+// waking and scheduling
+// ---------------------------------------------------------------------
+
+// Wake one sleeping worker, unless one is already looking for work: that
+// one will find what was just published. Every publication and every
+// sleeper's last look are sequentially consistent, so a worker going to
+// sleep either sees the new work or is seen here.
+wake_one = (g: Ptr<u8>) {
+    (aload(g, G_SPINNING) == 0).then(() { wake_idle(g); });
+}
+
+// Wake one sleeping worker if there is one. It starts out looking for work,
+// counted as such before it runs.
+wake_idle = (g: Ptr<u8>) {
+    loop((h) {
+        m = aload(g, G_IDLE);
+        (m == 0).then(() { h.break(); });
+        i   = lowest_bit(m);
+        bit = one_bit(i);
+        (acas(g, G_IDLE, m, m & (bit ^ usize.MAX)) == m).then(() {
+            aadd(g, G_SPINNING, 1);
+            unpark(parker_of(worker_at(g, i)));
+            h.break();
+        });
+    });
+}
+
+ONE: usize = 1
+
+one_bit = (i: usize) usize { ONE << i }
+
+lowest_bit = (m: usize) usize {
+    i :: usize = 0;
+    loop(() { ((m >> i) & 1) == 0 }, (h) { i = i + 1; });
+    i
+}
+
+// Own the actor whose slot this is, if it is still generation `gen` and
+// nobody owns it. The owner may run, queue or finalise it.
+try_acquire = (slot: Ptr<u8>, gen: usize) bool {
+    loop<bool>((h) {
+        v = aload(slot, S_LIFE);
+        (gen_of(v) != gen || (v & SCHED) != 0).then(() { h.break(false); });
+        (acas(slot, S_LIFE, v, v | SCHED) == v).then(() { h.break(true); });
+    }).value_or(false)
+}
+
+// Queue an actor this thread just acquired: next on this worker (its LIFO
+// slot) when there is one, else the injector. An actor placed in the LIFO
+// slot wakes nobody: it runs as soon as the current turn ends, on this
+// core. Only the actor it displaces to the ring, or one in the injector, is
+// work another worker should come for. (sysmon covers the case of a LIFO
+// actor stuck behind a long turn.)
+schedule = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>) {
+    w = at(load(l, L_WORKER));
+    w.is_null().match({
+        true  => { inject(g, a); wake_one(g); },
+        false => {
+            displaced = aswap(w, W_NEXT, addr(a));
+            (displaced != 0).then(() {
+                ring_push(g, w, at(displaced));
+                wake_one(g);
+            });
+        },
+    });
+}
+
+// ---------------------------------------------------------------------
+// the mailbox
+// ---------------------------------------------------------------------
+
+// Vyukov's intrusive MPSC list. A node's first word is its link: a
+// message, or the stub B_STUB inside the body. Producers swap themselves
+// into B_HEAD and then link the previous node to themselves; between the
+// two a take sees "empty", and the producer's own scheduling (or the
+// count it raised) brings the actor back.
+
+stub_of = (a: Ptr<u8>) usize { addr(a) + B_STUB * 8 }
+
+// The body is not yet reachable: the slot's publication orders these.
+mailbox_init = (a: Ptr<u8>) {
+    store(a, B_STUB, 0);
+    store(a, B_HEAD, stub_of(a));
+    store(a, B_TAIL, stub_of(a));
+}
+
+mailbox_put = (a: Ptr<u8>, node: usize) {
+    // The node is private until the exchange publishes it.
+    store(at(node), M_NEXT, 0);
+    prev = aswap(a, B_HEAD, node);
+    arel(at(prev), M_NEXT, node);
+}
+
+// The running worker only.
+mailbox_take = (a: Ptr<u8>) Ptr<u8> {
+    stub = stub_of(a);
+    tail ::= load(a, B_TAIL);
+    next ::= aload(at(tail), M_NEXT);
+    skip = tail == stub && next != 0;
+    skip.then(() {
+        store(a, B_TAIL, next);
+        tail = next;
+        next = aload(at(next), M_NEXT);
+    });
+    (tail == stub && !skip).match({
+        true  => null_ptr<u8>(),
+        false => (next != 0).match({
+            true  => { store(a, B_TAIL, next); at(tail) },
+            false => (tail != aload(a, B_HEAD)).match({
+                true  => null_ptr<u8>(),
+                false => {
+                    mailbox_put(a, stub);
+                    after = aload(at(tail), M_NEXT);
+                    (after != 0).match({
+                        true  => { store(a, B_TAIL, after); at(tail) },
+                        false => null_ptr<u8>(),
+                    })
+                },
+            }),
+        }),
+    })
+}
+
+mailbox_empty = (a: Ptr<u8>) bool {
+    load(a, B_TAIL) == stub_of(a) && aload(a, B_HEAD) == stub_of(a)
+}
+
+// ---------------------------------------------------------------------
+// sending
+// ---------------------------------------------------------------------
+
+SEND_OK*: i32 = 0
+SEND_CLOSED*: i32 = 1
+SEND_FULL*: i32 = 2
+// Internal: the message waits in the sender's outbox (Ok to the program).
+SEND_QUEUED: i32 = 3
+
+MODE_SEND: usize = 0
+MODE_OFFER: usize = 1
+MODE_RESERVED: usize = 2
+
+// Deliver message `m` to the actor `r` names. From a turn, a full receiver
+// queues it in the outbox; from a worker outside any turn (a stopped
+// hook) the send never waits; from any other thread it waits for room.
+send_message = (g: Ptr<u8>, l: Ptr<u8>, r: usize, m: Ptr<u8>, mode: usize) i32 {
+    slot = slot_of_ref(g, r);
+    slot.is_null().match({
+        true  => { free_block(g, l, m); SEND_CLOSED },
+        false => deliver(g, l, slot, r, m, mode),
+    })
+}
+
+deliver = (
+    g    : Ptr<u8>,
+    l    : Ptr<u8>,
+    slot : Ptr<u8>,
+    r    : usize,
+    m    : Ptr<u8>,
+    mode : usize
+) i32 {
+    gen     = ref_gen(r);
+    me      = at(load(l, L_ACTOR));
+    on_core = load(l, L_WORKER) != 0;
+    // One compare-and-swap admits the message and, when nobody owns the
+    // receiver, takes ownership to schedule it: a stale or closed receiver,
+    // or a full one, leaves the word untouched.
+    loop<i32>((h) {
+        old = aload(slot, S_LIFE);
+        (gen_of(old) != gen || (old & CLOSED) != 0).then(() {
+            stat(g, S_CLOSED);
+            free_block(g, l, m);
+            h.break(SEND_CLOSED);
+        });
+        a      = at(load(slot, S_BODY));
+        waits  = mode != MODE_RESERVED && !a.same(
+            me
+        ) && (!me.is_null() || !on_core);
+        behind = waits && !me.is_null() && outbox_holds(me, r);
+        full ::= waits && (count_of(old) >= BOUND || behind);
+        (full && !behind && !me.is_null() && cycle_through(g, me, r)).then(() {
+            full = false;
+            stat(g, S_BREAKS);
+        });
+        full.then(() {
+            (mode == MODE_OFFER).then(() {
+                stat(g, S_FULL);
+                free_block(g, l, m);
+                h.break(SEND_FULL);
+            });
+            (!me.is_null()).then(() {
+                outbox_put(g, l, me, r, m);
+                h.break(SEND_QUEUED);
+            });
+            nanosleep_ns(2000).discard();
+        });
+        (!full && acas(slot, S_LIFE, old, (old + 1) | SCHED) == old).then(() {
+            mailbox_put(a, addr(m));
+            ((old & SCHED) == 0).then(() { schedule(g, l, a); });
+            h.break(SEND_OK);
+        });
+    }).value_or(SEND_CLOSED)
+}
+
+// Whether `me` already waits to send to `r`: later sends to it queue behind,
+// keeping per-pair order.
+outbox_holds = (me: Ptr<u8>, r: usize) bool {
+    side = at(load(me, B_SIDE));
+    (side.is_null() || load(side, D_OUT_N) == 0).match({
+        true  => false,
+        false => {
+            entries = at(load(side, D_OUTBOX));
+            Range(0, load(side, D_OUT_N)).find((i) {
+                e = entries.offset(i * OUTBOX_ENTRY);
+                load(e, 0) == r && aload(e, 2) == PENDING
+            }).match({ Ok(_) => true, None => false })
+        },
+    })
+}
+
+// Whether `to` waits, through a chain of full mailboxes no longer than
+// CYCLE_WALK, on `me`: then parking would close a cycle. Slots are never
+// freed, so the walk only reads live words; a reused slot fails the
+// generation check and ends it.
+cycle_through = (g: Ptr<u8>, me: Ptr<u8>, to: usize) bool {
+    mine = load(me, B_REF);
+    r    ::= to;
+    hops :: usize = 0;
+    loop<bool>(() { hops < CYCLE_WALK }, (h) {
+        slot = slot_of_ref(g, r);
+        next = slot.is_null().match({ true => 0, false => aload(
+            slot,
+            S_WAITING
+        ) });
+        (next == 0 || gen_of(aload(slot, S_LIFE)) != ref_gen(r)).then(() { h.break(false); });
+        (next == mine).then(() { h.break(true); });
+        r    = next;
+        hops = hops + 1;
+    }).value_or(false)
+}
+
+// The actor's send-or-park record, made by whichever thread needs it first.
+side_of = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>) Ptr<u8> {
+    side = aload(a, B_SIDE);
+    (side != 0).match({
+        true  => at(side),
+        false => {
+            made = new_block(g, l, SIDE_BYTES);
+            zero(made, SIDE_BYTES);
+            prev = acas(a, B_SIDE, 0, addr(made));
+            (prev == 0).match({
+                true  => made,
+                false => { free_block(g, l, made); at(prev) },
+            })
+        },
+    })
+}
+
+outbox_put = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, r: usize, m: Ptr<u8>) {
+    side = side_of(g, l, me);
+    n    = load(side, D_OUT_N);
+    (n == load(side, D_OUT_CAP)).then(() {
+        cap   = (n == 0).match({ true => 4, false => n * 2 });
+        grown = new_block(g, l, cap * OUTBOX_ENTRY);
+        old   = at(load(side, D_OUTBOX));
+        (n > 0).then(() {
+            grown.copy_from(old, n * OUTBOX_ENTRY);
+            free_block(g, l, old);
+        });
+        store(side, D_OUTBOX, addr(grown));
+        store(side, D_OUT_CAP, cap);
+    });
+    e = at(load(side, D_OUTBOX)).offset(n * OUTBOX_ENTRY);
+    store(e, 0, r);
+    store(e, 1, addr(m));
+    astore(e, 2, PENDING);
+    store(side, D_OUT_N, n + 1);
+    stat(g, S_QUEUED);
+}
+
+// ---------------------------------------------------------------------
+// waiting for room
+// ---------------------------------------------------------------------
+
+// The end of a turn whose outbox holds sends: wait on every receiver it
+// names. The actor is marked blocked, with one extra hold so that no
+// receiver can release it before every waiter is linked; whichever release
+// brings the hold count to zero unblocks it.
+outbox_park = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, slot: Ptr<u8>) {
+    side    = at(load(me, B_SIDE));
+    entries = at(load(side, D_OUTBOX));
+    n       = load(side, D_OUT_N);
+    aset(slot, S_LIFE, BLOCKED);
+    astore(side, D_BLOCKED, 1);
+    Range(0, n).loop((i) {
+        to    = load(entries.offset(i * OUTBOX_ENTRY), 0);
+        first = Range(0, i).find((j) {
+            load(entries.offset(j * OUTBOX_ENTRY), 0) == to
+        }).match({ Ok(_) => false, None => true });
+        (first && aload(entries.offset(i * OUTBOX_ENTRY), 2) == PENDING).then(() {
+            aadd(side, D_BLOCKED, 1);
+            astore(slot, S_WAITING, to);
+            register_waiter(g, l, me, to);
+        });
+    });
+    (asub(side, D_BLOCKED, 1) == 1).then(() { aclear(slot, S_LIFE, BLOCKED); });
+}
+
+// Wait on receiver `to`: link a waiter and mark its mailbox waited on, in
+// one step with reading its count. Either the receiver's next end-of-turn
+// sees the mark, or this read sees the room that turn made: nothing is
+// missed. If there is room after all, or waiting would close a cycle,
+// deliver now.
+register_waiter = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, to: usize) {
+    slot = slot_of_ref(g, to);
+    old  = aadd(slot, S_LIFE, 1);
+    (gen_of(old) != ref_gen(to) || (old & CLOSED) != 0).match({
+        true  => {
+            asub(slot, S_LIFE, 1);
+            resolve(g, l, me, to, null_ptr<u8>(), REFUSED);
+        },
+        false => {
+            r    = at(load(slot, S_BODY));
+            side = side_of(g, l, r);
+            word = side.offset(D_LOCK * 8).to<u32>();
+            lock(word);
+            closed = side.offset(D_LOCK * 8 + 4).to<u32>().read(0) != 0;
+            closed.match({
+                true  => {
+                    unlock(word);
+                    asub(slot, S_LIFE, 1);
+                    resolve(g, l, me, to, null_ptr<u8>(), REFUSED);
+                },
+                false => {
+                    w = new_block(g, l, WAITER_BYTES);
+                    store(w, 0, 0);
+                    store(w, 1, addr(me));
+                    store(w, 2, to);
+                    last = load(side, D_LAST);
+                    (last == 0).match({
+                        true  => store(side, D_FIRST, addr(w)),
+                        false => store(at(last), 0, addr(w)),
+                    });
+                    store(side, D_LAST, addr(w));
+                    life = aset(slot, S_LIFE, WAITED);
+                    room ::= count_of(life) - 1 < BOUND;
+                    (!room && cycle_through(g, me, to)).then(() {
+                        room = true;
+                        stat(g, S_BREAKS);
+                    });
+                    room.then(() {
+                        // Take the node back: it is the last one.
+                        (last == 0).match({
+                            true  => store(side, D_FIRST, 0),
+                            false => store(at(last), 0, 0),
+                        });
+                        store(side, D_LAST, last);
+                        free_block(g, l, w);
+                    });
+                    unlock(word);
+                    room.then(() { resolve(g, l, me, to, r, DONE); });
+                    asub(slot, S_LIFE, 1);
+                },
+            });
+        },
+    });
+}
+
+// Settle the sender's pending entries for receiver `to`: deliver them into
+// `r` (DONE) or drop them (REFUSED), then count that receiver off the
+// sender's holds. The sender stays blocked, so alive, until the last hold
+// goes; after that only its slot is touched.
+resolve = (
+    g      : Ptr<u8>,
+    l      : Ptr<u8>,
+    sender : Ptr<u8>,
+    to     : usize,
+    r      : Ptr<u8>,
+    how    : usize
+) {
+    side    = at(load(sender, B_SIDE));
+    entries = at(load(side, D_OUTBOX));
+    delivered ::= false;
+    rslot = slot_of_ref(g, to);
+    Range(0, load(side, D_OUT_N)).loop((i) {
+        e = entries.offset(i * OUTBOX_ENTRY);
+        (load(e, 0) == to && aload(e, 2) == PENDING).then(() {
+            m = load(e, 1);
+            (how == DONE).match({
+                true  => {
+                    aadd(rslot, S_LIFE, 1);
+                    mailbox_put(r, m);
+                    delivered = true;
+                },
+                false => free_block(g, l, at(m)),
+            });
+            astore(e, 2, how);
+        });
+    });
+    (delivered && try_acquire(rslot, ref_gen(to))).then(() { schedule(g, l, r); });
+    (asub(side, D_BLOCKED, 1) == 1).then(() { unblock(g, l, sender); });
+}
+
+// The sender's last receiver let it go: clear its blocked bit, and queue it
+// if it has work and nobody owns it.
+unblock = (g: Ptr<u8>, l: Ptr<u8>, sender: Ptr<u8>) {
+    mine = load(sender, B_REF);
+    slot = slot_of_ref(g, mine);
+    old  = aclear(slot, S_LIFE, BLOCKED);
+    stat(g, S_RELEASES);
+    ((old & SCHED) == 0 && (count_of(old) > 0 || (old & CLOSED) != 0) && try_acquire(slot, ref_gen(mine))).then(() {
+        schedule(g, l, sender);
+    });
+}
+
+// The receiver's side, called by its owner: release waiters oldest first
+// while it has room, or all of them, refused, when it is finalised. The
+// waited-on mark is cleared when the list empties (under the lock that
+// every waiter links under).
+release_waiters = (
+    g       : Ptr<u8>,
+    l       : Ptr<u8>,
+    a       : Ptr<u8>,
+    slot    : Ptr<u8>,
+    closing : bool
+) {
+    side = at(aload(a, B_SIDE));
+    side.is_null().match({
+        true  => aclear(slot, S_LIFE, WAITED).ignore_word(),
+        false => {
+            word = side.offset(D_LOCK * 8).to<u32>();
+            lock(word);
+            loop((h) {
+                w = load(side, D_FIRST);
+                (w == 0).then(() {
+                    aclear(slot, S_LIFE, WAITED);
+                    h.break();
+                });
+                life = aload(slot, S_LIFE);
+                (!closing && (life & CLOSED) == 0 && count_of(life) >= BOUND).then(() { h.break(); });
+                node = at(w);
+                store(side, D_FIRST, load(node, 0));
+                (load(node, 0) == 0).then(() { store(side, D_LAST, 0); });
+                // A stopped receiver accepts nothing new: what waited for
+                // room was never accepted, so it is refused.
+                refuse = closing || (aload(slot, S_LIFE) & CLOSED) != 0;
+                how    = refuse.match({ true => REFUSED, false => DONE });
+                resolve(g, l, at(load(node, 1)), load(node, 2), a, how);
+                free_block(g, l, node);
+            });
+            closing.then(
+                () { side.offset(D_LOCK * 8 + 4).to<u32>().write(0, 1); }
+            );
+            unlock(word);
+        },
+    });
+}
+
+// ---------------------------------------------------------------------
+// turns
+// ---------------------------------------------------------------------
+
+// Run one turn of `a`, which this worker owns: up to TURN_BATCH messages,
+// then park on full receivers if it queued sends, then finalise if it is
+// stopped and drained, else give it up.
+run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
+    mine = load(a, B_REF);
+    slot = slot_of_ref(g, mine);
+    gen  = ref_gen(mine);
+    arel(w, W_PREEMPT, 0);
+    arel(w, W_TURNS, load(w, W_TURNS) + 1);
+    arel(w, W_IN_TURN, 1);
+    store(l, L_ACTOR, addr(a));
+    taken :: usize = 0;
+    ((aload(slot, S_LIFE) & BLOCKED) == 0).then(() {
+        side = at(load(a, B_SIDE));
+        (!side.is_null()).then(() { store(side, D_OUT_N, 0); });
+        (load(slot, S_WAITING) != 0).then(() { astore(slot, S_WAITING, 0); });
+        record = a.offset(B_RECORD);
+        loop(() { taken < TURN_BATCH }, (h) {
+            m = mailbox_take(a);
+            m.is_null().then(() { h.break(); });
+            taken = taken + 1;
+            // A failed actor's remaining messages are dropped, not run.
+            (load(a, B_FAILED) == 0).then(() {
+                trapped = guarded_call(
+                    load(m, M_TURN),
+                    record,
+                    m.offset(M_PAYLOAD)
+                ) != 0;
+                trapped.then(() { fail(g, l, a, slot); });
+            });
+            free_block(g, l, m);
+            queued = aload(a, B_SIDE) != 0 && load(at(aload(a, B_SIDE)), D_OUT_N) > 0;
+            // A queued send parks the turn (S: at its end); a preempted,
+            // yielded or handed-off turn stops taking messages.
+            stop = queued || aload(w, W_PREEMPT) != 0 || load(l, L_YIELD) != 0 || load(l, L_WORKER) == 0;
+            stop.then(() { h.break(); });
+        });
+        (aload(a, B_SIDE) != 0 && load(at(aload(a, B_SIDE)), D_OUT_N) > 0).then(() {
+            outbox_park(g, l, a, slot);
+        });
+    });
+    store(l, L_ACTOR, 0);
+    current = at(load(l, L_WORKER));
+    (!current.is_null()).then(() { arel(current, W_IN_TURN, 0); });
+    v       = aload(slot, S_LIFE);
+    yielded = load(l, L_YIELD) != 0;
+    store(l, L_YIELD, 0);
+    done = (v & CLOSED) != 0 && (v & BLOCKED) == 0 && count_of(v) == taken && mailbox_empty(a)
+        && finalize(g, l, a, slot, v);
+    (!done).then(() { release(g, l, a, slot, gen, taken, yielded); });
+}
+
+// A checked trap ended one of `a`'s turns: the actor stops here. It runs
+// none of its remaining messages and not its own `stopped` (its state may
+// be half-updated); its state and memory are still dropped and freed.
+// Senders see Closed from now on. (W4 adds the `failed` hook and links.)
+fail = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, slot: Ptr<u8>) {
+    store(a, B_FAILED, 1);
+    aset(slot, S_LIFE, CLOSED).ignore_word();
+    stat(g, S_FAILED);
+}
+
+// Give up `a` after a turn that took `taken` messages: one add drops them
+// and the scheduled bit together, and what it returns says whether `a`
+// must run again (more messages, a stop to finish, waiters to release).
+release = (
+    g       : Ptr<u8>,
+    l       : Ptr<u8>,
+    a       : Ptr<u8>,
+    slot    : Ptr<u8>,
+    gen     : usize,
+    taken   : usize,
+    yielded : bool
+) {
+    t ::= taken;
+    loop((h) {
+        old     = asub(slot, S_LIFE, t + SCHED);
+        rest    = count_of(old) - t;
+        t       = 0;
+        free_up = (old & WAITED) != 0 && (rest < BOUND / 2 || (old & CLOSED) != 0);
+        again   = free_up || ((old & BLOCKED) == 0 && (rest > 0 || (old & CLOSED) != 0 || yielded));
+        (again && try_acquire(slot, gen)).match({
+            false => h.break(),
+            true  => free_up.match({
+                true  => release_waiters(g, l, a, slot, false),
+                false => { requeue(g, l, a, yielded); h.break(); },
+            }),
+        });
+    });
+}
+
+// Back of this worker's ring (not its LIFO slot), or the injector when the
+// thread has no worker or the turn yielded to preemption: requeued
+// locally it would run again before anything waiting in the injector.
+requeue = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, yielded: bool) {
+    w = at(load(l, L_WORKER));
+    (w.is_null() || yielded).match({
+        true  => inject(g, a),
+        false => ring_push(g, w, a),
+    });
+    wake_one(g);
+}
+
+// The actor is stopped, drained and owned by this worker: retire its
+// generation in one step, so every later send sees Closed, then refuse its
+// waiting senders, run `stopped`, and free it. False when a short-lived pin
+// or a late sender's count got in first; the turn is simply retried.
+finalize = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, slot: Ptr<u8>, v: usize) bool {
+    next = ((gen_of(v) + 1) & GEN_MASK) << GEN_SHIFT;
+    (acas(slot, S_LIFE, v, next) == v).match({
+        false => false,
+        true  => {
+            release_waiters(g, l, a, slot, true);
+            // The stopped entry runs the actor's `stopped` (skipped for a
+            // failed actor: a non-null second argument), then drops.
+            stopped = load(a, B_STOPPED);
+            failed  = load(a, B_FAILED) != 0;
+            (stopped != 0).then(() {
+                marker = failed.match({ true => a, false => null_ptr<u8>() });
+                guarded_call(
+                    stopped,
+                    a.offset(B_RECORD),
+                    marker
+                ).ignore_status();
+            });
+            side = at(load(a, B_SIDE));
+            (!side.is_null()).then(() {
+                (load(side, D_OUT_CAP) > 0).then(() { free_block(g, l, at(load(side, D_OUTBOX))); });
+                free_block(g, l, side);
+            });
+            index = ref_index(load(a, B_REF));
+            astore(slot, S_BODY, 0);
+            free_block(g, l, a);
+            give_slot(g, l, index);
+            stat(g, S_FINALIZED);
+            (aload(g, G_JOINERS) > 0).then(() {
+                mutex_lock(g.offset(G_JOIN_LOCK));
+                cond_broadcast(g.offset(G_JOIN_COND));
+                mutex_unlock(g.offset(G_JOIN_LOCK));
+            });
+            true
+        },
+    })
+}
+
+// ---------------------------------------------------------------------
+// workers
+// ---------------------------------------------------------------------
+
+// Polls (each after a spin hint) an idle worker makes before it sleeps.
+SPIN_ROUNDS: usize = 2000
+// How long a thief leaves a busy worker's LIFO slot alone: the actor there
+// was just woken by that worker's turn and will most likely run next on
+// it, with its message still in cache (Go's runnext).
+STEAL_DELAY_NS: u64 = 3000
+// Every n-th pick looks at the injector first, so nothing waits there
+// behind a worker that always has local work.
+INJECT_EVERY: usize = 61
+
+// Drive worker `w` until the runtime stops or the worker is handed to
+// another thread.
+drive = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>) {
+    store(l, L_WORKER, addr(w));
+    loop((h) {
+        a ::= find_work(g, w);
+        a.is_null().then(() { a = idle(g, w); });
+        a.is_null().match({
+            false => {
+                (load(w, W_SPINNING) != 0).then(() {
+                    store(w, W_SPINNING, 0);
+                    // The last worker looking found work: let another look.
+                    (asub(g, G_SPINNING, 1) == 1).then(() { wake_one(g); });
+                });
+                run(g, l, w, a);
+                (load(l, L_WORKER) != addr(w)).then(() { h.break(); });
+            },
+            true  => (aload(g, G_STATE) == 2).then(() { h.break(); }),
+        });
+    });
+}
+
+// The worker's next actor, or null: its LIFO slot, its ring, the injector,
+// half of another worker's ring, and last another busy worker's LIFO slot.
+find_work = (g: Ptr<u8>, w: Ptr<u8>) Ptr<u8> {
+    tick = load(w, W_TICK) + 1;
+    store(w, W_TICK, tick);
+    a ::= null_ptr<u8>();
+    (tick % INJECT_EVERY == 0).then(() { a = inject_take(g, w); });
+    (a.is_null() && aload(w, W_NEXT) != 0).then(() { a = at(aswap(w, W_NEXT, 0)); });
+    a.is_null().then(() { a = ring_pop(w); });
+    a.is_null().then(() { a = inject_take(g, w); });
+    a.is_null().then(() { a = steal(g, w); });
+    a.is_null().then(() { a = steal_next(g, w); });
+    // Count picks, not polls, so the injector's share does not depend on
+    // how long a worker sat idle.
+    a.is_null().then(() { store(w, W_TICK, tick - 1); });
+    a
+}
+
+next_random = (w: Ptr<u8>) usize {
+    x ::= load(w, W_RANDOM);
+    x = x ^ (x << 13);
+    x = x ^ (x >> 7);
+    x = x ^ (x << 17);
+    store(w, W_RANDOM, x);
+    x
+}
+
+steal = (g: Ptr<u8>, w: Ptr<u8>) Ptr<u8> {
+    n               = load(g, G_WORKERS);
+    me              = load(w, W_ID);
+    start           = next_random(w) % n;
+    got: Res<usize> = loop<usize>((h) {
+        Range(0, n).loop((i) {
+            v = (start + i) % n;
+            (v != me).then(() {
+                a = steal_half(w, worker_at(g, v));
+                (!a.is_null()).then(() {
+                    stat(g, S_STEALS);
+                    h.break(addr(a));
+                });
+            });
+        });
+        h.break();
+    });
+    got.match({ Ok(a) => at(a), None => null_ptr<u8>() })
+}
+
+// Take the actor in a busy worker's LIFO slot, if that worker is still in
+// the same turn STEAL_DELAY_NS later.
+steal_next = (g: Ptr<u8>, w: Ptr<u8>) Ptr<u8> {
+    n               = load(g, G_WORKERS);
+    me              = load(w, W_ID);
+    got: Res<usize> = loop<usize>((h) {
+        Range(0, n).loop((v) {
+            victim = worker_at(g, v);
+            x      = aload(victim, W_NEXT);
+            (v != me && x != 0 && aload(victim, W_IN_TURN) == 1).then(() {
+                turn     = aload(victim, W_TURNS);
+                deadline = monotonic_ns() + STEAL_DELAY_NS;
+                loop(() { monotonic_ns() < deadline }, (k) { spin_hint(); });
+                (aload(victim, W_TURNS) == turn && acas(victim, W_NEXT, x, 0) == x).then(() {
+                    stat(g, S_STEALS);
+                    h.break(x);
+                });
+            });
+        });
+        h.break();
+    });
+    got.match({ Ok(a) => at(a), None => null_ptr<u8>() })
+}
+
+// No work: look for a while as a spinning worker, then sleep.
+idle = (g: Ptr<u8>, w: Ptr<u8>) Ptr<u8> {
+    (load(w, W_SPINNING) == 0).then(() {
+        store(w, W_SPINNING, 1);
+        aadd(g, G_SPINNING, 1);
+    });
+    found ::= spin(g, w);
+    found.is_null().then(() {
+        store(w, W_SPINNING, 0);
+        asub(g, G_SPINNING, 1);
+        // No longer counted as looking: one last look, so that work
+        // published while this worker still counted is not missed.
+        found = find_work(g, w);
+        found.is_null().then(() { found = sleep(g, w); });
+    });
+    found
+}
+
+spin = (g: Ptr<u8>, w: Ptr<u8>) Ptr<u8> {
+    i :: usize = 0;
+    got: Res<usize> = loop<usize>(() { i < SPIN_ROUNDS && aload(
+        g,
+        G_STATE
+    ) != 2 }, (h) {
+        spin_hint();
+        ((i & 63) == 63).then(() {
+            a = find_work(g, w);
+            (!a.is_null()).then(() { h.break(addr(a)); });
+        });
+        i = i + 1;
+    });
+    got.match({ Ok(a) => at(a), None => null_ptr<u8>() })
+}
+
+// Mark the worker idle, look once more, then park until a waker (or the
+// runtime stopping) unparks it.
+sleep = (g: Ptr<u8>, w: Ptr<u8>) Ptr<u8> {
+    bit = one_bit(load(w, W_ID));
+    aadd(g, G_IDLE, bit);
+    a = find_work(g, w);
+    a.is_null().then(() {
+        asleep = aadd(g, G_SLEEPING, 1) + 1;
+        (asleep == load(g, G_WORKERS) && aload(g, G_STATE) == 1).then(() {
+            unpark(g.offset(G_EXIT_PARKER));
+        });
+        (aload(g, G_STATE) != 2).then(() { park(parker_of(w)); });
+        asub(g, G_SLEEPING, 1);
+    });
+    claim_back(g, w, bit);
+    a
+}
+
+// Take the idle bit back. If a waker took it first, the waker counted this
+// worker as looking for work and left a wake on its parker: keep both.
+claim_back = (g: Ptr<u8>, w: Ptr<u8>, bit: usize) {
+    ((aclear(g, G_IDLE, bit) & bit) == 0).then(() {
+        store(w, W_SPINNING, 1);
+        park_clear(parker_of(w));
+    });
+}
+
+// ---------------------------------------------------------------------
+// hand-off, spare threads and preemption
+// ---------------------------------------------------------------------
+
+// Give this thread's worker to a spare thread and finish the current turn
+// without one: the actors queued on the worker keep running while this
+// thread is busy (a long turn) or waiting (a join). Go's sysmon retaking a
+// P. The thread becomes a spare when its turn ends.
+detach = (g: Ptr<u8>, l: Ptr<u8>) {
+    w = at(load(l, L_WORKER));
+    (!w.is_null()).then(() {
+        store(l, L_WORKER, 0);
+        aadd(g, G_DETACHED, 1);
+        arel(w, W_IN_TURN, 0);
+        stat(g, S_HANDOFFS);
+        mutex_lock(g.offset(G_SPARE_LOCK));
+        aset(g, G_ORPHANS, one_bit(load(w, W_ID)));
+        (aload(g, G_SPARE_IDLE) > 0).match({
+            true  => cond_signal(g.offset(G_SPARE_COND)),
+            false => { start_thread(g, spare_marker(g)).unused(); },
+        });
+        mutex_unlock(g.offset(G_SPARE_LOCK));
+    });
+}
+
+// A thread that gave its worker away has finished its turn.
+reattach = (g: Ptr<u8>, l: Ptr<u8>) {
+    (load(l, L_WORKER) == 0).then(() {
+        (asub(g, G_DETACHED, 1) == 1 && aload(g, G_STATE) == 1).then(() {
+            unpark(g.offset(G_EXIT_PARKER));
+        });
+    });
+    store(l, L_WORKER, 0);
+}
+
+// A spare thread: drive whichever worker was handed off, until stopping.
+spare_loop = (g: Ptr<u8>, l: Ptr<u8>) {
+    lk = g.offset(G_SPARE_LOCK);
+    mutex_lock(lk);
+    loop((h) {
+        loop(() { aload(g, G_ORPHANS) == 0 && aload(g, G_STATE) != 2 }, (k) {
+            aadd(g, G_SPARE_IDLE, 1);
+            cond_wait(g.offset(G_SPARE_COND), lk);
+            asub(g, G_SPARE_IDLE, 1);
+        });
+        orphans = aload(g, G_ORPHANS);
+        (orphans == 0).then(() { h.break(); });
+        i = lowest_bit(orphans);
+        aclear(g, G_ORPHANS, one_bit(i));
+        mutex_unlock(lk);
+        drive(g, l, worker_at(g, i));
+        reattach(g, l);
+        mutex_lock(lk);
+    });
+    mutex_unlock(lk);
+}
+
+// The check the compiler puts at loop back-edges: when sysmon has flagged
+// this worker's turn as long, hand the worker off so the actors behind the
+// turn keep running. Plain code cannot suspend, so the turn continues on
+// this thread without a worker.
+actor_yield_check* = () {
+    word = thread_word();
+    (word != 0).then(() {
+        w = at(load(at(word), L_WORKER));
+        (!w.is_null() && aload(w, W_PREEMPT) != 0).then(() {
+            astore(w, W_PREEMPT, 0);
+            detach(globals(), at(word));
+        });
+    });
+}
+
+// The parking form of the check, for a function lowered to a resumable
+// state machine (H'): when flagged, the turn ends here and the actor goes
+// to the back of the injector, as Go requeues a preempted goroutine on its
+// global queue. True when the caller must park.
+actor_should_park* = () bool {
+    word = thread_word();
+    (word == 0).match({
+        true  => false,
+        false => {
+            w       = at(load(at(word), L_WORKER));
+            flagged = !w.is_null() && aload(w, W_PREEMPT) != 0;
+            flagged.then(() {
+                astore(w, W_PREEMPT, 0);
+                store(at(word), L_YIELD, 1);
+            });
+            flagged
+        },
+    })
+}
+
+// Every tick, flag each worker whose turn has not changed since the last
+// tick: that turn has run for at least one tick.
+sysmon = (g: Ptr<u8>) {
+    tick = load(g, G_SYSMON_NS).to_u64();
+    loop(() { aload(g, G_STATE) != 2 }, (h) {
+        nanosleep_ns(tick).discard();
+        Range(0, load(g, G_WORKERS)).loop((i) {
+            w    = worker_at(g, i);
+            turn = aload(w, W_TURNS);
+            long = aload(w, W_IN_TURN) == 1 && turn == load(w, W_SEEN);
+            (long && aload(w, W_PREEMPT) == 0).then(() {
+                astore(w, W_PREEMPT, 1);
+                stat(g, S_PREEMPTS);
+            });
+            // Work queued behind a long turn: make sure some worker is
+            // awake to steal it.
+            (long && (aload(w, W_NEXT) != 0 || ring_size(w) > 0)).then(() { wake_one(g); });
+            store(w, W_SEEN, turn);
+        });
+    });
+}
+
+// ---------------------------------------------------------------------
+// starting the runtime
+// ---------------------------------------------------------------------
+
+// The second byte of the globals marks a spare thread's argument; the
+// globals themselves mark sysmon's.
+spare_marker = (g: Ptr<u8>) Ptr<u8> { g.offset(8) }
+
+// Start a runtime thread running the runtime's thread body with `arg`.
+start_thread = (g: Ptr<u8>, arg: Ptr<u8>) bool {
+    n = aadd(g, G_THREADS, 1);
+    (n < MAX_THREADS).match({
+        false => { asub(g, G_THREADS, 1); false },
+        true  => thread_spawn(load(g, G_ENTRY), arg).match({
+            Ok(t)  => { astore(g.offset(G_THREAD_LIST), n, addr(t)); true },
+            Err(_) => { astore(g.offset(G_THREAD_LIST), n, 0); false },
+        }),
+    })
+}
+
+// The body of every thread the runtime starts: a worker's driver, sysmon,
+// or a spare waiting for a handed-off worker.
+actor_thread* = (arg: Ptr<u8>) {
+    g = globals();
+    l = local();
+    arg.same(g).match({
+        true  => sysmon(g),
+        false => {
+            (!arg.same(spare_marker(g))).then(() {
+                drive(g, l, arg);
+                reattach(g, l);
+            });
+            spare_loop(g, l);
+        },
+    });
+}
+
+// The runtime, made by the first spawn; the others wait for it. `entry` is
+// the code address of `actor_thread`, `exit` that of `actor_shutdown`,
+// which becomes the process's exit hook. Null when it cannot be made.
+runtime = (entry: usize, exit: usize) Ptr<u8> {
+    block = process_block();
+    (atomic_cas_usize(word_at(block, PB_ONCE), 0, 1) == 0).then(() {
+        g  = map(GLOBALS_BYTES);
+        ok = !g.is_null() && setup(g, entry);
+        ok.then(() {
+            store(block, PB_GLOBALS, addr(g));
+            atomic_store_usize(word_at(block, 0), exit);
+            atomic_store_usize(word_at(block, PB_ONCE), 2);
+            Range(0, load(g, G_WORKERS)).loop((i) { start_thread(g, worker_at(g, i)).unused(); });
+            (load(g, G_SYSMON_NS) > 0).then(() { start_thread(g, g).unused(); });
+        });
+        (!ok).then(() { atomic_store_usize(word_at(block, PB_ONCE), 3); });
+    });
+    loop(
+        () { atomic_load_usize(word_at(block, PB_ONCE)) == 1 },
+        (h) { nanosleep_ns(1000).discard(); }
+    );
+    globals()
+}
+
+// A positive number from the environment, or `fallback`.
+env_number = (name: str, fallback: usize) usize {
+    env_var(name).match({
+        None     => fallback,
+        Ok(text) => text.parse_i64().match({
+            Ok(n) => n.to_usize().value_or(fallback),
+            None  => fallback,
+        }),
+    })
+}
+
+// Workers: one per CPU the process may use (ZEN_ACTOR_WORKERS overrides),
+// at most MAX_WORKERS. Sysmon's tick: ZEN_ACTOR_SYSMON_US microseconds,
+// default 1000; 0 turns preemption off.
+setup = (g: Ptr<u8>, entry: usize) bool {
+    stub = stub_node(g);
+    astore(g, G_INJ_HEAD, stub);
+    astore(g, G_INJ_TAIL, stub);
+    store(g, G_ENTRY, entry);
+    // Slot 0 is never used, so Ref 0 names no actor.
+    store(g, G_SLOT_FRESH, 1);
+    wanted = env_number("ZEN_ACTOR_WORKERS", cpu_count());
+    n      = (wanted == 0).match({ true => 1, false => (wanted > MAX_WORKERS).match({ true => MAX_WORKERS, false => wanted }) });
+    store(g, G_SYSMON_NS, env_number("ZEN_ACTOR_SYSMON_US", 1000) * 1000);
+    // ZEN_ACTOR_CHECKED=1: one mapping per block, unmapped when freed.
+    set_checked(central_of(g), env_number("ZEN_ACTOR_CHECKED", 0) != 0);
+    base = map(n * WORKER_BYTES);
+    ready ::= !base.is_null();
+    ready.then(() {
+        store(g, G_WORKERS, n);
+        store(g, G_WORKER_BASE, addr(base));
+        Range(0, n).loop((i) {
+            w = worker_at(g, i);
+            store(w, W_ID, i);
+            store(w, W_RANDOM, i * 2654435761 + 1);
+            ready = ready && parker_init(parker_of(
+                w
+            )).match({ Ok(_) => true, Err(_) => false });
+        });
+        ready = ready && mutex_init(g.offset(
+            G_JOIN_LOCK
+        )).match({ Ok(_) => true, Err(_) => false })
+            && cond_init(g.offset(
+                G_JOIN_COND
+            )).match({ Ok(_) => true, Err(_) => false })
+            && mutex_init(g.offset(
+                G_SPARE_LOCK
+            )).match({ Ok(_) => true, Err(_) => false })
+            && cond_init(g.offset(
+                G_SPARE_COND
+            )).match({ Ok(_) => true, Err(_) => false })
+            && parker_init(g.offset(
+                G_EXIT_PARKER
+            )).match({ Ok(_) => true, Err(_) => false });
+    });
+    ready
+}
+
+// ---------------------------------------------------------------------
+// the compilers' entry points
+// ---------------------------------------------------------------------
+
+// A zeroed body for an actor whose compiler-made record is `record_bytes`,
+// starting the runtime on first use; null when memory or the runtime
+// cannot be had. `entry` and `exit` are the code addresses of
+// `actor_thread` and `actor_shutdown`.
+actor_new* = (record_bytes: usize, entry: usize, exit: usize) Ptr<u8> {
+    g = runtime(entry, exit);
+    g.is_null().match({
+        true  => g,
+        false => {
+            bytes = (B_RECORD + record_bytes + 7) / 8 * 8;
+            a     = new_block(g, local(), bytes);
+            (!a.is_null()).then(() { zero(a, bytes); });
+            a
+        },
+    })
+}
+
+// One process-wide copy of `bytes` at `init`, made by the first caller; later
+// callers (and `bytes` 0) get the same copy. The compilers keep the process
+// Env here, so an actor's record need not carry its own copy of the Context:
+// a turn builds the Context from this and the actor's allocator.
+actor_env* = (bytes: usize, init: Ptr<u8>) Ptr<u8> {
+    g = globals();
+    (!g.is_null() && aload(g, G_ENV) == 0 && bytes > 0).then(() {
+        made = new_block(g, local(), bytes);
+        (!made.is_null()).then(() {
+            made.copy_from(init, bytes);
+            (acas(g, G_ENV, 0, addr(made)) != 0).then(() { free_block(g, local(), made); });
+        });
+    });
+    g.is_null().match({ true => g, false => at(aload(g, G_ENV)) })
+}
+
+// Where the compiler's record (state, allocator) lives in a body.
+actor_record* = (cell: Ptr<u8>) Ptr<u8> { cell.offset(B_RECORD) }
+
+// Release a body whose actor never started.
+actor_discard* = (cell: Ptr<u8>) { free_block(globals(), local(), cell); }
+
+// Register the actor and queue its `started` turn (code address, or 0).
+// `stopped` runs after its last message, before its memory goes. 0 started,
+// 2 no slot can be had or the process is exiting.
+actor_start* = (cell: Ptr<u8>, started: usize, stopped: usize) i32 {
+    g     = globals();
+    l     = local();
+    index = (aload(g, G_STATE) == 2).match({ true => 0, false => take_slot(g, l) });
+    (index == 0).match({
+        true  => 2,
+        false => {
+            slot = slot_at(g, index);
+            gen  = gen_of(aload(slot, S_LIFE));
+            store(cell, B_REF, as_ref(index, gen));
+            store(cell, B_STOPPED, stopped);
+            mailbox_init(cell);
+            arel(slot, S_WAITING, 0);
+            arel(slot, S_BODY, addr(cell));
+            m = (started == 0).match({ true => null_ptr<u8>(), false => new_block(
+                g,
+                l,
+                M_PAYLOAD
+            ) });
+            // The life word already holds this generation, with nothing
+            // accepted; a stale sender may be adding and taking back a
+            // count this moment, so the started turn is added, not stored.
+            (!m.is_null()).then(() {
+                store(m, M_TURN, started);
+                mailbox_put(cell, addr(m));
+                aadd(slot, S_LIFE, SCHED + 1);
+                schedule(g, l, cell);
+            });
+            0
+        },
+    })
+}
+
+// The Ref of a started actor.
+actor_ref* = (cell: Ptr<u8>) u64 { load(cell, B_REF).to_u64() }
+
+// One str or byte-buffer argument copied after the payload record, and
+// where its pointer and length go in the copy (the compiler fills these).
+SLICE_WORDS: usize = 4
+
+// Send a message built from the payload record (`size` bytes at `data`)
+// and `count` slices. 0 accepted (or waiting in this turn's outbox), 1
+// Closed, 2 Full: too large, or out of memory. Waits for room when the
+// mailbox is full; see `send_message`.
+actor_send* = (
+    r      : u64,
+    turn   : usize,
+    data   : Ptr<u8>,
+    size   : usize,
+    slices : Ptr<u8>,
+    count  : usize
+) i32 {
+    post(r, turn, data, size, slices, count, MODE_SEND)
+}
+
+// As `actor_send`, but a full mailbox answers 2 (Full) and drops the
+// message.
+actor_offer* = (
+    r      : u64,
+    turn   : usize,
+    data   : Ptr<u8>,
+    size   : usize,
+    slices : Ptr<u8>,
+    count  : usize
+) i32 {
+    post(r, turn, data, size, slices, count, MODE_OFFER)
+}
+
+// As `actor_send`, past the bound: for replies, whose slot the asker
+// reserved by waiting for exactly one.
+actor_reply* = (
+    r      : u64,
+    turn   : usize,
+    data   : Ptr<u8>,
+    size   : usize,
+    slices : Ptr<u8>,
+    count  : usize
+) i32 {
+    post(r, turn, data, size, slices, count, MODE_RESERVED)
+}
+
+post = (
+    r      : u64,
+    turn   : usize,
+    data   : Ptr<u8>,
+    size   : usize,
+    slices : Ptr<u8>,
+    count  : usize,
+    mode   : usize
+) i32 {
+    g = globals();
+    g.is_null().match({
+        true  => SEND_CLOSED,
+        false => {
+            total ::= M_PAYLOAD + size;
+            fits  ::= size <= MAX_MESSAGE_BYTES;
+            Range(0, count).loop((i) {
+                n    = load(slices, i * SLICE_WORDS + 3);
+                fits = fits && n <= MAX_MESSAGE_BYTES - (total - M_PAYLOAD);
+                fits.then(() { total = total + n; });
+            });
+            l = local();
+            m = fits.match({ true => new_block(
+                g,
+                l,
+                total
+            ), false => null_ptr<u8>() });
+            m.is_null().match({
+                true  => SEND_FULL,
+                false => {
+                    store(m, M_TURN, turn);
+                    payload = m.offset(M_PAYLOAD);
+                    (size > 0).then(() { payload.copy_from(data, size); });
+                    tail ::= payload.offset(size);
+                    Range(0, count).loop((i) {
+                        n = load(slices, i * SLICE_WORDS + 3);
+                        (n > 0).then(
+                            () { tail.copy_from(
+                                pointer_at(load(slices, i * SLICE_WORDS + 2)),
+                                n
+                            ); }
+                        );
+                        store(
+                            payload.offset(load(slices, i * SLICE_WORDS)),
+                            0,
+                            addr(tail)
+                        );
+                        store(
+                            payload.offset(load(slices, i * SLICE_WORDS + 1)),
+                            0,
+                            n
+                        );
+                        tail = tail.offset(n);
+                    });
+                    result = send_message(
+                        g,
+                        l,
+                        r.to_usize().value_or(0),
+                        m,
+                        mode
+                    );
+                    (result == SEND_QUEUED).match({ true => SEND_OK, false => result })
+                },
+            })
+        },
+    })
+}
+
+// Close admission: messages already accepted still run, then `stopped`,
+// then the actor is freed. Idempotent; a stale Ref does nothing.
+actor_stop* = (r: u64) {
+    g = globals();
+    (!g.is_null()).then(() { stop_ref(g, local(), r.to_usize().value_or(0)); });
+}
+
+stop_ref = (g: Ptr<u8>, l: Ptr<u8>, r: usize) {
+    slot = slot_of_ref(g, r);
+    gen  = ref_gen(r);
+    (!slot.is_null()).then(() {
+        loop((h) {
+            v = aload(slot, S_LIFE);
+            (gen_of(v) != gen || (v & CLOSED) != 0).then(() { h.break(); });
+            take = (v & (SCHED | BLOCKED)) == 0;
+            want = v | CLOSED | take.match({ true => SCHED, false => 0 });
+            (acas(slot, S_LIFE, v, want) == v).then(() {
+                take.then(() { schedule(g, l, at(load(slot, S_BODY))); });
+                h.break();
+            });
+        });
+    });
+}
+
+// Wait until the actor has stopped and run `stopped`. From the actor
+// itself it returns at once. A thread driving a worker hands the worker
+// off first, so the actors queued on it keep running meanwhile.
+actor_join* = (r: u64) {
+    g = globals();
+    (!g.is_null()).then(() {
+        l    = local();
+        rr   = r.to_usize().value_or(0);
+        slot = slot_of_ref(g, rr);
+        gen  = ref_gen(rr);
+        me   = at(load(l, L_ACTOR));
+        own  = !me.is_null() && load(me, B_REF) == rr;
+        (!own && !slot.is_null() && gen_of(aload(slot, S_LIFE)) == gen).then(() {
+            (load(l, L_WORKER) != 0).then(() { detach(g, l); });
+            aadd(g, G_JOINERS, 1);
+            mutex_lock(g.offset(G_JOIN_LOCK));
+            loop(() { gen_of(aload(slot, S_LIFE)) == gen }, (h) {
+                cond_wait(g.offset(G_JOIN_COND), g.offset(G_JOIN_LOCK));
+            });
+            mutex_unlock(g.offset(G_JOIN_LOCK));
+            asub(g, G_JOINERS, 1);
+        });
+    });
+}
+
+// The exit hook, on the main thread after `main` returns: wait until every
+// accepted message (and every message those sent) has run, stop every
+// actor still alive and let each run `stopped`, then stop the threads.
+actor_shutdown* = () {
+    g = globals();
+    (!g.is_null()).then(() {
+        l = local();
+        astore(g, G_STATE, 1);
+        before ::= usize.MAX;
+        loop((h) {
+            wait_quiet(g);
+            live = live_actors(g);
+            // Nothing left, or the last round of stops freed nothing: actors
+            // still alive are wedged waiting for each other.
+            (live == 0 || live == before).then(() { h.break(); });
+            before = live;
+            Range(1, aload(g, G_SLOT_FRESH)).loop((i) {
+                slot = slot_at(g, i);
+                life = aload(slot, S_LIFE);
+                (aload(slot, S_BODY) != 0).then(() { stop_ref(g, l, as_ref(i, gen_of(life))); });
+            });
+        });
+        astore(g, G_STATE, 2);
+        (env_number("ZEN_ACTOR_STATS", 0) != 0).then(() { print_stats(g, l); });
+        Range(0, load(g, G_WORKERS)).loop((i) { unpark(parker_of(worker_at(g, i))); });
+        mutex_lock(g.offset(G_SPARE_LOCK));
+        cond_broadcast(g.offset(G_SPARE_COND));
+        mutex_unlock(g.offset(G_SPARE_LOCK));
+        Range(0, aload(g, G_THREADS)).loop((i) {
+            t = aload(g.offset(G_THREAD_LIST), i);
+            (t != 0).then(() { thread_join(at(t)).ignore(); });
+        });
+    });
+}
+
+// Actors spawned and not yet finalised (a scan of the registry).
+live_actors = (g: Ptr<u8>) usize {
+    n :: usize = 0;
+    Range(1, aload(g, G_SLOT_FRESH)).loop((i) {
+        (aload(slot_at(g, i), S_BODY) != 0).then(() { n = n + 1; });
+    });
+    n
+}
+
+// Every worker asleep with nothing queued, and no thread finishing a turn
+// without a worker: nothing can make more work.
+quiet = (g: Ptr<u8>) bool {
+    aload(g, G_SLEEPING) == load(g, G_WORKERS) && aload(g, G_DETACHED) == 0 && injector_empty(g)
+}
+
+wait_quiet = (g: Ptr<u8>) {
+    loop(() { !quiet(g) }, (h) { park(g.offset(G_EXIT_PARKER)); });
+}
+
+discard = (code: i64) {}
+
+// A flag the caller has no use for.
+unused = (flag: bool) {}
+
+// A word the caller has no use for.
+ignore_word = (word: usize) {}
+
+// A status the caller has no use for.
+ignore_status = (code: i32) {}
+
+// ZEN_ACTOR_STATS=1: the runtime's counters on stderr at exit, one line.
+STAT_NAMES: str = "queued closed full releases breaks finalized handoffs preempts steals spreads failed"
+
+print_stats = (g: Ptr<u8>, l: Ptr<u8>) {
+    buf = new_block(g, l, 512);
+    (!buf.is_null()).then(() {
+        n :: usize = 0;
+        n = put_text(buf, n, "actor-runtime:");
+        i :: usize = 0;
+        STAT_NAMES.split(' ').loop((name) {
+            n = put_text(buf, n, " ");
+            n = put_text(buf, n, name);
+            n = put_text(buf, n, "=");
+            n = put_number(buf, n, aload(g, G_STATS + i));
+            i = i + 1;
+        });
+        n = put_text(buf, n, "\n");
+        write_all(2, str(data: buf, len: n)).ignore();
+        free_block(g, l, buf);
+    });
+}
+
+put_text = (buf: Ptr<u8>, at: usize, text: str) usize {
+    (text.len > 0).then(() { buf.offset(at).copy_from(text.ptr(), text.len); });
+    at + text.len
+}
+
+put_number = (buf: Ptr<u8>, at: usize, value: usize) usize {
+    digits :: usize = 1;
+    scale  ::= value;
+    loop(() { scale >= 10 }, (h) { scale = scale / 10; digits = digits + 1; });
+    v ::= value;
+    k ::= digits;
+    loop(() { k > 0 }, (h) {
+        k = k - 1;
+        buf.write(at + k, (48 + v % 10).to_u8().value_or(48));
+        v = v / 10;
+    });
+    at + digits
+}

@@ -1,0 +1,57 @@
+// One turn sends 600 numbered messages to an actor whose mailbox holds 256.
+// The first 256 go straight in; the rest wait in the sender's outbox, and
+// the sender runs no more turns until the receiver has drained below half
+// its bound and taken them, in order. With one worker the interleaving is
+// the same every run: the sender parks with 344 waiting, the receiver's
+// end-of-turn release finds it, and every message arrives exactly once.
+
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Receiver = {
+    next :: u64 = 0,
+    out_of_order :: u64 = 0,
+}
+
+Receiver.impl(Actor, {
+    take = (self :: @Self, ctx: Context, n: u64) {
+        (n != self.next).then(
+            () { self.out_of_order = self.out_of_order + 1; }
+        );
+        self.next = n + 1;
+        (n == 599).then(() {
+            println(
+                "received {} out of order {}",
+                self.next,
+                self.out_of_order
+            );
+        });
+    }
+})
+
+Sender = { sent :: u64 = 0 }
+
+Sender.impl(Actor, {
+    flood = (self :: @Self, ctx: Context, to: Ref<Receiver>, count: u64) {
+        loop(() { self.sent < count }, (h) {
+            to.take(self.sent).ignore();
+            self.sent = self.sent + 1;
+        });
+    }
+
+    report = (self :: @Self, ctx: Context) {
+        println("sender ran again after {} sends", self.sent);
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    receiver = env.spawn(Receiver()).try();
+    sender   = env.spawn(Sender()).try();
+    sender.flood(receiver, 600).try();
+    sender.report().try();
+    Ok(0)
+}

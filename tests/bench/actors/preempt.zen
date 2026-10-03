@@ -1,0 +1,185 @@
+// Preemption: HOGS actors run CPU-bound turns of TURN_MS milliseconds
+// beside PROBES ping-pong pairs that measure round-trip latency. The hogs'
+// loops carry the check a compiler puts at loop back-edges
+// (actor_yield_check); once sysmon flags a long turn, the check hands the
+// worker to another thread so the probes keep running. With
+// ZEN_ACTOR_SYSMON_US=0 there is no preemption, and probes wait behind hogs.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Vec } = std.collections
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ actor_yield_check } = std.actor.actor_runtime
+{ println } = std.io
+{ param } = common
+
+BUCKETS: usize = 48
+ONE: u64 = 1
+
+Tally = {
+    left :: usize,
+    counts :: Res<Vec<u64>> = None,
+    rounds :: u64 = 0,
+    worst :: u64 = 0,
+    hog_rounds :: u64 = 0,
+}
+
+Tally.impl(Actor, {
+    prepare = (self :: @Self, ctx: Context) {
+        made ::= ctx.alloc.Vec<u64>();
+        i    :: usize = 0;
+        loop(() { i < BUCKETS }, (h) { made.add(0).ignore(); i = i + 1; });
+        self.counts = Ok(made);
+    }
+
+    hog = (self :: @Self, ctx: Context, rounds: u64) { self.hog_rounds = self.hog_rounds + rounds; }
+
+    probe = (self :: @Self, ctx: Context, bucket: u64, worst: u64) {
+        self.counts.match({
+            Ok(list) => {
+                at = bucket.to_usize().value_or(0);
+                grown ::= list;
+                grown.set(
+                    at,
+                    list.get(at).value_or(0) + 1
+                ).match({ Ok(_) => (), None => () });
+                self.counts = Ok(grown);
+            },
+            None     => (),
+        });
+        self.rounds = self.rounds + 1;
+        (worst > self.worst).then(() { self.worst = worst; });
+    }
+
+    finish = (self :: @Self, ctx: Context) {
+        self.left = self.left - 1;
+        (self.left == 0).then(() {
+            p50 = self.counts.match({ Ok(list) => percentile(
+                list,
+                self.rounds,
+                50
+            ), None => 0 });
+            p99 = self.counts.match({ Ok(list) => percentile(
+                list,
+                self.rounds,
+                99
+            ), None => 0 });
+            println(
+                "bench=preempt probe_rounds={} p50_ns<={} p99_ns<={} max_us={} hog_rounds_M={}",
+                self.rounds,
+                p50,
+                p99,
+                self.worst / 1000,
+                self.hog_rounds / 1000000
+            );
+        });
+    }
+})
+
+// The upper bound, in nanoseconds, of the bucket holding the `pct`-th
+// percentile; bucket b holds round trips of [2^b, 2^(b+1)) ns.
+percentile = (counts: Vec<u64>, total: u64, pct: u64) u64 {
+    want = total * pct / 100;
+    seen  :: u64 = 0;
+    bound :: u64 = 0;
+    i     :: u64 = 0;
+    counts.loop((c) {
+        (seen < want || seen == 0).then(() {
+            seen  = seen + c;
+            bound = i;
+        });
+        i = i + 1;
+    });
+    ONE << (bound + 1)
+}
+
+log2 = (ns: u64) u64 {
+    b :: u64 = 0;
+    v ::= ns;
+    loop(() { v > 1 }, (h) { v = v >> 1; b = b + 1; });
+    b
+}
+
+Hog = { turn_ns: u64, until: u64, tally: Ref<Tally>, me :: Res<Ref<Hog>> = None, x :: u64 = 1 }
+
+Hog.impl(Actor, {
+    link = (self :: @Self, ctx: Context, me: Ref<Hog>) { self.me = Ok(me); }
+
+    burn = (self :: @Self, ctx: Context) {
+        start = ctx.env.clock.since_start().ns;
+        rounds :: u64 = 0;
+        loop(() { ctx.env.clock.since_start().ns - start < self.turn_ns }, (h) {
+            k :: u64 = 0;
+            loop(() { k < 1000 }, (j) {
+                self.x = self.x *% 6364136223846793005 +% 1442695040888963407;
+                k      = k + 1;
+            });
+            rounds = rounds + 1000;
+            actor_yield_check();
+        });
+        self.tally.hog(rounds + self.x % 2).ignore();
+        (ctx.env.clock.since_start().ns < self.until).match({
+            true  => self.me.match({ Ok(me) => me.burn().ignore(), None => () }),
+            false => self.tally.finish().ignore(),
+        });
+    }
+})
+
+Pong = { ping :: Res<Ref<Ping>> = None }
+
+Pong.impl(Actor, {
+    link = (self :: @Self, ctx: Context, p: Ref<Ping>) { self.ping = Ok(p); }
+    ball = (self :: @Self, ctx: Context, sent: u64) {
+        self.ping.match({ Ok(p) => p.ball(sent).ignore(), None => () });
+    }
+})
+
+Ping = { pong: Ref<Pong>, tally: Ref<Tally>, until: u64 }
+
+Ping.impl(Actor, {
+    serve = (self :: @Self, ctx: Context) { self.pong.ball(
+        ctx.env.clock.since_start().ns
+    ).ignore(); }
+
+    ball = (self :: @Self, ctx: Context, sent: u64) {
+        now  = ctx.env.clock.since_start().ns;
+        took = now - sent;
+        self.tally.probe(log2(took), took).ignore();
+        (now < self.until).match({
+            true  => self.pong.ball(now).ignore(),
+            false => self.tally.finish().ignore(),
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    hogs     = param(env, "HOGS", 4);
+    probes   = param(env, "PROBES", 4);
+    duration = param(env, "DURATION", 10).to_u64() * 1000000000;
+    turn_ms  = param(env, "TURN_MS", 50).to_u64();
+    tally    = env.spawn(Tally(left: hogs + probes)).try();
+    tally.prepare().try();
+    until = env.clock.since_start().ns + duration;
+    i :: usize = 0;
+    loop(() { i < probes }, (h) {
+        pong = env.spawn(Pong()).try();
+        ping = env.spawn(Ping(pong: pong, tally: tally, until: until)).try();
+        pong.link(ping).try();
+        ping.serve().try();
+        i = i + 1;
+    });
+    i = 0;
+    loop(() { i < hogs }, (h) {
+        hog = env.spawn(Hog(
+            turn_ns: turn_ms * 1000000,
+            until: until,
+            tally: tally
+        )).try();
+        hog.link(hog).try();
+        hog.burn().try();
+        i = i + 1;
+    });
+    Ok(0)
+}

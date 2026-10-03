@@ -1,0 +1,310 @@
+// Memory for the actor runtime: messages, actor bodies, outboxes and waiter
+// nodes come from size classes, so a steady stream of messages allocates
+// nothing from the kernel.
+//
+// Each thread that runs actors keeps its own free list per class (`Heap`),
+// touched without atomics. A block may be freed by any thread: it goes onto
+// that thread's own list, whichever thread carved it. A list that grows
+// past two batches hands one batch (BATCH blocks, linked) to the class's
+// central stack under a spin lock, and a thread whose list is empty takes a
+// batch back before it carves new memory. So a producer whose messages are
+// freed by a consumer on another core pays one lock per BATCH messages,
+// not an atomic per message: remote frees are batched.
+//
+// Blocks carry no header. Memory comes from the kernel in 2 MiB spans cut
+// into 64 KiB slabs aligned to 64 KiB, and a slab's first 64 bytes record
+// its class, so a block's class is found from its address. A request above
+// the largest class gets its own mapping, aligned the same way, whose
+// header says so; freeing it unmaps it.
+
+{ Ptr, null_ptr } = std.mem
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ mmap, munmap, madvise, map_private_anonymous, pointer_at, address_of, platform_darwin } = std.sys
+{ atomic_swap_u32, atomic_store_u32 } = std.sys
+
+// The address of word `i` of the block at `p`, and plain word access.
+word_at* = (p: Ptr<u8>, i: usize) Ptr<usize> { p.to<usize>().offset(i) }
+
+load* = (p: Ptr<u8>, i: usize) usize { p.to<usize>().read(i) }
+
+store* = (p: Ptr<u8>, i: usize, value: usize) { p.to<usize>().write(i, value); }
+
+pointer* = (p: Ptr<u8>, i: usize) Ptr<u8> { pointer_at(load(p, i)) }
+
+// A spin lock on a u32 word: 0 free, 1 held. For short critical sections
+// that are rarely contended (central batches, span refills).
+lock* = (word: Ptr<u32>) {
+    loop(() { atomic_swap_u32(word, 1) != 0 }, (h) {});
+}
+
+unlock* = (word: Ptr<u32>) { atomic_store_u32(word, 0); }
+
+SLAB_BYTES: usize = 65536
+SPAN_BYTES*: usize = 2097152
+// A slab's header: its class, then (for a large block) its mapping's length.
+SLAB_HEADER: usize = 64
+LARGE: usize = 65535
+// Blocks moved between a thread and the central stack at a time.
+BATCH: usize = 64
+
+// Bytes per class: 16 to 128 in steps of 16, then four classes per
+// doubling up to 16 KiB. Every class is a multiple of 16, so every block is
+// 16-byte aligned.
+CLASSES*: usize = 36
+LARGEST: usize = 16384
+SMALL: usize = 128
+STEP: usize = 32
+
+class_size = (c: usize) usize {
+    (c < 8).match({
+        true  => (c + 1) * 16,
+        false => {
+            k = c - 8;
+            g = k / 4;
+            (SMALL << g) + (k % 4 + 1) * (STEP << g)
+        },
+    })
+}
+
+// The smallest class that holds `bytes`.
+class_of = (bytes: usize) usize {
+    (bytes <= 128).match({
+        true  => (bytes <= 16).match({ true => 0, false => (bytes + 15) / 16 - 1 }),
+        false => {
+            g :: usize = 0;
+            loop(() { ((SMALL * 2) << g) < bytes }, (h) { g = g + 1; });
+            step = STEP << g;
+            8 + g * 4 + (bytes - (SMALL << g) + step - 1) / step - 1
+        },
+    })
+}
+
+// A thread's cache: per class, its free list, the list's length, and the
+// slab it is carving (next block, end). Four words per class.
+HEAP_WORDS: usize = 4
+HEAP_BYTES*: usize = 1152
+
+heap_free = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+    heap,
+    c * HEAP_WORDS
+) }
+
+heap_count = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+    heap,
+    c * HEAP_WORDS + 1
+) }
+
+heap_next = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+    heap,
+    c * HEAP_WORDS + 2
+) }
+
+heap_end = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+    heap,
+    c * HEAP_WORDS + 3
+) }
+
+// The process-wide part, inside the runtime's globals: per class a lock
+// word and a stack of batches, then the span being cut into slabs.
+//
+//     +0                  per class: lock (u32), then the batch stack
+//     +CLASSES * 16       the span lock, the next slab, the span's end
+CENTRAL_BYTES*: usize = 608
+
+central_lock = (central: Ptr<u8>, c: usize) Ptr<u32> { central.offset(
+    c * 16
+).to<u32>() }
+
+central_stack = (central: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+    central,
+    c * 2 + 1
+) }
+
+span_lock = (central: Ptr<u8>) Ptr<u32> { central.offset(
+    CLASSES * 16
+).to<u32>() }
+
+span_next = (central: Ptr<u8>) Ptr<usize> { word_at(central, CLASSES * 2 + 1) }
+
+span_end = (central: Ptr<u8>) Ptr<usize> { word_at(central, CLASSES * 2 + 2) }
+
+// Checked mode: every block gets its own mapping and freeing unmaps it, so
+// a use after free faults at once instead of reading a recycled block. For
+// sanitizer and stress runs only (each block costs a system call).
+set_checked* = (central: Ptr<u8>, on: bool) {
+    store(central, CLASSES * 2 + 3, on.match({ true => 1, false => 0 }));
+}
+
+checked = (central: Ptr<u8>) bool { load(central, CLASSES * 2 + 3) != 0 }
+
+// `bytes` of fresh zeroed memory starting on an `align` boundary; null
+// when the kernel refuses.
+map_aligned* = (bytes: usize, align: usize) Ptr<u8> {
+    total = bytes + align;
+    got   = mmap(0, total, 3, map_private_anonymous(), -1, 0);
+    (got < 0).match({
+        true  => null_ptr<u8>(),
+        false => {
+            raw     = got.to_usize().value_or(0);
+            aligned = (raw + align - 1) / align * align;
+            lead    = aligned - raw;
+            (lead > 0).then(() { munmap(raw, lead).discard(); });
+            (align - lead > 0).then(() {
+                munmap(aligned + bytes, align - lead).discard();
+            });
+            pointer_at(aligned)
+        },
+    })
+}
+
+// A whole 2 MiB span, asking Linux for one huge page: a million actors'
+// bodies and slots then cost a few hundred page faults instead of tens of
+// thousands. (MADV_HUGEPAGE; macOS has no such advice.)
+map_span* = () Ptr<u8> {
+    span = map_aligned(SPAN_BYTES, SPAN_BYTES);
+    (!span.is_null() && platform_darwin() == 0).then(() {
+        madvise(address_of(span), SPAN_BYTES, 14).discard();
+    });
+    span
+}
+
+// A fresh slab, cut from the current span (a new span when it is used up).
+new_slab = (central: Ptr<u8>) Ptr<u8> {
+    lock(span_lock(central));
+    (span_next(central).read(0) >= span_end(central).read(0)).then(() {
+        span = map_span();
+        (!span.is_null()).then(() {
+            span_next(central).write(0, address_of(span));
+            span_end(central).write(0, address_of(span) + SPAN_BYTES);
+        });
+    });
+    next = span_next(central).read(0);
+    slab = (next < span_end(central).read(0)).match({
+        true  => {
+            span_next(central).write(0, next + SLAB_BYTES);
+            pointer_at(next)
+        },
+        false => null_ptr<u8>(),
+    });
+    unlock(span_lock(central));
+    slab
+}
+
+// A block of at least `bytes`, 16-byte aligned; null when out of memory.
+// Its contents are whatever the last user left.
+alloc* = (heap: Ptr<u8>, central: Ptr<u8>, bytes: usize) Ptr<u8> {
+    (bytes > LARGEST || checked(central)).match({
+        true  => alloc_large(bytes),
+        false => {
+            c    = class_of(bytes);
+            head = heap_free(heap, c).read(0);
+            (head != 0).match({
+                true  => {
+                    block = pointer_at(head);
+                    heap_free(heap, c).write(0, load(block, 0));
+                    heap_count(heap, c).write(0, heap_count(heap, c).read(0) - 1);
+                    block
+                },
+                false => refill(heap, central, c),
+            })
+        },
+    })
+}
+
+// The class's list is empty: take a batch from the central stack, else
+// carve the next block of the thread's slab, else start a new slab.
+refill = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) Ptr<u8> {
+    lock(central_lock(central, c));
+    batch = central_stack(central, c).read(0);
+    (batch != 0).then(() {
+        central_stack(central, c).write(0, load(pointer_at(batch), 1));
+    });
+    unlock(central_lock(central, c));
+    (batch != 0).match({
+        true  => {
+            block = pointer_at(batch);
+            heap_free(heap, c).write(0, load(block, 0));
+            heap_count(heap, c).write(0, BATCH - 1);
+            block
+        },
+        false => carve(heap, central, c),
+    })
+}
+
+carve = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) Ptr<u8> {
+    size = class_size(c);
+    (heap_next(heap, c).read(0) + size > heap_end(heap, c).read(0)).then(() {
+        slab = new_slab(central);
+        (!slab.is_null()).then(() {
+            store(slab, 0, c);
+            store(slab, 1, size);
+            heap_next(heap, c).write(0, address_of(slab) + SLAB_HEADER);
+            heap_end(heap, c).write(0, address_of(slab) + SLAB_BYTES);
+        });
+    });
+    next = heap_next(heap, c).read(0);
+    (next != 0 && next + size <= heap_end(heap, c).read(0)).match({
+        true  => {
+            heap_next(heap, c).write(0, next + size);
+            pointer_at(next)
+        },
+        false => null_ptr<u8>(),
+    })
+}
+
+alloc_large = (bytes: usize) Ptr<u8> {
+    (bytes <= usize.MAX - SLAB_HEADER - SLAB_BYTES).match({
+        false => null_ptr<u8>(),
+        true  => {
+            total = (bytes + SLAB_HEADER + 4095) / 4096 * 4096;
+            base  = map_aligned(total, SLAB_BYTES);
+            base.is_null().match({
+                true  => base,
+                false => {
+                    store(base, 0, LARGE);
+                    store(base, 1, total);
+                    base.offset(SLAB_HEADER)
+                },
+            })
+        },
+    })
+}
+
+// The slab, or large mapping, that `block` lies in.
+slab_of = (block: Ptr<u8>) Ptr<u8> {
+    pointer_at(address_of(block) / SLAB_BYTES * SLAB_BYTES)
+}
+
+// Return a block to this thread's list (any thread may free any block).
+free* = (heap: Ptr<u8>, central: Ptr<u8>, block: Ptr<u8>) {
+    slab = slab_of(block);
+    c    = load(slab, 0);
+    (c == LARGE).match({
+        true  => { munmap(address_of(slab), load(slab, 1)).discard(); },
+        false => {
+            store(block, 0, heap_free(heap, c).read(0));
+            heap_free(heap, c).write(0, address_of(block));
+            n = heap_count(heap, c).read(0) + 1;
+            heap_count(heap, c).write(0, n);
+            (n >= BATCH * 2).then(() { give_batch(heap, central, c); });
+        },
+    });
+}
+
+// Hand the first BATCH blocks of the list to the central stack.
+give_batch = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) {
+    first = heap_free(heap, c).read(0);
+    last ::= pointer_at(first);
+    Range(1, BATCH).loop((i) { last = pointer(last, 0); });
+    heap_free(heap, c).write(0, load(last, 0));
+    heap_count(heap, c).write(0, heap_count(heap, c).read(0) - BATCH);
+    store(last, 0, 0);
+    batch = pointer_at(first);
+    lock(central_lock(central, c));
+    store(batch, 1, central_stack(central, c).read(0));
+    central_stack(central, c).write(0, first);
+    unlock(central_lock(central, c));
+}
+
+// A result the caller has no use for.
+discard = (code: i64) {}

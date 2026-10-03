@@ -47,8 +47,10 @@ runtime_call* = (
 )
                 Res<Value, LowerError> {
     // `atomic_<op>_<type>`: the operation is the same for every width.
+    // The native targets give every ordering the sequentially consistent
+    // instruction: `atomic_store_release_usize` lowers as `atomic_store`.
     operation = name.starts_with("atomic_").match({
-        true  => name.slice(0, name.rfind('_').value_or(name.len)),
+        true  => ordered(name.slice(0, name.rfind('_').value_or(name.len))),
         false => name,
     });
     operation.match({
@@ -108,6 +110,8 @@ runtime_call* = (
             ))).try();
             Ok(out)
         },
+        // A spin-wait hint; the native targets spin without one.
+        "spin_hint"     => lo.unit(),
         "process_block" => {
             out = lo.temp(lo.type_of(id).try()).try();
             lo.add(Instruction.Startup(Start(
@@ -166,6 +170,14 @@ runtime_call* = (
             Ok(out)
         },
         _               => Err(unsupported(span, "this std.sys operation")),
+    })
+}
+
+ordered = (operation: str) str {
+    operation.match({
+        "atomic_store_release" => "atomic_store",
+        "atomic_load_acquire"  => "atomic_load",
+        _                      => operation,
     })
 }
 

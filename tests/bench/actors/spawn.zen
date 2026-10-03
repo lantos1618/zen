@@ -1,0 +1,40 @@
+// Spawn N idle actors and keep their Refs: ns per spawn and resident bytes
+// per idle actor (after every actor has run its started turn).
+
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ AllocError } = std.mem
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param, rss } = common
+
+Idle = { id :: u64 = 0 }
+
+Idle.impl(Actor, {
+    poke = (self :: @Self, ctx: Context, n: u64) { self.id = n; }
+})
+
+Error = AllocError | ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    a    = env.mem.alloc();
+    n    = param(env, "N", 1000000);
+    refs ::= a.Vec<Ref<Idle>>();
+    refs.reserve(n).try();
+    // The runtime's first spawn starts its threads; keep that out of the timing.
+    first = env.spawn(Idle()).try();
+    first.poke(0).try();
+    env.threads.sleep(200);
+    before = rss(env, a);
+    t0     = env.clock.since_start().ns;
+    i :: usize = 0;
+    loop(() { i < n }, (h) {
+        refs.add(env.spawn(Idle(id: i.to_u64())).try()).try();
+        i = i + 1;
+    });
+    t1 = env.clock.since_start().ns;
+    env.threads.sleep(1000);
+    after = rss(env, a);
+    println("bench=spawn n={} spawn_ns={} idle_bytes={}", n, (t1 - t0).to_usize().value_or(0) / n, (after - before) / n);
+    Ok(0)
+}

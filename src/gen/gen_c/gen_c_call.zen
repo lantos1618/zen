@@ -35,6 +35,7 @@
 { value_held, holds } = gen.gen_c.gen_c_expr
 { Dest, deliver } = gen.gen_c.gen_c_stmt
 { lower_print } = gen.gen_c.gen_c_print
+{ SYS_MODULE, provides_sys, sys_symbol, need_sys } = gen.gen_c.gen_c_sys
 { lower_dot_call } = gen.gen_c.gen_c_member
 { lower_loop } = gen.gen_c.gen_c_loop
 { is_loop_shape } = gen.gen_c.gen_c_shape
@@ -725,9 +726,47 @@ ForeignCall = {
 
     write = (self: @Self, be :: CBackend, out :: String)
             Res<AllocError> {
-        be.tree.module_origin_at(self.def.id.module.to_usize()).match({
-            Ok(ModuleOrigin.CBinding(id)) => self.from_binding(be, id, out),
-            _                             => self.raw(be, out),
+        be.check.world.module_name(self.def.id).eq(SYS_MODULE).match({
+            true  => self.sys(be, out),
+            false => be.tree.module_origin_at(
+                self.def.id.module.to_usize()
+            ).match({
+                Ok(ModuleOrigin.CBinding(id)) => self.from_binding(be, id, out),
+                _                             => self.raw(be, out),
+            }),
+        })
+    }
+
+    // A std.sys operation: a C function the prelude defines (gen_c_sys),
+    // with the prototype this declaration's signature spells.
+    sys = (self: @Self, be :: CBackend, out :: String) Res<AllocError> {
+        provides_sys(self.def.name).match({
+            false => be.unsupported(
+                self.site.id,
+                "a std.sys operation the C backend does not provide",
+                out
+            ),
+            true  => {
+                symbol ::= be.alloc.String().try();
+                sys_symbol(self.def.name, symbol).try();
+                proto ::= be.alloc.String().try();
+                proto.add("static ").try();
+                be.ctype(self.ret, proto).try();
+                proto.fmt(" {}(", symbol.view()).try();
+                (self.fn.params.len == 0).then(() { proto.add("void").try() });
+                Range(0, self.fn.params.len).loop((h, i) {
+                    (i > 0).then(() { proto.add(", ").try() });
+                    be.ctype(
+                        self.sig.get(i).value_or(TyId(index: 0)),
+                        proto
+                    ).try();
+                    proto.add(" a").try();
+                    proto.write_usize(i).try();
+                });
+                proto.add(")").try();
+                be.need_sys(self.def.name, proto).try();
+                self.site.emit(be, self.fn, self.sig, symbol.view(), out)
+            },
         })
     }
 

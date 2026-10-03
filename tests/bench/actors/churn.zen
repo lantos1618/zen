@@ -1,0 +1,100 @@
+// Churn: TOTAL actors are spawned and stopped, 256 per spawner turn. Each
+// gets two puts; a third are stopped after the first (the second is
+// refused), a third after both, a third stop themselves on the second. Every stopped hook
+// reports to a tally, which checks that each actor finalised once and saw
+// both puts. Run it under AddressSanitizer for use-after-free and leaks.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param, rss } = common
+
+Tally = { expected: usize, finalised :: usize = 0, puts :: usize = 0, start :: u64 = 0 }
+
+Tally.impl(Actor, {
+    begin = (self :: @Self, ctx: Context) { self.start = ctx.env.clock.since_start().ns; }
+
+    gone = (self :: @Self, ctx: Context, puts: u64) {
+        self.finalised = self.finalised + 1;
+        self.puts      = self.puts + puts.to_usize().value_or(0);
+        (self.finalised == self.expected).then(() {
+            ns = (ctx.env.clock.since_start().ns - self.start).to_usize().value_or(
+                1
+            );
+            println(
+                "bench=churn finalised={} puts={} actors_per_s={} rss_mb={}",
+                self.finalised,
+                self.puts,
+                self.finalised * 1000 / (ns / 1000000 + 1),
+                rss(ctx.env, ctx.alloc) / 1048576
+            );
+        });
+    }
+})
+
+Worker = { tally: Ref<Tally>, me :: Res<Ref<Worker>> = None, self_stop: bool, puts :: u64 = 0 }
+
+Worker.impl(Actor, {
+    link = (self :: @Self, ctx: Context, me: Ref<Worker>) { self.me = Ok(me); }
+
+    put = (self :: @Self, ctx: Context, n: u64) {
+        self.puts = self.puts + 1;
+        (self.self_stop && self.puts == 2).then(() {
+            self.me.match({ Ok(me) => me.stop(), None => () });
+        });
+    }
+
+    stopped = (self :: @Self, ctx: Context) { self.tally.gone(
+        self.puts
+    ).ignore(); }
+})
+
+// The spawner makes a batch per turn and asks itself for the next.
+Spawner = {
+    tally: Ref<Tally>,
+    total: usize,
+    me :: Res<Ref<Spawner>> = None,
+    made :: usize = 0,
+}
+
+Spawner.impl(Actor, {
+    link = (self :: @Self, ctx: Context, me: Ref<Spawner>) { self.me = Ok(me); }
+
+    batch = (self :: @Self, ctx: Context) {
+        end ::= self.made + 256;
+        (end > self.total).then(() { end = self.total; });
+        loop(() { self.made < end }, (h) {
+            kind = self.made % 3;
+            ctx.env.spawn(Worker(
+                tally: self.tally,
+                self_stop: kind == 2
+            )).match({
+                Err(_) => (),
+                Ok(w)  => {
+                    w.link(w).ignore();
+                    w.put(1).ignore();
+                    (kind == 0).then(() { w.stop(); });
+                    w.put(2).ignore();
+                    (kind == 1).then(() { w.stop(); });
+                },
+            });
+            self.made = self.made + 1;
+        });
+        (self.made < self.total).then(() {
+            self.me.match({ Ok(me) => me.batch().ignore(), None => () });
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    total   = param(env, "TOTAL", 1000000);
+    tally   = env.spawn(Tally(expected: total)).try();
+    spawner = env.spawn(Spawner(tally: tally, total: total)).try();
+    spawner.link(spawner).try();
+    tally.begin().try();
+    spawner.batch().try();
+    Ok(0)
+}

@@ -138,6 +138,10 @@ CBackend* = {
     // Headers required by reachable C bindings.
     c_headers* :: Vec<String>,
 
+    // std.sys operations the program reaches, with their C prototypes
+    // (gen_c_sys.zen supplies the bodies).
+    sys_ops* :: Vec<ForeignFunction>,
+
     // per function
     locals :: Vec<LocalSlot>,
     held_expression* :: Res<HeldExpression>,
@@ -1071,6 +1075,7 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         ffi: false,
         foreign_functions: a.Vec<ForeignFunction>(),
         c_headers: a.Vec<String>(),
+        sys_ops: a.Vec<ForeignFunction>(),
         locals: a.Vec<LocalSlot>(),
         held_expression: None,
         declared: a.Vec<String>(),

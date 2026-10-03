@@ -1,4 +1,4 @@
-// Actors for the native lowering, over the runtime in std.sys.sys_actor.
+// Actors for the native lowering, over the runtime in std.actor.actor_runtime.
 // The semantics are the C backend's (gen_c_actor): `env.spawn(actor)`
 // builds the actor's record and starts its worker, a behavior call on a
 // `Ref<A>` copies its arguments into one mailbox message and returns as
@@ -48,8 +48,10 @@ ActorLayout* = {
     context_ty*: TyId,
     arena_ty*: TyId,
     alloc_ty*: TyId,
+    arena_state_ty*: TyId,
     context*: usize,
     arena*: usize,
+    arena_state*: usize,
     size*: usize,
 }
 
@@ -67,7 +69,7 @@ ActorEntry* = {
     buffers*: Vec<bool>,
 }
 
-// A str argument's slice descriptor (std.sys.sys_actor.Slice).
+// A str argument's slice descriptor (std.actor.actor_runtime.SLICE_WORDS).
 SLICE_BYTES: usize = 32
 
 // ---------------------------------------------------------------------
@@ -122,22 +124,29 @@ layout_of = (
     ).try();
     arena_ty   = lo.std_type("Arena", "std.mem.mem_arena.Arena", span).try();
     alloc_ty   = lo.field_type(context_ty, "alloc", span).try();
+    pages_ty   = lo.pointee_of(
+        lo.field_type(arena_ty, "state", span).try()
+    ).try();
     state      = lo.class_of(actor_ty).try();
     context    = lo.class_of(context_ty).try();
     arena      = lo.class_of(arena_ty).try();
+    pages      = lo.class_of(pages_ty).try();
     at_context = round_up(size_of(state), align_of(context).larger(8));
     at_arena   = round_up(
         at_context + size_of(context),
         align_of(arena).larger(8)
     );
+    at_pages   = round_up(at_arena + size_of(arena), align_of(pages).larger(8));
     Ok(ActorLayout(
         actor_ty: actor_ty,
         context_ty: context_ty,
         arena_ty: arena_ty,
         alloc_ty: alloc_ty,
+        arena_state_ty: pages_ty,
         context: at_context,
         arena: at_arena,
-        size: round_up(at_arena + size_of(arena), 16)
+        arena_state: at_pages,
+        size: round_up(at_pages + size_of(pages), 16)
     ))
 }
 
@@ -156,26 +165,31 @@ spawn_actor* = (
     sources : Vec<Source>,
     span    : Span
 ) Res<Value, LowerError> {
-    ty        = lo.type_of(id).try();
-    ref_ty    = lo.payload_type(ty, "Ok").try();
-    actor_ty  = lo.actor_of_ref(ref_ty).try().ok_or(unsupported(span, "Env.spawn returning a non-actor Ref")).try();
-    layout    = lo.layout_of(actor_ty, span).try();
-    actor     = lo.argument_value(
+    ty       = lo.type_of(id).try();
+    ref_ty   = lo.payload_type(ty, "Ok").try();
+    actor_ty = lo.actor_of_ref(ref_ty).try().ok_or(unsupported(span, "Env.spawn returning a non-actor Ref")).try();
+    layout   = lo.layout_of(actor_ty, span).try();
+    actor    = lo.argument_value(
         sources.get(1).value_or(Source.Absent),
         actor_ty,
         span
     ).try();
-    out       = lo.temp(ty).try();
-    done      = lo.label().try();
-    size      = lo.word_const(Scalar.U64, layout.size.to_i64_bits()).try();
-    cell      = lo.actor_call(
-        "actor_new",
-        lo.one(Source.Computed(Value(
-            slot: size,
-            ty: lo.prim("usize").try()
-        ))).try(),
-        span
+    out      = lo.temp(ty).try();
+    done     = lo.label().try();
+    size     = lo.word_const(Scalar.U64, layout.size.to_i64_bits()).try();
+    worker   = lo.function_code(
+        lo.std_function("std.actor.actor_runtime", "actor_thread", span).try()
     ).try();
+    shutdown = lo.function_code(
+        lo.std_function("std.actor.actor_runtime", "actor_shutdown", span).try()
+    ).try();
+    new_args ::= lo.one(Source.Computed(Value(
+        slot: size,
+        ty: lo.prim("usize").try()
+    ))).try();
+    new_args.more(worker).try();
+    new_args.more(shutdown).try();
+    cell      = lo.actor_call("actor_new", new_args, span).try();
     no_cell   = lo.label().try();
     have_cell = lo.label().try();
     lo.branch_to(lo.is_null(cell.slot).try(), no_cell, have_cell).try();
@@ -197,36 +211,14 @@ spawn_actor* = (
         offset: 0,
         value: actor.slot
     ))).try();
-    // The arena's state is fresh zeroed pages, as `Mem.alloc()` makes it.
-    arena_state_ty = lo.pointee_of(
-        lo.field_type(layout.arena_ty, "state", span).try()
-    ).try();
-    state_bytes    = lo.word_const(
-        Scalar.U64,
-        size_of(lo.class_of(arena_state_ty).try()).larger(1).to_i64_bits()
-    ).try();
-    arena_state    = lo.slot_of(Scalar.Ptr).try();
-    lo.add(Instruction.MapPages(Pages(
-        out: arena_state,
-        bytes: state_bytes
-    ))).try();
-    no_arena   = lo.label().try();
-    have_arena = lo.label().try();
-    lo.branch_to(lo.is_null(arena_state).try(), no_arena, have_arena).try();
-    lo.start(no_arena);
-    lo.drop_value(
-        Place(base: Base.Through(record), offset: 0, ty: actor_ty),
-        span
-    ).try();
-    lo.actor_call(
-        "actor_discard",
-        lo.one(Source.Computed(cell)).try(),
-        span
-    ).try();
-    lo.fail(out, ty, "OutOfMemory", span).try();
-    lo.jump(done).try();
-    lo.start(have_arena);
-    arena = Place(
+    // The arena's state lives in the record, zeroed by the runtime: an
+    // arena with no pages yet, as `Mem.alloc()` makes it.
+    arena_state = lo.address(Place(
+        base: Base.Through(record),
+        offset: layout.arena_state,
+        ty: layout.arena_state_ty
+    )).try();
+    arena       = Place(
         base: Base.Through(record),
         offset: layout.arena,
         ty: layout.arena_ty
@@ -247,16 +239,10 @@ spawn_actor* = (
         ty: layout.context_ty
     );
     lo.write(lo.field_place(context, "alloc", span).try(), handle).try();
-    started  = lo.hook_code(layout, "started", EntryKind.Started, span).try();
-    stopped  = lo.hook_code(layout, "stopped", EntryKind.Stopped, span).try();
-    worker   = lo.function_code(
-        lo.std_function("std.sys.sys_actor", "actor_worker", span).try()
-    ).try();
-    shutdown = lo.function_code(
-        lo.std_function("std.sys.sys_actor", "actor_shutdown", span).try()
-    ).try();
+    started = lo.hook_code(layout, "started", EntryKind.Started, span).try();
+    stopped = lo.hook_code(layout, "stopped", EntryKind.Stopped, span).try();
     start_args ::= lo.one(Source.Computed(cell)).try();
-    [worker, shutdown, started, stopped].loop((a) { start_args.more(a).try(); });
+    [started, stopped].loop((a) { start_args.more(a).try(); });
     status = lo.actor_call("actor_start", start_args, span).try();
     zero   = lo.word_const(Scalar.I32, 0).try();
     ok     = lo.slot_of(Scalar.Bool).try();
@@ -276,7 +262,6 @@ spawn_actor* = (
         Place(base: Base.Through(record), offset: 0, ty: actor_ty),
         span
     ).try();
-    lo.drop_value(arena, span).try();
     lo.actor_call(
         "actor_discard",
         lo.one(Source.Computed(cell)).try(),
@@ -287,9 +272,12 @@ spawn_actor* = (
     lo.start(running);
     reference = lo.temp(ref_ty).try();
     id_place  = lo.field_place(lo.spill(reference), "id", span).try();
-    id_word   = lo.slot_of(Scalar.U64).try();
-    lo.add(Instruction.Cast(Convert(out: id_word, input: cell.slot))).try();
-    lo.write(id_place, Value(slot: id_word, ty: id_place.ty)).try();
+    id_word   = lo.actor_call(
+        "actor_ref",
+        lo.one(Source.Computed(cell)).try(),
+        span
+    ).try();
+    lo.write(id_place, Value(slot: id_word.slot, ty: id_place.ty)).try();
     made = lo.variant_value(ty, "Ok", Ok(reference), span).try();
     lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
     lo.jump(done).try();
@@ -358,7 +346,7 @@ code_of = (lo :: Lowerer, index: usize) Res<Source, LowerError> {
 
 // A Callee standing in for a synthesized entry's slot in `pending`.
 stand_in = (lo :: Lowerer, span: Span) Res<Callee, LowerError> {
-    lo.std_function("std.sys.sys_actor", "actor_worker", span)
+    lo.std_function("std.actor.actor_runtime", "actor_thread", span)
 }
 
 // A behavior (or hook) of the actor type by name, when it has one with a
@@ -411,14 +399,14 @@ drop_value = (lo :: Lowerer, place: Place, span: Span) Res<LowerError> {
     })
 }
 
-// A std.sys.sys_actor function with evaluated arguments.
+// A std.actor.actor_runtime function with evaluated arguments.
 actor_call = (
     lo   :: Lowerer,
     name : str,
     args : Vec<Source>,
     span : Span
 ) Res<Value, LowerError> {
-    lo.std_call("std.sys.sys_actor", name, args, span)
+    lo.std_call("std.actor.actor_runtime", name, args, span)
 }
 
 // Argument lists for runtime calls.
@@ -447,16 +435,11 @@ actor_member* = (
     name     : str,
     span     : Span
 ) Res<Value, LowerError> {
-    reference = lo.expr(receiver).try();
-    id_value  = lo.read(
+    reference   = lo.expr(receiver).try();
+    id_value    = lo.read(
         lo.field_place(lo.spill(reference), "id", span).try()
     ).try();
-    cell      = lo.slot_of(Scalar.Ptr).try();
-    lo.add(Instruction.Cast(Convert(out: cell, input: id_value.slot))).try();
-    cell_source = Source.Computed(Value(
-        slot: cell,
-        ty: lo.byte_pointer().try()
-    ));
+    cell_source = Source.Computed(id_value);
     name.match({
         "stop" => { lo.actor_call(
             "actor_stop",
@@ -743,6 +726,17 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
             ).try();
         });
     });
+    // A stopped entry called with a non-null second argument is for an
+    // actor a trap ended: its own `stopped` does not run.
+    skip = lo.label().try();
+    entry.kind.match({
+        Stopped => {
+            call = lo.label().try();
+            lo.branch_to(lo.is_null(data).try(), call, skip).try();
+            lo.start(call);
+        },
+        _       => (),
+    });
     entry.hook.when_ok((hook) {
         sources ::= lo.alloc.Vec<Source>();
         sources.add(Source.Located(state)).try(LowerError.OutOfMemory);
@@ -756,15 +750,25 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
         });
         lo.real_call(hook, sources, nowhere()).try();
     });
+    lo.jump(skip).try();
+    lo.start(skip);
     entry.kind.match({
         Stopped => {
             lo.drop_value(state, nowhere()).try();
-            lo.drop_value(
-                Place(
-                    base: Base.Through(record),
-                    offset: layout.arena,
-                    ty: layout.arena_ty
-                ),
+            // The Arena's state is in the record, which the runtime frees:
+            // give back its pages only.
+            pages = lo.address(Place(
+                base: Base.Through(record),
+                offset: layout.arena_state,
+                ty: layout.arena_state_ty
+            )).try();
+            lo.std_call(
+                "std.mem.mem_arena",
+                "release_pages",
+                lo.one(Source.Computed(Value(
+                    slot: pages,
+                    ty: lo.field_type(layout.arena_ty, "state", nowhere()).try()
+                ))).try(),
                 nowhere()
             ).try();
         },

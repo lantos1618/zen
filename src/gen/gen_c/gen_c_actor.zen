@@ -1,8 +1,12 @@
-{ HEADER_BYTES } = std.mem.mem_pool
-{ MAX_MESSAGES, MAX_MESSAGE_BYTES } = std.actor.actor_limits
-// C lowering for std.actor. Each actor owns one worker thread and one
-// bounded mailbox. Senders only enqueue; the worker is the sole caller of
-// lifecycle and behavior methods, so actor state is never entered twice.
+// C lowering for std.actor, over the Zen runtime in std.actor.actor_runtime
+// (compiled into the program like any other std module). What depends on
+// the actor's type is generated here: the record the runtime keeps after
+// its own header (the state, the Context every turn receives, the Arena
+// behind Context.alloc), one turn entry per behaviour send site, and the
+// started and stopped entries. Each entry is `(record, payload)`, called
+// by the runtime through its code address on whichever worker runs the
+// actor; only that worker enters the state, so a turn never overlaps
+// another.
 
 { AllocError } = std.mem
 { Vec } = std.collections
@@ -24,6 +28,7 @@
 { expr, ty_of } = gen.gen_c.gen_c_expr
 { recv_inst, sub } = gen.gen_c.gen_c_mono
 { temp, payload_type, write_assign_ok, write_assign_err } = gen.gen_c.gen_c_flow
+{ call_symbol } = gen.gen_c.gen_c_sink
 { write_assign_ok_unit } = gen.gen_c.gen_c_flow
 { passes_address } = gen.gen_c.gen_c_borrow
 { ty_at } = sema.sema_cand
@@ -180,399 +185,22 @@ behavior_members = (
     Ok
 }
 
-// Runtime records are independent of Zen layouts. Concrete actor/message
-// records are emitted later, after the Zen type definitions they contain.
+// The runtime's slice descriptor (std.actor.actor_runtime.SLICE_WORDS): one
+// str or byte-buffer argument copied after the payload record, and where
+// its pointer and length go in the copy.
 emit_actor_floor* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_actor().match({
         false => Ok,
-        true  => be.write_actor_floor(out),
+        true  => {
+            out.say(
+                "typedef struct zg_actor_slice { size_t data_offset; size_t len_offset; const unsigned char *data; size_t len; } zg_actor_slice;"
+            ).try();
+            out.line()
+        },
     })
 }
 
-write_actor_floor = (be :: CBackend, out :: Emit) Res<AllocError> {
-    out.say("#undef _POSIX_C_SOURCE").try();
-    out.say("#define _POSIX_C_SOURCE 200809L").try();
-    out.say("#if defined(__GLIBC__)").try();
-    out.say("#undef _FEATURES_H").try();
-    out.say("#include <features.h>").try();
-    out.say("#endif").try();
-    out.say("#include <pthread.h>").try();
-    out.line().try();
-    out.bytes("#define ZG_ACTOR_CAPACITY ").try();
-    out.number(MAX_MESSAGES).try();
-    out.say("u").try();
-    out.bytes("#define ZG_ACTOR_BYTE_CAPACITY ").try();
-    out.number(MAX_MESSAGE_BYTES).try();
-    out.say("u").try();
-    out.bytes("#define ZG_ACTOR_STORAGE_OVERHEAD ").try();
-    out.number(HEADER_BYTES).try();
-    out.say("u").try();
-    out.say("typedef struct zg_actor zg_actor;").try();
-    out.say("typedef struct zg_actor_msg zg_actor_msg;").try();
-    out.say("typedef struct zg_actor_slice zg_actor_slice;").try();
-    out.say("typedef struct zg_actor_owned zg_actor_owned;").try();
-    out.say(
-        "struct zg_actor_owned { zg_actor_owned *next; void (*drop)(zg_actor_owned *); };"
-    ).try();
-    out.say("static void zg_actor_release_owned(zg_actor_owned *list) {").try();
-    out.say(
-        "    while (list) { zg_actor_owned *next = list->next; list->drop(list); list = next; }"
-    ).try();
-    out.say("}").try();
-    out.say("typedef void (*zg_actor_turn)(zg_actor *, void *);").try();
-    out.say("struct zg_actor_msg {").try();
-    out.say("    zg_actor_msg *next;").try();
-    out.say("    zg_actor_turn turn;").try();
-    out.say("    size_t bytes;").try();
-    out.say(
-        "    unsigned char padding[16 - ((2 * sizeof(void *) + sizeof(size_t)) % 16)];"
-    ).try();
-    out.say("    unsigned char data[];").try();
-    out.say("};").try();
-    out.say(
-        "typedef char zg_actor_payload_aligned[(offsetof(zg_actor_msg, data) % 16 == 0) ? 1 : -1];"
-    ).try();
-    out.say("struct zg_actor_slice {").try();
-    out.say("    size_t data_offset;").try();
-    out.say("    size_t len_offset;").try();
-    out.say("    const unsigned char *data;").try();
-    out.say("    size_t len;").try();
-    out.say("};").try();
-    out.say("struct zg_actor {").try();
-    out.say("    pthread_t thread;").try();
-    out.say("    pthread_mutex_t lock;").try();
-    out.say("    pthread_cond_t wake;").try();
-    out.say("    pthread_cond_t joined_wake;").try();
-    out.say("    zg_actor_msg *head;").try();
-    out.say("    zg_actor_msg *tail;").try();
-    out.say("    size_t count;").try();
-    out.say("    size_t preparing;").try();
-    out.say("    size_t bytes;").try();
-    out.say("    int open;").try();
-    out.say("    int joined;").try();
-    out.say("    int joining;").try();
-    out.say("    zg_actor_owned *owned;").try();
-    out.say("    void *storage;").try();
-    out.say("    void *(*take)(void *, size_t);").try();
-    out.say("    void (*give)(void *, void *);").try();
-    out.say("    void *state;").try();
-    out.say("    void *context;").try();
-    out.say("    void (*started)(zg_actor *);").try();
-    out.say("    void (*stopped)(zg_actor *);").try();
-    out.say("    zg_actor *next;").try();
-    out.say("};").try();
-    out.say("extern pthread_mutex_t zg_actor_registry_lock;").try();
-    out.say("extern pthread_cond_t zg_actor_registry_idle;").try();
-    out.say("extern zg_actor *zg_actor_registry;").try();
-    out.say("extern int zg_actor_shutting_down;").try();
-    out.say("extern size_t zg_actor_pending;").try();
-    out.say("extern size_t zg_actor_borrowers;").try();
-    out.say("static int zg_actor_registered(zg_actor *target) {").try();
-    out.say(
-        "    for (zg_actor *a = zg_actor_registry; a; a = a->next) if (a == target) return 1;"
-    ).try();
-    out.say("    return 0;").try();
-    out.say("}").try();
-    out.line().try();
-    write_actor_worker(out).try();
-    write_actor_send_floor(out).try();
-    write_actor_start_floor(out).try();
-    write_actor_stop_floor(out).try();
-}
-
-write_actor_worker = (out :: Emit) Res<AllocError> {
-    out.say("static void *zg_actor_worker(void *raw) {").try();
-    out.say("    zg_actor *a = (zg_actor *)raw;").try();
-    out.say("    if (a->started) a->started(a);").try();
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("    zg_actor_pending--;").try();
-    out.say(
-        "    if (!zg_actor_pending) pthread_cond_broadcast(&zg_actor_registry_idle);"
-    ).try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("    for (;;) {").try();
-    out.say("        pthread_mutex_lock(&a->lock);").try();
-    out.say(
-        "        while (!a->head && (a->open || a->preparing)) pthread_cond_wait(&a->wake, &a->lock);"
-    ).try();
-    out.say("        if (!a->head && !a->open) {").try();
-    out.say("            pthread_mutex_unlock(&a->lock);").try();
-    out.say("            break;").try();
-    out.say("        }").try();
-    out.say("        zg_actor_msg *m = a->head;").try();
-    out.say("        a->head = m->next;").try();
-    out.say("        if (!a->head) a->tail = NULL;").try();
-
-    out.say("        pthread_mutex_unlock(&a->lock);").try();
-    out.say("        m->turn(a, m->data);").try();
-    out.say("        pthread_mutex_lock(&a->lock);").try();
-    out.say("        a->count--; a->bytes -= m->bytes;").try();
-    out.say("        a->give(a->storage, m);").try();
-    out.say("        pthread_mutex_unlock(&a->lock);").try();
-    out.say("        pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("        zg_actor_pending--;").try();
-    out.say(
-        "        if (!zg_actor_pending) pthread_cond_broadcast(&zg_actor_registry_idle);"
-    ).try();
-    out.say("        pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("    }").try();
-    out.say("    if (a->stopped) a->stopped(a);").try();
-    out.say("    zg_actor_release_owned(a->owned); a->owned = NULL;").try();
-    out.say("    return NULL;").try();
-    out.say("}").try();
-    out.line().try();
-}
-
-// 0 accepted, 1 closed, 2 full (including allocation refusal).
-write_actor_send_floor = (out :: Emit) Res<AllocError> {
-    out.say(
-        "static int zg_actor_send_owned(zg_actor *a, zg_actor_turn turn, const void *data, size_t size, const zg_actor_slice *slices, size_t slice_count, int (*prepare)(zg_actor *, void *, zg_actor_owned **)) {"
-    ).try();
-    // Registry membership and mailbox admission share one lock order. A
-    // buffer preparation reserves its lifetime before leaving those locks.
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say(
-        "    if (!zg_actor_registered(a)) { pthread_mutex_unlock(&zg_actor_registry_lock); return 1; }"
-    ).try();
-    out.say("    pthread_mutex_lock(&a->lock);").try();
-    out.say("    int result = 2;").try();
-    out.say("    if (!a->open) { result = 1; goto reject; }").try();
-    out.say(
-        "    if (a->count >= ZG_ACTOR_CAPACITY || zg_actor_pending == SIZE_MAX) goto reject;"
-    ).try();
-    out.say("    size_t total = sizeof(zg_actor_msg);").try();
-    out.say("    if (size > ZG_ACTOR_BYTE_CAPACITY - total) goto reject;").try();
-    out.say("    total += size;").try();
-    out.say("    for (size_t i = 0; i < slice_count; i++) {").try();
-    out.say(
-        "        if (slices[i].len > ZG_ACTOR_BYTE_CAPACITY - total) goto reject;"
-    ).try();
-    out.say("        total += slices[i].len;").try();
-    out.say("    }").try();
-    out.say(
-        "    if (total > ZG_ACTOR_BYTE_CAPACITY - ZG_ACTOR_STORAGE_OVERHEAD) goto reject;"
-    ).try();
-    out.say("    size_t charged = total + ZG_ACTOR_STORAGE_OVERHEAD;").try();
-    out.say(
-        "    if (charged > ZG_ACTOR_BYTE_CAPACITY - a->bytes) goto reject;"
-    ).try();
-    out.say(
-        "    zg_actor_msg *m = (zg_actor_msg *)a->take(a->storage, total);"
-    ).try();
-    out.say("    if (!m) goto reject;").try();
-    out.say("    m->bytes = charged;").try();
-    out.say("    m->next = NULL;").try();
-    out.say("    m->turn = turn;").try();
-    out.say("    if (size) memcpy(m->data, data, size);").try();
-    out.say("    unsigned char *tail = m->data + size;").try();
-    out.say("    for (size_t i = 0; i < slice_count; i++) {").try();
-    out.say(
-        "        if (slices[i].len) memcpy(tail, slices[i].data, slices[i].len);"
-    ).try();
-    out.say("        unsigned char *bytes = tail;").try();
-    out.say(
-        "        memcpy(m->data + slices[i].data_offset, &bytes, sizeof(bytes));"
-    ).try();
-    out.say(
-        "        memcpy(m->data + slices[i].len_offset, &slices[i].len, sizeof(slices[i].len));"
-    ).try();
-    out.say("        tail += slices[i].len;").try();
-    out.say("    }").try();
-    // Reserve count/bytes and pending work before invoking the receiver's Mem
-    // authority. Allocation and rollback callbacks run without runtime locks;
-    // the reservation keeps shutdown and stopped from reclaiming their context.
-    out.say("    zg_actor_owned *owned = NULL;").try();
-    out.say("    if (prepare) {").try();
-    out.say(
-        "        a->preparing++; a->count++; a->bytes += charged; zg_actor_pending++;"
-    ).try();
-    out.say("        pthread_mutex_unlock(&a->lock);").try();
-    out.say("        pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("        int ready = prepare(a, m->data, &owned);").try();
-    out.say(
-        "        if (!ready) { zg_actor_release_owned(owned); owned = NULL; }"
-    ).try();
-    out.say("        pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("        pthread_mutex_lock(&a->lock);").try();
-    out.say("        if (!ready || !a->open) {").try();
-    out.say("            result = a->open ? 2 : 1;").try();
-    out.say("            pthread_mutex_unlock(&a->lock);").try();
-    out.say("            pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("            zg_actor_release_owned(owned);").try();
-    out.say("            pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("            pthread_mutex_lock(&a->lock);").try();
-    out.say("            a->preparing--; a->count--; a->bytes -= charged;").try();
-    out.say("            a->give(a->storage, m);").try();
-    out.say("            zg_actor_pending--;").try();
-    out.say(
-        "            if (!zg_actor_pending) pthread_cond_broadcast(&zg_actor_registry_idle);"
-    ).try();
-    out.say("            pthread_cond_signal(&a->wake);").try();
-    out.say("            goto reject;").try();
-    out.say("        }").try();
-    out.say("        a->preparing--;").try();
-    out.say("    }").try();
-    out.say(
-        "    while (owned) { zg_actor_owned *next = owned->next; owned->next = a->owned; a->owned = owned; owned = next; }"
-    ).try();
-    // The mailbox lock makes empty-to-nonempty publication atomic with wait.
-    // Queued work already keeps the worker runnable; signal only the transition.
-    out.say("    int was_empty = (a->head == NULL);").try();
-    out.say("    if (a->tail) a->tail->next = m; else a->head = m;").try();
-    out.say("    a->tail = m;").try();
-    out.say(
-        "    if (!prepare) { a->count++; a->bytes += charged; zg_actor_pending++; }"
-    ).try();
-    out.say("    if (was_empty) pthread_cond_signal(&a->wake);").try();
-    out.say("    pthread_mutex_unlock(&a->lock);").try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("    return 0;").try();
-    out.say("reject:").try();
-    out.say("    pthread_mutex_unlock(&a->lock);").try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("    return result;").try();
-    out.say("}").try();
-    out.say(
-        "static int zg_actor_send(zg_actor *a, zg_actor_turn turn, const void *data, size_t size, const zg_actor_slice *slices, size_t slice_count) {"
-    ).try();
-    out.say(
-        "    return zg_actor_send_owned(a, turn, data, size, slices, slice_count, NULL);"
-    ).try();
-    out.say("}").try();
-    out.line().try();
-}
-
-// 0 started, 1 allocation/setup failure, 2 worker unavailable.
-write_actor_start_floor = (out :: Emit) Res<AllocError> {
-    out.say("static int zg_actor_start(zg_actor *a) {").try();
-    out.say("    if (pthread_mutex_init(&a->lock, NULL) != 0) return 1;").try();
-    out.say(
-        "    if (pthread_cond_init(&a->wake, NULL) != 0) { pthread_mutex_destroy(&a->lock); return 1; }"
-    ).try();
-    out.say(
-        "    if (pthread_cond_init(&a->joined_wake, NULL) != 0) { pthread_cond_destroy(&a->wake); pthread_mutex_destroy(&a->lock); return 1; }"
-    ).try();
-    out.say(
-        "    a->head = NULL; a->tail = NULL; a->count = 0; a->bytes = 0; a->preparing = 0; a->open = 1; a->owned = NULL;"
-    ).try();
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say(
-        "    if (zg_actor_shutting_down || zg_actor_pending == SIZE_MAX) { pthread_mutex_unlock(&zg_actor_registry_lock); pthread_cond_destroy(&a->joined_wake); pthread_cond_destroy(&a->wake); pthread_mutex_destroy(&a->lock); return 2; }"
-    ).try();
-    out.say("    zg_actor_pending++;").try();
-    out.say(
-        "    if (pthread_create(&a->thread, NULL, zg_actor_worker, a) != 0) { zg_actor_pending--; pthread_mutex_unlock(&zg_actor_registry_lock); pthread_cond_destroy(&a->joined_wake); pthread_cond_destroy(&a->wake); pthread_mutex_destroy(&a->lock); return 2; }"
-    ).try();
-    out.say("    a->next = zg_actor_registry;").try();
-    out.say("    zg_actor_registry = a;").try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("    return 0;").try();
-    out.say("}").try();
-    out.line().try();
-}
-
-write_actor_stop_floor = (out :: Emit) Res<AllocError> {
-    out.say("static void zg_actor_stop_worker(zg_actor *a) {").try();
-    out.say("    if (!a) return;").try();
-    out.say("    pthread_mutex_lock(&a->lock);").try();
-    out.say("    a->open = 0;").try();
-    out.say("    pthread_cond_signal(&a->wake);").try();
-    out.say("    pthread_mutex_unlock(&a->lock);").try();
-    out.say("}").try();
-    // Join has multiple callers but exactly one pthread_join owner. The
-    // worker cannot wait for itself: self-join returns without marking joined.
-    // Join waiters have a separate condition so they cannot steal worker wakeups.
-    out.say("static void zg_actor_join_worker(zg_actor *a) {").try();
-    out.say("    if (!a) return;").try();
-    out.say("    pthread_mutex_lock(&a->lock);").try();
-    out.say(
-        "    if (a->joined || pthread_equal(pthread_self(), a->thread)) {"
-    ).try();
-    out.say("        pthread_mutex_unlock(&a->lock); return;").try();
-    out.say("    }").try();
-    out.say(
-        "    while (a->joining && !a->joined) pthread_cond_wait(&a->joined_wake, &a->lock);"
-    ).try();
-    out.say(
-        "    if (a->joined) { pthread_mutex_unlock(&a->lock); return; }"
-    ).try();
-    out.say("    a->joining = 1;").try();
-    out.say("    pthread_mutex_unlock(&a->lock);").try();
-    out.say("    int result = pthread_join(a->thread, NULL);").try();
-    out.say("    pthread_mutex_lock(&a->lock);").try();
-    out.say("    if (result == 0) a->joined = 1;").try();
-    out.say("    a->joining = 0;").try();
-    out.say("    pthread_cond_broadcast(&a->joined_wake);").try();
-    out.say("    pthread_mutex_unlock(&a->lock);").try();
-    out.say("}").try();
-    // Registry membership is checked before dereferencing an address. A join
-    // pins its record across the blocking native call; shutdown closes workers,
-    // waits for pins, and detaches the registry before reclaiming any record.
-    out.say("static void zg_actor_stop(zg_actor *a) {").try();
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("    if (zg_actor_registered(a)) zg_actor_stop_worker(a);").try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("}").try();
-    out.say("static void zg_actor_join(zg_actor *a) {").try();
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say(
-        "    if (!zg_actor_registered(a)) { pthread_mutex_unlock(&zg_actor_registry_lock); return; }"
-    ).try();
-    out.say("    if (zg_actor_borrowers == SIZE_MAX) abort();").try();
-    out.say("    zg_actor_borrowers++;").try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("    zg_actor_join_worker(a);").try();
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("    zg_actor_borrowers--;").try();
-    out.say(
-        "    if (!zg_actor_borrowers) pthread_cond_broadcast(&zg_actor_registry_idle);"
-    ).try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("}").try();
-    out.say("static void zg_actor_shutdown(void) {").try();
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("    if (zg_actor_shutting_down) {").try();
-    out.say(
-        "        while (zg_actor_shutting_down != 2) pthread_cond_wait(&zg_actor_registry_idle, &zg_actor_registry_lock);"
-    ).try();
-    out.say("        pthread_mutex_unlock(&zg_actor_registry_lock); return;").try();
-    out.say("    }").try();
-    out.say("    zg_actor_shutting_down = 1;").try();
-    out.say(
-        "    while (zg_actor_pending) pthread_cond_wait(&zg_actor_registry_idle, &zg_actor_registry_lock);"
-    ).try();
-    out.say(
-        "    for (zg_actor *a = zg_actor_registry; a; a = a->next) zg_actor_stop_worker(a);"
-    ).try();
-    out.say(
-        "    while (zg_actor_borrowers) pthread_cond_wait(&zg_actor_registry_idle, &zg_actor_registry_lock);"
-    ).try();
-    out.say("    zg_actor *list = zg_actor_registry;").try();
-    out.say("    zg_actor_registry = NULL;").try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("    while (list) {").try();
-    out.say("        zg_actor *next = list->next;").try();
-    out.say("        zg_actor_join_worker(list);").try();
-    out.say("        if (!list->joined) abort();").try();
-    out.say("        pthread_cond_destroy(&list->joined_wake);").try();
-    out.say("        pthread_cond_destroy(&list->wake);").try();
-    out.say("        pthread_mutex_destroy(&list->lock);").try();
-    out.say("        free(list);").try();
-    out.say("        list = next;").try();
-    out.say("    }").try();
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("    zg_actor_shutting_down = 2;").try();
-    out.say("    pthread_cond_broadcast(&zg_actor_registry_idle);").try();
-    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
-    out.say("}").try();
-    out.line().try();
-}
-
 emit_actor_defs* = (be :: CBackend, out :: Emit) Res<AllocError> {
-    be.actor_defs_loop(out)
-}
-
-actor_defs_loop = (be :: CBackend, out :: Emit) Res<AllocError> {
     Range(0, be.actor_def_count()).loop((h, i) {
         be.actor_def_at(i).match({
             None    => Ok,
@@ -583,34 +211,26 @@ actor_defs_loop = (be :: CBackend, out :: Emit) Res<AllocError> {
     Ok
 }
 
-emit_actor_globals* = (be :: CBackend, out :: Emit) Res<AllocError> {
-    be.uses_actor().match({
-        false => Ok,
-        true  => {
-            out.say(
-                "pthread_mutex_t zg_actor_registry_lock = PTHREAD_MUTEX_INITIALIZER;"
-            ).try();
-            out.say(
-                "pthread_cond_t zg_actor_registry_idle = PTHREAD_COND_INITIALIZER;"
-            ).try();
-            out.say("zg_actor *zg_actor_registry = NULL;").try();
-            out.say("int zg_actor_shutting_down = 0;").try();
-            out.say("size_t zg_actor_pending = 0;").try();
-            out.say("size_t zg_actor_borrowers = 0;").try();
-            out.line()
-        },
-    })
+// The C symbol of a std.actor.actor_runtime entry point, queued so its body
+// (and everything it reaches) is emitted.
+runtime_symbol = (be :: CBackend, name: str) Res<String, AllocError> {
+    be.std_symbol("std.actor.actor_runtime", name)
 }
 
-write_actor_shutdown* = (be :: CBackend, out :: Emit) Res<AllocError> {
-    be.uses_actor().match({
-        false => Ok,
-        true  => out.say("zg_actor_shutdown();"),
-    })
+std_symbol = (be :: CBackend, module: str, name: str) Res<String, AllocError> {
+    defs ::= be.alloc.Vec<Def>();
+    be.world().exported_named(name, defs).try();
+    sym   ::= be.alloc.String().try();
+    qname ::= be.alloc.String("{module}.{name}").try();
+    defs.find((d) { d.qname.eq(qname.view()) }).match({
+        None    => Err(AllocError.OutOfMemory),
+        Ok(def) => be.call_symbol(def, sym),
+    }).try();
+    Ok(sym)
 }
 
-// Ref.stop only closes admission. The worker drains messages already in the
-// mailbox, then runs stopped and exits.
+// Ref.stop only closes admission: the actor drains what it accepted, runs
+// stopped, and is freed.
 lower_actor_stop* = (
     be  :: CBackend,
     a   : Access,
@@ -618,17 +238,7 @@ lower_actor_stop* = (
     ctx : Ctx,
     out :: String
 ) Res<AllocError> {
-    be.need_actor();
-    recv ::= be.alloc.String().try();
-    expr(be, a.base, ctx, rty, recv).try();
-    id ::= be.alloc.String().try();
-    id.sym_member("id").try();
-    be.fmt(
-        "zg_actor_stop((zg_actor *)(uintptr_t)({}.{}));\n",
-        recv.view(),
-        id.view()
-    ).try();
-    out.add("0")
+    be.lower_ref_call("actor_stop", a, rty, ctx, out)
 }
 
 lower_actor_join* = (
@@ -638,16 +248,24 @@ lower_actor_join* = (
     ctx : Ctx,
     out :: String
 ) Res<AllocError> {
+    be.lower_ref_call("actor_join", a, rty, ctx, out)
+}
+
+lower_ref_call = (
+    be      :: CBackend,
+    runtime : str,
+    a       : Access,
+    rty     : TyId,
+    ctx     : Ctx,
+    out     :: String
+) Res<AllocError> {
     be.need_actor();
+    symbol = be.runtime_symbol(runtime).try();
     recv ::= be.alloc.String().try();
     expr(be, a.base, ctx, rty, recv).try();
     id ::= be.alloc.String().try();
     id.sym_member("id").try();
-    be.fmt(
-        "zg_actor_join((zg_actor *)(uintptr_t)({}.{}));\n",
-        recv.view(),
-        id.view()
-    ).try();
+    be.fmt("{}(({}).{});\n", symbol.view(), recv.view(), id.view()).try();
     out.add("0")
 }
 
@@ -711,17 +329,19 @@ ActorSend = {
         n       = be.next_actor_site();
         payload = be.write_message_record(n, sig).try();
         turn    = self.write_turn(be, n, payload.view(), sig).try();
-        prepare = be.write_buffer_transfer(n, payload.view(), sig).try();
         ActorSendEmission(
             send: self,
             result_ty: ret,
             signature: sig,
             payload: payload.view(),
             turn: turn.view(),
-            prepare: prepare,
         ).write(be, out)
     }
 
+    // The turn entry for this send site: find the state and Context in the
+    // record, move byte buffers into the actor's allocator, call the
+    // behaviour. The record's first two fields are the same at every spawn
+    // site of the actor type, so a view of them is enough here.
     write_turn = (
         self    : @Self,
         be      :: CBackend,
@@ -731,42 +351,52 @@ ActorSend = {
     ) Res<String, AllocError> {
         name ::= be.alloc.String().try();
         sym_gen(name, "actor_turn", n).try();
-        sym = be.behavior_symbol(self.actor_ty, self.hit).try();
-        actor_c ::= be.alloc.String().try();
-        be.ctype(self.actor_ty, actor_c).try();
+        sym        = be.behavior_symbol(self.actor_ty, self.hit).try();
         context_ty = sig.get(1).match({
             Ok(t) => t,
             None  => TyId(index: 0),
         });
-        context_c ::= be.alloc.String().try();
-        be.ctype(context_ty, context_c).try();
+        view       = be.write_record_view(n, self.actor_ty).try();
+        context    = be.context_helper(context_ty).try();
         proto ::= be.alloc.String().try();
         proto.fmt(
-            "{}void {}(zg_actor *zg_base, void *zg_raw)",
+            "{}void {}(uint8_t *zg_rec, uint8_t *zg_raw)",
             be.linkage(),
             name.view()
         ).try();
         body ::= be.alloc.String().try();
         body.fmt(
-            "    {} *zg_state = ({} *)zg_base->state;\n",
-            actor_c.view(),
-            actor_c.view()
-        ).try();
-        body.fmt(
-            "    {} *zg_ctx = ({} *)zg_base->context;\n",
-            context_c.view(),
-            context_c.view()
+            "    {} *zg_self = ({} *)zg_rec;\n",
+            view.view(),
+            view.view()
         ).try();
         body.fmt("    {payload} *zg_msg = ({payload} *)zg_raw;\n").try();
-        // The context and message live in the actor record for the whole
-        // call, so a borrowed parameter (gen_c_borrow.zen) takes them by
-        // address exactly as a `::` one does.
+        context_c ::= be.alloc.String().try();
+        be.ctype(context_ty, context_c).try();
+        body.fmt(
+            "    {} *zg_ctx = {}((uint8_t *)&zg_self->zg_arena);\n",
+            context_c.view(),
+            context.view()
+        ).try();
+        Range(2, sig.len).loop((h, i) {
+            be.check.actor_byte_buffer(sig.ty_at(i)).then(() {
+                be.write_buffer_move(
+                    i - 2,
+                    sig.ty_at(i),
+                    context_ty,
+                    body
+                ).try();
+            });
+        });
+        // The context and message live for the whole call, so a borrowed
+        // parameter (gen_c_borrow.zen) takes them by address exactly as a
+        // `::` one does.
         context_by_address = be.passes_address(
             self.hit.f,
             1,
             sig.ty_at(1)
         ).try();
-        body.fmt("    (void)({}(zg_state, ", sym.view()).try();
+        body.fmt("    (void)({}(&zg_self->zg_state, ", sym.view()).try();
         context_by_address.match({
             true  => body.add("zg_ctx"),
             false => body.add("*zg_ctx"),
@@ -791,7 +421,6 @@ ActorSendEmission = {
     signature: Vec<TyId>,
     payload: str,
     turn: str,
-    prepare: str,
 
     write = (self: @Self, be :: CBackend, out :: String)
             Res<AllocError> {
@@ -856,23 +485,18 @@ ActorSendEmission = {
         });
         count ::= be.alloc.String().try();
         count.write_usize(slices).try();
-        suffix = self.prepare.eq(
-            "NULL"
-        ).match({ true => "", false => "_owned" });
-        extra ::= be.alloc.String().try();
-        (!self.prepare.eq("NULL")).then(() { extra.fmt(", {}", self.prepare).try(); });
+        send = be.runtime_symbol("actor_send").try();
         be.fmt(
-            "int {} = zg_actor_send{}((zg_actor *)(uintptr_t)({}.{}), {}, &{}, sizeof({}), {}, {}{});\n",
+            "int {} = {}({}.{}, (size_t)&{}, (uint8_t *)&{}, sizeof({}), (uint8_t *){}, {});\n",
             status.view(),
-            suffix,
+            send.view(),
             recv.view(),
             id.view(),
             self.turn,
             message.view(),
             message.view(),
             descriptors,
-            count.view(),
-            extra.view()
+            count.view()
         ).try();
         dst = be.temp(self.result_ty, "actor_result").try();
         be.fmt("if ({} == 0) {{\n", status.view()).try();
@@ -1134,6 +758,9 @@ write_actor_spawn = (be :: CBackend, layout: ActorSpawnLayout)
     ))
 }
 
+// The record after the runtime's header: the state, the Arena behind
+// Context.alloc, and that Arena's state. A turn builds its Context from the
+// Arena (`context_helper`), so the record holds no copy of the Env.
 write_actor_record = (
     be     :: CBackend,
     layout : ActorSpawnLayout,
@@ -1141,99 +768,175 @@ write_actor_record = (
 ) Res<AllocError> {
     a ::= be.alloc.String().try();
     be.ctype(layout.spawn.actor_ty, a).try();
-    c ::= be.alloc.String().try();
-    be.ctype(layout.context_ty, c).try();
     ar ::= be.alloc.String().try();
     be.ctype(layout.arena_ty, ar).try();
-    storage = be.mailbox_type().try();
-    be.request_type(storage).try();
-    storage_c ::= be.alloc.String().try();
-    be.ctype(storage, storage_c).try();
+    st ::= be.alloc.String().try();
+    be.ctype(layout.state_ty, st).try();
     text ::= be.alloc.String().try();
     text.fmt(
-        "typedef struct {name} {{ zg_actor zg_base; {} zg_state; {} zg_ctx; {} zg_arena; {} zg_storage; }} {name};",
+        "typedef struct {name} {{ {} zg_state; {} zg_arena; {} zg_arena_state; }} {name};",
         a.view(),
-        c.view(),
         ar.view(),
-        storage_c.view()
+        st.view()
     ).try();
-    be.add_actor_def(text).try();
-    be.write_mailbox_bridge(name, storage, storage_c.view())
+    be.add_actor_def(text)
 }
 
-mailbox_type = (be :: CBackend) Res<TyId, AllocError> {
-    be.named_type_at(
-        "MailboxStorage",
-        "std.actor.actor_storage.MailboxStorage"
-    ).try().match({
-        Ok(ty) => Ok(ty),
-        None   => Err(AllocError.OutOfMemory),
-    })
+// What a turn entry sees of the record: its first two fields, laid out as
+// in every record of the actor type.
+write_record_view = (be :: CBackend, n: usize, actor: TyId)
+                    Res<String, AllocError> {
+    name ::= be.alloc.String().try();
+    sym_gen(name, "actor_view", n).try();
+    arena_ty = be.named_type_at("Arena", "std.mem.mem_arena.Arena").try().ok_or(AllocError.OutOfMemory).try();
+    be.request_type(actor).try();
+    be.request_type(arena_ty).try();
+    a ::= be.alloc.String().try();
+    be.ctype(actor, a).try();
+    ar ::= be.alloc.String().try();
+    be.ctype(arena_ty, ar).try();
+    text ::= be.alloc.String().try();
+    text.fmt(
+        "typedef struct {} {{ {} zg_state; {} zg_arena; }} {};",
+        name.view(),
+        a.view(),
+        ar.view(),
+        name.view()
+    ).try();
+    be.add_actor_def(text).try();
+    Ok(name)
 }
-mailbox_symbol = (
-    be      :: CBackend,
-    storage : TyId,
-    name    : str
-) Res<String, AllocError> {
-    be.behavior_of(storage, name).try().match({
-        Ok(hit) => be.behavior_symbol(storage, hit),
-        None    => Err(AllocError.OutOfMemory),
-    })
-}
-write_mailbox_bridge = (
-    be        :: CBackend,
-    record    : str,
-    storage   : TyId,
-    storage_c : str
-) Res<AllocError> {
-    ["take", "give"].loop((h, operation) {
-        symbol = be.mailbox_symbol(storage, operation).try();
-        name  ::= be.alloc.String("{record}_storage_{operation}").try();
+
+// The Context a turn receives, built per thread instead of stored in every
+// actor: the process Env (one copy, kept by the runtime, copied into the
+// thread's Context once) and the running actor's allocator. Only one turn
+// runs on a thread at a time and the Context is borrowed for the call, so
+// one per thread is enough.
+context_helper = (be :: CBackend, context: TyId) Res<String, AllocError> {
+    name ::= be.alloc.String("zg_actor_context").try();
+    be.need_thunk(name.view()).try().then(() {
+        env_ty   = be.field_of(context, "env").try().ok_or(AllocError.OutOfMemory).try();
+        alloc_ty = be.field_of(context, "alloc").try().ok_or(AllocError.OutOfMemory).try();
+        arena_ty = be.named_type_at("Arena", "std.mem.mem_arena.Arena").try().ok_or(AllocError.OutOfMemory).try();
+        [context, env_ty, alloc_ty, arena_ty].loop((h, ty) { be.request_type(ty).try() });
+        shared = be.runtime_symbol("actor_env").try();
+        c ::= be.alloc.String().try();
+        be.ctype(context, c).try();
+        e ::= be.alloc.String().try();
+        be.ctype(env_ty, e).try();
+        ar ::= be.alloc.String().try();
+        be.ctype(arena_ty, ar).try();
+        env_field   = be.actor_field("env").try();
+        alloc_field = be.actor_field("alloc").try();
+        handle ::= be.alloc.String().try();
+        be.fat_value("arena", arena_ty, alloc_ty, handle).try();
         proto ::= be.alloc.String().try();
-        body  ::= be.alloc.String().try();
-        operation.eq("take").match({
-            true  => {
-                proto.fmt(
-                    "{}void *{}(void *raw, size_t bytes)",
-                    be.linkage(),
-                    name.view()
-                ).try();
-                body.fmt(
-                    "    return (void *){}(({} *)raw, bytes);\n",
-                    symbol.view(),
-                    storage_c
-                ).try();
-            },
-            false => {
-                proto.fmt(
-                    "{}void {}(void *raw, void *block)",
-                    be.linkage(),
-                    name.view()
-                ).try();
-                body.fmt(
-                    "    {}(({} *)raw, (unsigned char *)block);\n",
-                    symbol.view(),
-                    storage_c
-                ).try();
-            },
-        });
+        proto.fmt(
+            "{}{} *{}(uint8_t *raw)",
+            be.linkage(),
+            c.view(),
+            name.view()
+        ).try();
+        body ::= be.alloc.String().try();
+        body.fmt(
+            "    static __thread {} ctx;\n    static __thread int ready;\n",
+            c.view()
+        ).try();
+        body.fmt("    {} *arena = ({} *)raw;\n", ar.view(), ar.view()).try();
+        body.fmt(
+            "    if (!ready) {{ ctx.{} = *({} *){}(0, NULL); ready = 1; }}\n",
+            env_field,
+            e.view(),
+            shared.view()
+        ).try();
+        body.fmt(
+            "    ctx.{} = {};\n    return &ctx;\n",
+            alloc_field,
+            handle.view()
+        ).try();
         be.add_function(name, proto, body).try();
     });
-    Ok
+    Ok(name)
+}
+
+// `zg_ctx`, the Context a lifecycle entry passes, from the record's Arena.
+write_context = (be :: CBackend, body :: String) Res<AllocError> {
+    context = be.named_type_at("Context", "std.actor.actor_context.Context").try().ok_or(AllocError.OutOfMemory).try();
+    helper  = be.context_helper(context).try();
+    c ::= be.alloc.String().try();
+    be.ctype(context, c).try();
+    body.fmt(
+        "    {} *zg_ctx = {}((uint8_t *)&zg_self->zg_arena);\n",
+        c.view(),
+        helper.view()
+    )
+}
+
+// A byte buffer arrives as bytes copied into the message. Before the
+// behaviour runs, the turn moves them into the actor's own allocator, so
+// the behaviour may keep and grow the buffer; the memory lives until the
+// actor's allocator is dropped after `stopped`. Out of memory there traps.
+write_buffer_move = (
+    be      :: CBackend,
+    arg     : usize,
+    vec_ty  : TyId,
+    context : TyId,
+    body    :: String
+) Res<AllocError> {
+    alloc_ty  = be.field_of(context, "alloc").try().ok_or(AllocError.OutOfMemory).try();
+    ptr_ty    = be.field_of(vec_ty, "data").try().ok_or(AllocError.OutOfMemory).try();
+    error_ty  = be.named_type_at("AllocError", "std.mem.mem_alloc.AllocError").try().ok_or(AllocError.OutOfMemory).try();
+    result_ty = be.check.types.res_failure(ptr_ty, error_ty).try();
+    be.request_type(result_ty).try();
+    result_c ::= be.alloc.String().try();
+    be.ctype(result_ty, result_c).try();
+    data      = be.actor_field("data").try();
+    len       = be.actor_field("len").try();
+    capacity  = be.actor_field("capacity").try();
+    allocator = be.actor_field("alloc").try();
+    raw       = be.actor_field("raw").try();
+    ok        = be.actor_field("Ok").try();
+    tag ::= be.alloc.String().try();
+    tag.sym_variant(RES_PATH, "Ok").try();
+    field ::= be.alloc.String("zg_msg->zg_arg").try();
+    field.write_usize(arg).try();
+    body.add("    {\n        unsigned char *bytes = NULL;\n").try();
+    body.fmt("        if ({}.{len}) {{\n", field.view()).try();
+    body.fmt(
+        "            {} result = zg_ctx->{allocator}.{raw}(zg_ctx->{allocator}.zg_self, {}.{len}, 1);\n",
+        result_c.view(),
+        field.view()
+    ).try();
+    body.fmt("            if (result.zg_tag != {}) abort();\n", tag.view()).try();
+    body.fmt("            bytes = result.zg_data.{ok};\n").try();
+    body.fmt(
+        "            memcpy(bytes, {}.{data}, {}.{len});\n        }}\n",
+        field.view(),
+        field.view()
+    ).try();
+    body.fmt(
+        "        {}.{data} = bytes; {}.{capacity} = {}.{len}; {}.{allocator} = zg_ctx->{allocator};\n    }}\n",
+        field.view(),
+        field.view(),
+        field.view(),
+        field.view()
+    )
 }
 
 write_started_callback = (be :: CBackend, n: usize, rec: str, actor: TyId)
                          Res<String, AllocError> {
     name ::= be.alloc.String().try();
-    name.add("NULL").try();
+    name.add("0").try();
     hit: Res<BehaviorHit> = be.behavior_of(actor, "started").try();
     hit.match({
         None    => (),
         Ok(hit) => {
             callback ::= be.alloc.String().try();
             sym_gen(callback, "actor_started", n).try();
-            be.add_lifecycle_callback(callback, rec, actor, hit, true).try();
-            name = callback;
+            be.add_lifecycle_callback(callback, rec, actor, hit).try();
+            entry ::= be.alloc.String().try();
+            entry.fmt("(size_t)&{}", callback.view()).try();
+            name = entry;
             ()
         },
     });
@@ -1241,34 +944,34 @@ write_started_callback = (be :: CBackend, n: usize, rec: str, actor: TyId)
 }
 
 add_lifecycle_callback = (
-    be      :: CBackend,
-    name    : String,
-    rec     : str,
-    actor   : TyId,
-    hit     : BehaviorHit,
-    context : bool
+    be    :: CBackend,
+    name  : String,
+    rec   : str,
+    actor : TyId,
+    hit   : BehaviorHit
 )
                          Res<AllocError> {
     sym = be.behavior_symbol(actor, hit).try();
     proto ::= be.alloc.String().try();
-    proto.fmt("{}void {}(zg_actor *zg_base)", be.linkage(), name.view()).try();
+    proto.fmt(
+        "{}void {}(uint8_t *zg_rec, uint8_t *zg_raw)",
+        be.linkage(),
+        name.view()
+    ).try();
     body ::= be.alloc.String().try();
-    body.fmt("    {rec} *zg_self = ({rec} *)zg_base;\n").try();
-    ctx = be.context_arg(actor, hit).try();
-    context.match({
-        true  => body.fmt(
-            "    (void)({}(&zg_self->zg_state, {}));\n",
-            sym.view(),
-            ctx
-        ),
-        false => body.fmt("    (void)({}(&zg_self->zg_state));\n", sym.view()),
-    }).try();
+    body.fmt("    {rec} *zg_self = ({rec} *)zg_rec;\n    (void)zg_raw;\n").try();
+    be.write_context(body).try();
+    body.fmt(
+        "    (void)({}(&zg_self->zg_state, {}));\n",
+        sym.view(),
+        be.context_arg(actor, hit).try()
+    ).try();
     be.add_function(name, proto, body)
 }
 
-// A lifecycle behavior's context argument. The context lives in the actor
-// record for the whole call, so a borrowed context parameter
-// (gen_c_borrow.zen) receives its address.
+// A lifecycle behavior's context argument. The thread's Context outlives
+// the call, so a borrowed context parameter (gen_c_borrow.zen) receives its
+// address.
 context_arg = (
     be    :: CBackend,
     actor : TyId,
@@ -1278,8 +981,8 @@ context_arg = (
     sig ::= be.alloc.Vec<TyId>();
     be.method_sig(actor, hit.site.decl, hit.f, hit.mi, inst, sig).try();
     be.passes_address(hit.f, 1, sig.ty_at(1)).try().match({
-        true  => Ok("&zg_self->zg_ctx"),
-        false => Ok("zg_self->zg_ctx"),
+        true  => Ok("zg_ctx"),
+        false => Ok("*zg_ctx"),
     })
 }
 
@@ -1291,6 +994,8 @@ behavior_symbol = (be :: CBackend, actor: TyId, hit: BehaviorHit)
     be.member_symbol(actor, hit.site, hit.f.name.text, sig, inst)
 }
 
+// The stopped entry: the actor's own `stopped`, then Drop for its state, then
+// every page its Arena allocated.
 write_stopped_callback = (
     be    :: CBackend,
     n     : usize,
@@ -1302,15 +1007,23 @@ write_stopped_callback = (
     name ::= be.alloc.String().try();
     sym_gen(name, "actor_stopped", n).try();
     proto ::= be.alloc.String().try();
-    proto.fmt("{}void {}(zg_actor *zg_base)", be.linkage(), name.view()).try();
+    proto.fmt(
+        "{}void {}(uint8_t *zg_rec, uint8_t *zg_raw)",
+        be.linkage(),
+        name.view()
+    ).try();
     body ::= be.alloc.String().try();
-    body.fmt("    {rec} *zg_self = ({rec} *)zg_base;\n").try();
+    body.fmt("    {rec} *zg_self = ({rec} *)zg_rec;\n    (void)zg_raw;\n").try();
     be.behavior_of(actor, "stopped").try().match({
         None    => Ok,
         Ok(hit) => {
+            // A non-null second argument marks an actor a trap ended: its
+            // `stopped` does not run.
+            body.add("    if (!zg_raw) {\n").try();
+            be.write_context(body).try();
             sym = be.behavior_symbol(actor, hit).try();
             body.fmt(
-                "    (void)({}(&zg_self->zg_state, {}));\n",
+                "    (void)({}(&zg_self->zg_state, {}));\n    }}\n",
                 sym.view(),
                 be.context_arg(actor, hit).try()
             )
@@ -1320,16 +1033,10 @@ write_stopped_callback = (
         None    => Ok,
         Ok(sym) => body.fmt("    (void)({}(&zg_self->zg_state));\n", sym.view()),
     }).try();
-    storage       = be.mailbox_type().try();
-    close_storage = be.mailbox_symbol(storage, "close").try();
-    body.fmt(
-        "    (void)({}(&zg_self->zg_storage));\n",
-        close_storage.view()
-    ).try();
-    be.drop_symbol(arena).try().match({
-        None    => Ok,
-        Ok(sym) => body.fmt("    (void)({}(&zg_self->zg_arena));\n", sym.view()),
-    }).try();
+    // The Arena's state lives in the record, which the runtime frees: give
+    // back the pages only.
+    release = be.std_symbol("std.mem.mem_arena", "release_pages").try();
+    body.fmt("    {}(&zg_self->zg_arena_state);\n", release.view()).try();
     be.add_function(name, proto, body).try();
     Ok(name)
 }
@@ -1347,6 +1054,10 @@ drop_symbol = (be :: CBackend, ty: TyId) Res<Res<String>, AllocError> {
     })
 }
 
+// `env.spawn(actor)`: a body from the runtime with the record filled in,
+// then the started turn queued. OutOfMemory when the body or the Arena's
+// state cannot be had; Unavailable when the runtime cannot take another
+// actor. Either failure drops the actor value as an ordinary owner.
 write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
                     Res<String, AllocError> {
     layout = lifecycle.layout;
@@ -1370,27 +1081,28 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
     be.set_line(actor.view(), actor_code.view()).try();
     state_c ::= be.alloc.String().try();
     be.ctype(layout.state_ty, state_c).try();
+    new       = be.runtime_symbol("actor_new").try();
+    record    = be.runtime_symbol("actor_record").try();
+    discard   = be.runtime_symbol("actor_discard").try();
+    start     = be.runtime_symbol("actor_start").try();
+    reference = be.runtime_symbol("actor_ref").try();
+    thread    = be.runtime_symbol("actor_thread").try();
+    shutdown  = be.runtime_symbol("actor_shutdown").try();
     cell        ::= be.fresh_name("actor_instance").try();
+    rec         ::= be.fresh_name("actor_record").try();
     arena_state ::= be.fresh_name("actor_state").try();
     status      ::= be.fresh_name("actor_status").try();
     be.fmt(
-        "{} *{} = ({} *)malloc(sizeof({}));\n",
-        lifecycle.record,
+        "uint8_t *{} = {}(sizeof({}), (size_t)&{}, (size_t)&{});\n",
         cell.view(),
+        new.view(),
         lifecycle.record,
-        lifecycle.record
-    ).try();
-    be.fmt(
-        "{} *{} = ({} *)malloc(sizeof({}));\n",
-        state_c.view(),
-        arena_state.view(),
-        state_c.view(),
-        state_c.view()
+        thread.view(),
+        shutdown.view()
     ).try();
     dst = be.temp(spawn.result_ty, "t").try();
-    be.fmt("if (!{} || !{}) {{\n", cell.view(), arena_state.view()).try();
+    be.fmt("if (!{}) {{\n", cell.view()).try();
     be.indent();
-    be.fmt("free({});\nfree({});\n", cell.view(), arena_state.view()).try();
     be.drop_symbol(spawn.actor_ty).try().match({
         None       => Ok,
         Ok(symbol) => be.fmt("(void)({}(&{}));\n", symbol.view(), actor.view()),
@@ -1399,30 +1111,60 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
     be.dedent();
     be.writeln("} else {").try();
     be.indent();
+    be.fmt(
+        "{} *{} = ({} *){}({});\n",
+        lifecycle.record,
+        rec.view(),
+        lifecycle.record,
+        record.view(),
+        cell.view()
+    ).try();
+    // The process Env, kept once for every turn's Context.
+    shared = be.runtime_symbol("actor_env").try();
+    be.fmt(
+        "(void){}(sizeof({}), (uint8_t *)&{});\n",
+        shared.view(),
+        env.view(),
+        env.view()
+    ).try();
+    be.fmt(
+        "{} *{} = &{}->zg_arena_state;\n",
+        state_c.view(),
+        arena_state.view(),
+        rec.view()
+    ).try();
     be.init_actor_fields(
         lifecycle,
-        cell.view(),
+        rec.view(),
         arena_state.view(),
         env.view(),
         actor.view()
     ).try();
     be.fmt(
-        "int {} = zg_actor_start(&{}->zg_base);\n",
+        "int {} = {}({}, {}, (size_t)&{});\n",
         status.view(),
-        cell.view()
+        start.view(),
+        cell.view(),
+        lifecycle.started,
+        lifecycle.stopped
     ).try();
     be.fmt("if ({} != 0) {{\n", status.view()).try();
     be.indent();
-    // No worker owns the value when startup fails. Run ordinary Drop for
-    // the actor and let Arena.drop release both its pages and state cell.
-    be.write_failed_spawn_drop(layout, cell.view()).try();
-    be.fmt("free({});\n", cell.view()).try();
+    // No turn will ever run: drop the state. The Arena has allocated
+    // nothing yet, and its state goes with the body.
+    be.write_failed_spawn_drop(layout, rec.view()).try();
+    be.fmt("{}({});\n", discard.view(), cell.view()).try();
     be.write_assign_err(spawn.result_ty, "Unavailable", dst.view()).try();
     be.dedent();
     be.writeln("} else {").try();
     be.indent();
     ref_value ::= be.alloc.String().try();
-    be.write_ref_value(spawn.ref_ty, cell.view(), ref_value).try();
+    be.write_ref_value(
+        spawn.ref_ty,
+        reference.view(),
+        cell.view(),
+        ref_value
+    ).try();
     be.write_assign_ok(spawn.result_ty, ref_value.view(), dst.view()).try();
     be.dedent();
     be.writeln("}").try();
@@ -1434,22 +1176,14 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
 write_failed_spawn_drop = (
     be     :: CBackend,
     layout : ActorSpawnLayout,
-    cell   : str
+    rec    : str
 ) Res<AllocError> {
     be.drop_symbol(layout.spawn.actor_ty).try().match({
         None       => Ok,
         Ok(symbol) => be.fmt(
             "(void)({}(&{}->zg_state));\n",
             symbol.view(),
-            cell
-        ),
-    }).try();
-    be.drop_symbol(layout.arena_ty).try().match({
-        None       => Ok,
-        Ok(symbol) => be.fmt(
-            "(void)({}(&{}->zg_arena));\n",
-            symbol.view(),
-            cell
+            rec
         ),
     })
 }
@@ -1457,7 +1191,7 @@ write_failed_spawn_drop = (
 init_actor_fields = (
     be          :: CBackend,
     lifecycle   : ActorLifecycle,
-    cell        : str,
+    rec         : str,
     arena_state : str,
     env         : str,
     actor       : str
@@ -1479,226 +1213,29 @@ init_actor_fields = (
     arena_field ::= be.alloc.String().try();
     arena_field.sym_member("state").try();
     be.fmt(
-        "{cell}->zg_arena = (({}){{ .{} = {arena_state} }});\n",
+        "{rec}->zg_arena = (({}){{ .{} = {arena_state} }});\n",
         arena_c.view(),
         arena_field.view()
     ).try();
-    alloc_value ::= be.alloc.String().try();
-    addr        ::= be.alloc.String().try();
-    addr.fmt("&{cell}->zg_arena").try();
-    be.fat_value(
-        addr.view(),
-        layout.arena_ty,
-        layout.alloc_ty,
-        alloc_value
-    ).try();
-    context_c ::= be.alloc.String().try();
-    be.ctype(layout.context_ty, context_c).try();
-    context_env ::= be.alloc.String().try();
-    context_env.sym_member("env").try();
-    context_alloc ::= be.alloc.String().try();
-    context_alloc.sym_member("alloc").try();
-    be.fmt(
-        "{cell}->zg_ctx = (({}){{ .{} = {env}, .{} = {} }});\n",
-        context_c.view(),
-        context_env.view(),
-        context_alloc.view(),
-        alloc_value.view()
-    ).try();
-    storage = be.mailbox_type().try();
-    storage_c ::= be.alloc.String().try();
-    be.ctype(storage, storage_c).try();
-    be.fmt("{cell}->zg_storage = ({}){{0}};\n", storage_c.view()).try();
-    be.fmt("{cell}->zg_base.storage = &{cell}->zg_storage;\n").try();
-    be.fmt("{cell}->zg_base.take = {}_storage_take;\n", lifecycle.record).try();
-    be.fmt("{cell}->zg_base.give = {}_storage_give;\n", lifecycle.record).try();
-    be.fmt("{cell}->zg_state = {actor};\n").try();
-    be.fmt("{cell}->zg_base.state = &{cell}->zg_state;\n").try();
-    be.fmt("{cell}->zg_base.context = &{cell}->zg_ctx;\n").try();
-    be.fmt("{cell}->zg_base.started = {};\n", lifecycle.started).try();
-    be.fmt("{cell}->zg_base.stopped = {};\n", lifecycle.stopped).try();
-    be.fmt("{cell}->zg_base.joined = 0;\n").try();
-    be.fmt("{cell}->zg_base.joining = 0;\n").try();
+    be.fmt("{rec}->zg_state = {actor};\n").try();
 }
 
 write_ref_value = (
-    be     :: CBackend,
-    ref_ty : TyId,
-    cell   : str,
-    out    :: String
+    be        :: CBackend,
+    ref_ty    : TyId,
+    reference : str,
+    cell      : str,
+    out       :: String
 ) Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(ref_ty, cty).try();
     id ::= be.alloc.String().try();
     id.sym_member("id").try();
-    out.fmt(
-        "(({}){{ .{} = (uint64_t)(uintptr_t){} }})",
-        cty.view(),
-        id.view(),
-        cell
-    )
+    out.fmt("(({}){{ .{} = {}({}) }})", cty.view(), id.view(), reference, cell)
 }
 
 actor_field = (be: CBackend, name: str) Res<str, AllocError> {
     field ::= be.alloc.String().try();
     field.sym_member(name).try();
     Ok(field.view())
-}
-
-// Each accepted byte-buffer message owns a separate receiver-backed arena.
-// Admission constructs it privately; only the worker mutates it afterward.
-// Its stable Alloc handle remains valid for retained/grown vectors until the
-// actor's stopped hook and destructor finish. Failed admission drops it here.
-write_buffer_transfer = (be :: CBackend, n: usize, payload: str, sig: Vec<TyId>)
-                        Res<str, AllocError> {
-    buffers ::= be.alloc.Vec<usize>();
-    Range(2, sig.len).loop((h, i) {
-        ty = sig.get(i).ok_or(AllocError.OutOfMemory).try();
-        be.check.actor_byte_buffer(ty).then(() { buffers.add(i).try(); });
-    });
-    (buffers.len == 0).match({
-        true  => Ok("NULL"),
-        false => be.buffer_transfer(n, payload, sig, buffers),
-    })
-}
-
-buffer_transfer = (
-    be      :: CBackend,
-    n       : usize,
-    payload : str,
-    sig     : Vec<TyId>,
-    buffers : Vec<usize>
-)
-                  Res<str, AllocError> {
-    arena_ty   = be.named_type_at("Arena", "std.mem.mem_arena.Arena").try().ok_or(AllocError.OutOfMemory).try();
-    state_ptr  = be.field_of(arena_ty, "state").try().ok_or(AllocError.OutOfMemory).try();
-    state_ty   = pointee(be, state_ptr).ok_or(AllocError.OutOfMemory).try();
-    context_ty = sig.get(1).ok_or(AllocError.OutOfMemory).try();
-    alloc_ty   = be.field_of(context_ty, "alloc").try().ok_or(AllocError.OutOfMemory).try();
-    first      = buffers.get(0).ok_or(AllocError.OutOfMemory).try();
-    vec_ty     = sig.get(first).ok_or(AllocError.OutOfMemory).try();
-    ptr_ty     = be.field_of(vec_ty, "data").try().ok_or(AllocError.OutOfMemory).try();
-    error_ty   = be.named_type_at("AllocError", "std.mem.mem_alloc.AllocError").try().ok_or(AllocError.OutOfMemory).try();
-    result_ty  = be.check.types.res_failure(ptr_ty, error_ty).try();
-    arena_c   ::= be.alloc.String().try();
-    state_c   ::= be.alloc.String().try();
-    context_c ::= be.alloc.String().try();
-    alloc_c   ::= be.alloc.String().try();
-    result_c  ::= be.alloc.String().try();
-    be.ctype(arena_ty, arena_c).try();
-    be.ctype(state_ty, state_c).try();
-    be.ctype(context_ty, context_c).try();
-    be.ctype(alloc_ty, alloc_c).try();
-    be.request_type(result_ty).try();
-    be.ctype(result_ty, result_c).try();
-    name ::= be.alloc.String().try();
-    name.sym_gen("actor_buffer", n).try();
-    record ::= be.alloc.String().try();
-    record.fmt("{}_owner", name.view()).try();
-    definition ::= be.alloc.String().try();
-    definition.fmt(
-        "typedef struct {} {{ zg_actor_owned base; {} arena; }} {};",
-        record.view(),
-        arena_c.view(),
-        record.view()
-    ).try();
-    be.add_actor_def(definition).try();
-    drop_name ::= be.alloc.String().try();
-    drop_name.fmt("{}_drop", name.view()).try();
-    drop_proto ::= be.alloc.String().try();
-    drop_proto.fmt(
-        "{}void {}(zg_actor_owned *raw)",
-        be.linkage(),
-        drop_name.view()
-    ).try();
-    drop_body ::= be.alloc.String().try();
-    drop_body.fmt(
-        "    {} *owned = ({} *)raw;\n",
-        record.view(),
-        record.view()
-    ).try();
-    drop_sym = be.drop_symbol(arena_ty).try().ok_or(AllocError.OutOfMemory).try();
-    drop_body.fmt(
-        "    (void){}(&owned->arena);\n    free(owned);\n",
-        drop_sym.view()
-    ).try();
-    be.add_function(drop_name, drop_proto, drop_body).try();
-    proto ::= be.alloc.String().try();
-    proto.fmt(
-        "{}int {}(zg_actor *actor, void *raw, zg_actor_owned **pending)",
-        be.linkage(),
-        name.view()
-    ).try();
-    body ::= be.alloc.String().try();
-    body.fmt("    {payload} *msg = ({payload} *)raw;\n").try();
-    body.fmt(
-        "    {} *ctx = ({} *)actor->context;\n",
-        context_c.view(),
-        context_c.view()
-    ).try();
-    body.fmt(
-        "    {} *owned = ({} *)malloc(sizeof(*owned));\n",
-        record.view(),
-        record.view()
-    ).try();
-    body.fmt(
-        "    {} *state = ({} *)malloc(sizeof(*state));\n",
-        state_c.view(),
-        state_c.view()
-    ).try();
-    body.add(
-        "    if (!owned || !state) { free(owned); free(state); return 0; }\n"
-    ).try();
-    mem   = be.actor_field("mem").try();
-    env   = be.actor_field("env").try();
-    head  = be.actor_field("head").try();
-    next  = be.actor_field("next").try();
-    state = be.actor_field("state").try();
-    body.fmt(
-        "    state->{mem} = ctx->{env}.{mem}; state->{head} = NULL; state->{next} = 0;\n"
-    ).try();
-    body.fmt("    owned->arena.{state} = state;\n").try();
-    body.fmt(
-        "    owned->base.drop = {}; owned->base.next = *pending; *pending = &owned->base;\n",
-        drop_name.view()
-    ).try();
-    alloc_value ::= be.alloc.String().try();
-    be.fat_value("&owned->arena", arena_ty, alloc_ty, alloc_value).try();
-    body.fmt("    {} alloc = {};\n", alloc_c.view(), alloc_value.view()).try();
-    data      = be.actor_field("data").try();
-    len       = be.actor_field("len").try();
-    capacity  = be.actor_field("capacity").try();
-    allocator = be.actor_field("alloc").try();
-    raw       = be.actor_field("raw").try();
-    ok        = be.actor_field("Ok").try();
-    tag ::= be.alloc.String().try();
-    tag.sym_variant(RES_PATH, "Ok").try();
-    buffers.loop((h, i) {
-        arg ::= be.alloc.String("msg->zg_arg").try();
-        arg.write_usize(i - 2).try();
-        body.add("    {\n        unsigned char *bytes = NULL;\n").try();
-        body.fmt("        if ({}.{len}) {{\n", arg.view()).try();
-        body.fmt(
-            "            {} result = alloc.{raw}(alloc.zg_self, {}.{len}, 1);\n",
-            result_c.view(),
-            arg.view()
-        ).try();
-        body.fmt("            if (result.zg_tag != {}) return 0;\n", tag.view()).try();
-        body.fmt("            bytes = result.zg_data.{ok};\n").try();
-        body.fmt(
-            "            memcpy(bytes, {}.{data}, {}.{len});\n        }}\n",
-            arg.view(),
-            arg.view()
-        ).try();
-        body.fmt(
-            "        {}.{data} = bytes; {}.{capacity} = {}.{len}; {}.{allocator} = alloc;\n    }}\n",
-            arg.view(),
-            arg.view(),
-            arg.view(),
-            arg.view()
-        ).try();
-    });
-    body.add("    return 1;\n").try();
-    be.add_function(name, proto, body).try();
-    Ok(name.view())
 }

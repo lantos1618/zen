@@ -102,7 +102,7 @@ SysValue* = { out*: usize, name*: SysConstant }
 // Its first word is the exit hook: when non-zero it is the code address of a
 // function taking no arguments, which the runtime calls on the main thread
 // after the entry function returns and before standard output is flushed.
-// The rest belongs to std.sys (see `std.sys.sys_actor`).
+// The rest belongs to std.sys and the actor runtime (std.actor.actor_layout).
 StartValue* = { Argc | Argv | Envp | Globals }
 Start* = { out*: usize, value*: StartValue }
 // Anonymous zeroed memory of at least `bytes` (a U64 slot) bytes, 16-byte

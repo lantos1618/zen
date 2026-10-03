@@ -1,0 +1,193 @@
+// Runs the actor benchmarks the way the W2 report needs them: pinned to
+// CPUS with taskset, WORKERS workers, each benchmark REPS times per backend,
+// waiting before every run until those CPUs are idle (at least 90% over one
+// second, from /proc/stat) so a neighbour's load is not measured. Prints
+// every run's line, then the median of each number.
+//
+//   CPUS=9-12 WORKERS=4 REPS=3 BENCHES=spawn,pingpong bin/c/run
+
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ Env } = std.env
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ println } = std.io
+{ param } = common
+
+ALL: str = "spawn,pingpong,ring,fanin,parked,overload,churn"
+BACKENDS: str = "c,asm"
+
+main = (env: Env) Res<i32, AllocError> {
+    a       = env.mem.alloc();
+    cpus    = env.var("CPUS").value_or("9-12");
+    workers = env.var("WORKERS").value_or("4");
+    reps    = param(env, "REPS", 3);
+    first   = parse_first(cpus);
+    last    = parse_last(cpus);
+    env.var("BENCHES").value_or(ALL).split(',').loop((name) {
+        env.var("BACKENDS").value_or(BACKENDS).split(',').loop((backend) {
+            lines ::= a.Vec<String>();
+            r     :: usize = 0;
+            loop(() { r < reps }, (h) {
+                wait_idle(env, a, first, last);
+                line = run_one(env, a, cpus, workers, backend, name).try();
+                println("run {} {}", backend, line.view());
+                lines.add(line).try();
+                r = r + 1;
+            });
+            println("median {} {}", backend, medians(a, lines).try().view());
+        });
+    });
+    Ok(0)
+}
+
+parse_first = (cpus: str) usize {
+    cpus.split_once('-').match({
+        Ok(pair) => pair.before.parse_usize().value_or(0),
+        None     => cpus.parse_usize().value_or(0),
+    })
+}
+
+parse_last = (cpus: str) usize {
+    cpus.split_once('-').match({
+        Ok(pair) => pair.after.parse_usize().value_or(0),
+        None     => cpus.parse_usize().value_or(0),
+    })
+}
+
+// One run's `bench=` line, or what went wrong.
+run_one = (
+    env     : Env,
+    a       : Alloc,
+    cpus    : str,
+    workers : str,
+    backend : str,
+    name    : str
+) Res<String, AllocError> {
+    w ::= a.String().try();
+    w.fmt("ZEN_ACTOR_WORKERS={}", workers).try();
+    b ::= a.String().try();
+    b.fmt("bin/{}/{}", backend, name).try();
+    argv ::= a.Vec<str>();
+    argv.add("/usr/bin/env").try();
+    argv.add(w.view()).try();
+    argv.add("taskset").try();
+    argv.add("-c").try();
+    argv.add(cpus).try();
+    argv.add(b.view()).try();
+    out ::= a.String().try();
+    env.proc.run_argv(a, ".", argv).match({
+        Err(_)   => out.add("FAILED to start").try(),
+        Ok(done) => {
+            done.out.view().split('\n').loop((l) {
+                l.starts_with("bench=").then(() {
+                    (out.len() > 0).then(() { out.add(" ").try(); });
+                    out.add(l).try();
+                });
+            });
+            (out.len() == 0).then(
+                () { out.fmt("FAILED exit {}", done.code).try(); }
+            );
+        },
+    });
+    Ok(out)
+}
+
+// Every field of the first line, each number replaced by its median over
+// all lines (fields are in the same order on every line).
+medians = (a: Alloc, lines: Vec<String>) Res<String, AllocError> {
+    out ::= a.String().try();
+    first = lines.get(0).match({ Ok(l) => l.view(), None => "" });
+    index :: usize = 0;
+    first.split(' ').loop((field) {
+        field.split_once('=').match({
+            None     => (),
+            Ok(pair) => pair.after.parse_i64().match({
+                None  => { out.fmt("{} ", field).try(); },
+                Ok(_) => {
+                    values ::= a.Vec<i64>();
+                    lines.loop((l) {
+                        nth(l.view(), index).split_once('=').match({
+                            Ok(p) => p.after.parse_i64().match({ Ok(v) => { values.add(
+                                v
+                            ).try(); }, None => () }),
+                            None  => (),
+                        });
+                    });
+                    sort(values);
+                    out.fmt(
+                        "{}={} ",
+                        pair.before,
+                        values.get(values.len / 2).value_or(0)
+                    ).try();
+                },
+            }),
+        });
+        index = index + 1;
+    });
+    Ok(out)
+}
+
+// The `index`-th space-separated field of `line`.
+nth = (line: str, index: usize) str {
+    i     :: usize = 0;
+    found :: str = "";
+    line.split(' ').loop((f) {
+        (i == index).then(() { found = f; });
+        i = i + 1;
+    });
+    found
+}
+
+sort = (v :: Vec<i64>) {
+    Range<usize>(1, v.len).loop((i) {
+        j ::= i;
+        loop(() { j > 0 && v.get(j - 1).value_or(0) > v.get(j).value_or(0) }, (h) {
+            x = v.get(j).value_or(0);
+            v.set(
+                j,
+                v.get(j - 1).value_or(0)
+            ).match({ Ok(_) => (), None => () });
+            v.set(j - 1, x).match({ Ok(_) => (), None => () });
+            j = j - 1;
+        });
+    });
+}
+
+// Wait until CPUs first..last were at least 90% idle over one second.
+wait_idle = (env: Env, a: Alloc, first: usize, last: usize) {
+    loop((h) {
+        before = busy(env, a, first, last);
+        env.threads.sleep(1000);
+        after = busy(env, a, first, last);
+        total = after.total - before.total;
+        idle  = after.idle - before.idle;
+        (total > 0 && idle * 10 >= total * 9).then(() { h.break(); });
+    });
+}
+
+Ticks = { total: usize, idle: usize }
+
+// Summed jiffies (all, and idle plus iowait) of CPUs first..last.
+busy = (env: Env, a: Alloc, first: usize, last: usize) Ticks {
+    total :: usize = 0;
+    idle  :: usize = 0;
+    env.fs.read(a, "/proc/stat").match({
+        Err(_)   => (),
+        Ok(text) => text.view().split('\n').loop((l) {
+            (l.starts_with("cpu") && l.len > 3 && l.index(3) != ' ').then(() {
+                cpu = nth(l, 0).slice(3, nth(l, 0).len).parse_usize().value_or(9999);
+                (cpu >= first && cpu <= last).then(() {
+                    k :: usize = 1;
+                    loop(() { k <= 8 }, (j) {
+                        v     = nth(l, k).parse_usize().value_or(0);
+                        total = total + v;
+                        (k == 4 || k == 5).then(() { idle = idle + v; });
+                        k = k + 1;
+                    });
+                });
+            });
+        }),
+    });
+    Ticks(total: total, idle: idle)
+}

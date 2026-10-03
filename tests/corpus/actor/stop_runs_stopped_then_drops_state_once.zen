@@ -1,0 +1,36 @@
+// Stop drains what the actor accepted, runs `stopped`, then drops the
+// state exactly once, before join returns. Actors never stopped are
+// stopped at exit the same way, after every accepted message has run.
+
+{ Res, Ok, Drop } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Worker = { id: u64, pokes :: u64 = 0 }
+
+Worker.impl(Drop, { drop = (self :: @Self) { println(
+    "drop {} after {} pokes",
+    self.id,
+    self.pokes
+); } })
+
+Worker.impl(Actor, {
+    poke = (self :: @Self, ctx: Context) { self.pokes = self.pokes + 1; }
+
+    stopped = (self :: @Self, ctx: Context) { println("stopped {}", self.id); }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    first = env.spawn(Worker(id: 1)).try();
+    first.poke().try();
+    first.poke().try();
+    first.stop();
+    first.join();
+    println("joined 1");
+    last = env.spawn(Worker(id: 2)).try();
+    last.poke().try();
+    Ok(0)
+}

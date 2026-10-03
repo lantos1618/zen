@@ -76,35 +76,16 @@ or macOS run-loop behavior into the actor runtime.
 
 ### Actor byte-buffer transfer
 
-A direct `Vec<u8>` behavior argument requires `consume`. Admission copies its
-live bytes into a private arena backed by the receiver's `Env.mem`, replaces
-the vector's allocator and capacity, and publishes only after allocation
-succeeds. A refused allocation returns `ActorError.Full` and frees partial
-transfer storage. Closed/count/byte-limit refusals happen before preparation. Admission reserves
-count, bytes and pending work before releasing runtime locks for allocator
-callbacks. Stop waits for those reservations; a stop during preparation rejects
-the send and releases its private storage before running stopped.
-Nested vectors, other element types and borrowed vectors remain rejected.
-The shared `Env.mem` provider and its userdata must outlive the actor and support
-allocation/release from sender and worker threads. Each transfer arena itself
-has one mutator at a time.
-
-The transfer allocator has a stable address and remains live through subsequent
-turns, `stopped`, and actor destruction. The receiver can retain and grow even an
-initially empty vector. Each accepted buffer message currently retains a private
-arena until actor shutdown; this uses ordinary arena page granularity and is not
-a claim of bounded total actor-state memory. Message bytes remain subject to the
-mailbox admission limit. The transfer does not change general owning collection
-storage's unresolved borrow and invalid-set issues.
-
-`tests/quality/actor_buffers.py` exercises the generated runtime under UBSan,
-including corruption/lifetime negative controls, refusal at each preparation
-allocation, refused-allocation cleanup, closed admission without allocation, reentrant callbacks, and stop during
-preparation.
-
-The buffer gate also forces eight native producers to overlap inside preparation,
-checks 512 delivered buffers and each producer's order, grows each receiver buffer,
-and tracks complete reclamation of preparation allocations at shutdown.
+A direct `Vec<u8>` behavior argument requires `consume`. Its live bytes are
+copied into the message with the other arguments; before the behaviour runs,
+its turn moves them into the receiver's own allocator (`Context.alloc`) and
+points the vector there, so the receiver can retain and grow it. That memory
+lives until the actor's allocator is dropped after `stopped`; it is not a claim
+of bounded total actor-state memory. A message larger than the admission limit
+is refused as `ActorError.Full` before anything is copied. Nested vectors,
+other element types and borrowed vectors remain rejected. Ownership regions
+(W1) will replace the copy.
+`tests/corpus/actor/buffer_payload_is_owned_by_receiver.zen` checks it.
 
 ## JSON object inspection
 

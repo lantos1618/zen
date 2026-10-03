@@ -1,0 +1,54 @@
+// Two actors each send the other 2,000 messages in one turn: a pure request
+// cycle. Both mailboxes fill, and each sender would wait for the other for
+// ever; instead a send whose receiver waits, through full mailboxes, on the
+// sender itself goes through over the bound. Every message arrives once,
+// in order, and both actors finish.
+
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+COUNT: u64 = 2000
+
+Peer = {
+    name: u64,
+    next :: u64 = 0,
+    out_of_order :: u64 = 0,
+}
+
+Peer.impl(Actor, {
+    flood = (self :: @Self, ctx: Context, other: Ref<Peer>) {
+        i :: u64 = 0;
+        loop(() { i < COUNT }, (h) {
+            other.note(i).ignore();
+            i = i + 1;
+        });
+    }
+
+    note = (self :: @Self, ctx: Context, n: u64) {
+        (n != self.next).then(
+            () { self.out_of_order = self.out_of_order + 1; }
+        );
+        self.next = n + 1;
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        println(
+            "peer {} got {} out of order {}",
+            self.name,
+            self.next,
+            self.out_of_order
+        );
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    a = env.spawn(Peer(name: 1)).try();
+    b = env.spawn(Peer(name: 2)).try();
+    a.flood(b).try();
+    b.flood(a).try();
+    Ok(0)
+}

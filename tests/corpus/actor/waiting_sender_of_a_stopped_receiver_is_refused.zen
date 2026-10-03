@@ -1,0 +1,57 @@
+// A receiver stops itself while a sender waits for room in its mailbox.
+// The 256 messages it accepted before the stop still run, then `stopped`;
+// the 344 that waited in the sender's outbox were never accepted, so they
+// are refused, and the sender is released to run again.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Receiver = {
+    me :: Res<Ref<Receiver>> = None,
+    taken :: u64 = 0,
+}
+
+Receiver.impl(Actor, {
+    link = (self :: @Self, ctx: Context, me: Ref<Receiver>) { self.me = Ok(
+        me
+    ); }
+
+    take = (self :: @Self, ctx: Context, n: u64) {
+        self.taken = self.taken + 1;
+        (n == 50).then(
+            () { self.me.match({ Ok(r) => r.stop(), None => () }); }
+        );
+    }
+
+    stopped = (self :: @Self, ctx: Context) { println(
+        "receiver took {}",
+        self.taken
+    ); }
+})
+
+Sender = { sent :: u64 = 0 }
+
+Sender.impl(Actor, {
+    flood = (self :: @Self, ctx: Context, to: Ref<Receiver>, count: u64) {
+        loop(() { self.sent < count }, (h) {
+            to.take(self.sent).ignore();
+            self.sent = self.sent + 1;
+        });
+    }
+
+    report = (self :: @Self, ctx: Context) { println("sender released"); }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    receiver = env.spawn(Receiver()).try();
+    sender   = env.spawn(Sender()).try();
+    receiver.link(receiver).try();
+    sender.flood(receiver, 600).try();
+    sender.report().try();
+    receiver.join();
+    Ok(0)
+}

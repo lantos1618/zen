@@ -12,7 +12,6 @@
 { Emit } = gen.gen_emit
 { sym_fn, sym_member, sym_variant, RES_PATH } = gen.gen_name
 { CBackend } = gen.gen_c.gen_c_state
-{ emit_actor_globals, write_actor_shutdown } = gen.gen_c.gen_c_actor
 { emit_sys_globals, write_sys_exit_hook } = gen.gen_c.gen_c_sys
 { ctype, is_c_integer, write_zero } = gen.gen_c.gen_c_type
 { field_of } = gen.gen_c.gen_c_type
@@ -33,7 +32,6 @@ emit_main* = (be :: CBackend, mi: usize, out :: Emit) Res<AllocError> {
 // One ladder, not two: "is this def in the tree" and "is what it names
 // a function" are two questions about one lookup, so they answer as one.
 write_main = (be :: CBackend, d: Def, out :: Emit) Res<AllocError> {
-    be.emit_actor_globals(out).try();
     be.emit_sys_globals(out).try();
     decl_at(be.tree, d.id).match({
         None  => Ok,
@@ -283,7 +281,6 @@ write_res_exit = (
     line.fmt("{} zg_r = {call};", cty.view()).try();
     out.say(line.view()).try();
     be.write_argv_drop(has_argv, out).try();
-    be.write_actor_shutdown(out).try();
     be.write_sys_exit_hook(out).try();
     tag ::= be.alloc.String().try();
     sym_variant(tag, RES_PATH, "Ok").try();
@@ -331,7 +328,6 @@ write_int_exit = (be :: CBackend, call: str, has_argv: bool, out :: Emit)
     line.fmt("int zg_code = (int){call};").try();
     out.say(line.view()).try();
     be.write_argv_drop(has_argv, out).try();
-    be.write_actor_shutdown(out).try();
     be.write_sys_exit_hook(out).try();
     out.say("return zg_code;")
 }
@@ -346,7 +342,6 @@ write_void_exit = (
     out.bytes(call).try();
     out.say(";").try();
     be.write_argv_drop(has_argv, out).try();
-    be.write_actor_shutdown(out).try();
     be.write_sys_exit_hook(out).try();
     out.say("return 0;").try();
 }

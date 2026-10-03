@@ -1,4 +1,7 @@
 // The compiler builds itself through the same project graph as user programs.
+// Optimization follows the build mode: `zen build .` compiles at -O0 and
+// `--release` at -O2. `make build` also passes CFLAGS=-O2, which overrides
+// the mode's level.
 { Builder, BuildError } = std.build
 { Res, Ok, Path } = std.core
 
@@ -8,5 +11,4 @@ build = (b :: Builder) Res<BuildError> {
         deps: [],
         out: Ok(Path("zen")),
     }).try();
-    Ok
 }

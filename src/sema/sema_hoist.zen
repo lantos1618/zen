@@ -118,7 +118,7 @@ failure_never_lifts = (c :: Checker, file: str, span: Span)
 // and so does a tail without the `;`, whatever its type.
 statement_tail* = (c :: Checker, body: BlockId, want: TyId, got: TyId)
                   Res<TyId, AllocError> {
-    c.semicolon_tail(c.tree.block_at(body)).match({
+    semicolon_tail(c.tree.block_at(body)).match({
         None  => Ok(got),
         Ok(s) => (c.unit_success(want) && c.droppable(got)).match({
             false => Ok(got),
@@ -127,7 +127,7 @@ statement_tail* = (c :: Checker, body: BlockId, want: TyId, got: TyId)
     })
 }
 
-semicolon_tail = (c: Checker, blk: Block) Res<Stmt> {
+semicolon_tail = (blk: Block) Res<Stmt> {
     blk.value.match({
         Ok(_) => None,
         None  => blk.last_stmt().match({

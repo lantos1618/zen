@@ -60,5 +60,13 @@ build = (b :: Builder) Res<BuildError> {
         "overload-asm",
         { src: Path("overload.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/overload")) }
     ).try();
+    b.exe(
+        "preempt",
+        { src: Path("preempt.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/preempt")) }
+    ).try();
+    b.exe(
+        "preempt-asm",
+        { src: Path("preempt.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/preempt")) }
+    ).try();
     Ok
 }

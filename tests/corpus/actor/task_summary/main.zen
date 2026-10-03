@@ -65,8 +65,10 @@ Summarizer.impl(Actor, {
                 InvalidLine(line) => ctx.env.out.println(
                     "invalid task on line {}",
                     line
-                ),
-                OutOfMemory       => ctx.env.out.println("out of memory"),
+                ).ignore(),
+                OutOfMemory       => ctx.env.out.println(
+                    "out of memory"
+                ).ignore(),
             }),
         });
     }

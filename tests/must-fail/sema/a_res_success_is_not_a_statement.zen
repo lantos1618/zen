@@ -1,0 +1,22 @@
+// A unit result lifts to `Ok` only where the success is `()`. A body that
+// ends in a statement where the success is a value has left it out, and is
+// refused at that statement rather than returning a zeroed value.
+//
+// position: the final statement.
+
+{ Res, Ok, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Cold = { Frozen | Iced }
+Cold.impl(Error, {})
+
+measure = (n: i32) Res<i32, Cold> {
+    println("measured {}", n);
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    measure(1).ignore();
+    Ok(0)
+}

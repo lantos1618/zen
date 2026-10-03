@@ -21,7 +21,7 @@ Printer.impl(Actor, {
             Ok(_)  => values.get(0).match({
                 None         => (),
                 Ok(answered) => {
-                    ctx.env.out.println("arena answered {}", answered);
+                    ctx.env.out.println("arena answered {}", answered).ignore();
                 },
             }),
         });

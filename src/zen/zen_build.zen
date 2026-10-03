@@ -767,6 +767,7 @@ Build* = {
 
     checked* = (self :: @Self) Res<Checker, AllocError> {
         c ::= self.alloc.Checker(self.tree).try();
+        (self.faults > 0).then(() { c.after_syntax_faults(); });
         c.check_all().try();
         Ok(c);
     }

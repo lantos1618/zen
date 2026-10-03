@@ -196,6 +196,12 @@ Checker* = {
     // bounds happen to be in scope while it is read.
     tparam_decls* :: Map<TyId, TParam>,
 
+    // Set when the program already failed to lex or parse. A body the
+    // parser had to cut short has no tail worth reporting as missing.
+    syntax_faults* :: bool = false,
+
+    after_syntax_faults* = (self :: @Self) { self.syntax_faults = true; }
+
     alloc*: Alloc,
 
     // -----------------------------------------------------------------

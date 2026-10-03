@@ -147,6 +147,7 @@ SemaFault* =
     | InferredSetExported: NameFault   // an exported function writes its error set
     | HoistAmbiguous: TypeFault        // two variants carry the type
     | HoistNotSuccess: NameFault       // only success lifts
+    | MissingSuccess: TypeFault        // a statement's `()` is no success value
     | ErrWithoutError: TypeFault       // `Res<V>` is absence unless V is an Error
 
     // vararg — the pack's one legal position, and its one type argument
@@ -288,6 +289,7 @@ message* = (fault: SemaFault) str {
         InferredSetExported(_)       => "inferred error set on an exported function: `*` means this name crosses a module boundary, so its type is written, not inferred",
         HoistAmbiguous(_)            => "cannot be hoisted: hoisting fires only when exactly one variant carries the type, so write the variant out",
         HoistNotSuccess(_)           => "only success lifts into Res: failure stays visible, so this must be written out",
+        MissingSuccess(_)            => "missing success value: the body ends in a statement, and `()` lifts only into a Res whose success is `()`",
         ErrWithoutError(_)           => "no Err in an absence: a one-argument Res is `Ok(V) | None` unless its argument implements Error, so implement Error for the failure or write `Res<V, E>`",
         VarargNotLast(_)             => "a vararg is only ever a function's last parameter: the pack borrows the caller's frame, so anywhere it could outlive the call it would dangle",
         VarargElement(_)             => "a vararg writes exactly one element type, and it is never itself a vararg: `vararg<T>` is a run of T, and no call site could build a run of runs",
@@ -464,6 +466,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         TryArgNeedsErr(f)            => out.write_types(types, f),
         NoErrorConversion(f)         => out.write_types(types, f),
         HoistAmbiguous(f)            => out.write_types(types, f),
+        MissingSuccess(f)            => out.write_types(types, f),
         ErrWithoutError(f)           => out.write_types(types, f),
         LiteralOutOfRange(f)         => out.write_literal(types, f),
         HeldOutOfRange(f)            => out.write_held(types, f),

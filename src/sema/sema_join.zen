@@ -81,7 +81,7 @@ at_form = (c :: Checker, value: TyId, rb: TyRes) Res<TyId, AllocError> {
 merged_or_first = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
     c.types.at(a).match({
         Res(ra) => c.merge_against(a, b, ra),
-        _       => Ok(a),
+        _       => c.unit_beside(a, b),
     })
 }
 
@@ -89,8 +89,43 @@ merge_against = (c :: Checker, a: TyId, b: TyId, ra: TyRes)
                 Res<TyId, AllocError> {
     c.types.at(b).match({
         Res(rb) => c.merge_failures(a, ra, rb),
-        _       => Ok(a),
+        _       => c.unit_into(a, ra, b),
     })
+}
+
+// A `()` arm beside a `Res` arm whose success is `()`, or not yet known, is
+// that `Res`'s `Ok`: a bare `()` lifts as any bare success does, so the
+// match is the `Res` whichever arm comes first.
+unit_beside = (c :: Checker, unit: TyId, r: TyId) Res<TyId, AllocError> {
+    c.types.at(r).match({
+        Res(rr) => c.unit_lifts(rr, unit).match({
+            true  => c.lifted_unit(r, rr, unit),
+            false => Ok(unit),
+        }),
+        _       => Ok(unit),
+    })
+}
+
+unit_into = (c :: Checker, r: TyId, rr: TyRes, unit: TyId)
+            Res<TyId, AllocError> {
+    c.unit_lifts(rr, unit).match({
+        true  => c.lifted_unit(r, rr, unit),
+        false => Ok(r),
+    })
+}
+
+lifted_unit = (c :: Checker, r: TyId, rr: TyRes, unit: TyId)
+              Res<TyId, AllocError> {
+    c.unsettled(rr.value).match({
+        true  => c.at_form(unit, rr),
+        false => Ok(r),
+    })
+}
+
+unit_lifts = (c: Checker, r: TyRes, unit: TyId) bool {
+    c.prim_name(unit).eq("()")
+        && r.form.match({ Open => false, _ => true })
+        && (c.unsettled(r.value) || c.prim_name(r.value).eq("()"))
 }
 
 // An `Err(e)` arm says nothing about the success payload, so its value is

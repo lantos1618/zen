@@ -219,8 +219,8 @@ walk_expr = (w :: Walk, id: ExprId) Res<(), AllocError> {
         Meta(mt)       => mt.value.match({
             Ok(v) => walk_expr(w, v),
             None  => (),
-        }),
-        Paren(pa)      => walk_expr(w, pa.inner),
+        }).try(),
+        Paren(pa)      => walk_expr(w, pa.inner).try(),
         Array(arr)     => arr.elems.loop((h, el) { walk_expr(w, el).try() }),
         FixedArray(fa) => {
             walk_type(w, fa.type).try();
@@ -233,7 +233,7 @@ walk_expr = (w :: Walk, id: ExprId) Res<(), AllocError> {
                 Ok(t) => walk_type(w, t),
                 None  => (),
             }).try();
-            walk_block(w, block_of(w, l.body));
+            walk_block(w, block_of(w, l.body)).try();
         },
         Call(c)        => {
             walk_expr(w, c.callee).try();
@@ -251,23 +251,23 @@ walk_expr = (w :: Walk, id: ExprId) Res<(), AllocError> {
         },
         Try(ty)        => {
             walk_expr(w, ty.operand).try();
-            ty.error.match({ Ok(e) => walk_expr(w, e), None => Ok(()) });
+            ty.error.match({ Ok(e) => walk_expr(w, e), None => Ok(()) }).try();
         },
         Record(r)      => r.entries.loop(
             (h, mem) { walk_member(w, mem).try() }
         ),
-        Access(a)      => walk_expr(w, a.base),
+        Access(a)      => walk_expr(w, a.base).try(),
         Index(ix)      => {
             walk_expr(w, ix.base).try();
-            walk_expr(w, ix.index);
+            walk_expr(w, ix.index).try();
         },
-        Unary(u)       => walk_expr(w, u.operand),
+        Unary(u)       => walk_expr(w, u.operand).try(),
         Binary(bn)     => {
             walk_expr(w, bn.lhs).try();
-            walk_expr(w, bn.rhs);
+            walk_expr(w, bn.rhs).try();
         },
-        Consume(cn)    => walk_expr(w, cn.operand),
-        Block(bid)     => walk_block(w, block_of(w, bid)),
+        Consume(cn)    => walk_expr(w, cn.operand).try(),
+        Block(bid)     => walk_block(w, block_of(w, bid)).try(),
     });
     add(w, e.trailing, "expr.trailing").try();
     Ok(());
@@ -287,7 +287,7 @@ walk_pattern = (w :: Walk, id: PatternId) Res<(), AllocError> {
         Name(_)         => (),
         Wild            => (),
         Literal(_)      => (),
-        Destructure(ds) => walk_pattern(w, ds.binder),
+        Destructure(ds) => walk_pattern(w, ds.binder).try(),
     });
     add(w, pt.trailing, "pattern.trailing").try();
     Ok(());

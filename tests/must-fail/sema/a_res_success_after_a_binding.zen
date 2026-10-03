@@ -1,0 +1,17 @@
+// A body that ends in a binding has no value either: `Res<V>` with V not
+// `()` owes one. Reported on the body, since no expression ends it.
+//
+// position: the body's opening brace.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+half = (n: i32) Res<i32> {
+    h = n / 2;
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    half(4).match({ Ok(_) => (), None => () });
+    Ok(0)
+}

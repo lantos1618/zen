@@ -1,0 +1,52 @@
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// A bare `()` lifts to `Ok` when exactly one variant carries `()`: a body
+// returning `Res<R>` that ends in a statement succeeds, and a `()` arm of a
+// Res-typed match is its `Ok`, whichever arm comes first.
+//
+// one-line break: join a match's arms to its first arm's type again, and
+// `first_unit`'s `Err` arm is stored into a `()` (the JavaScript and
+// assembly lowerings refuse it; C prints nothing for it).
+
+Jam = { Paper | Ink }
+Jam.impl(Error, {})
+
+feed = (n: i32) Res<Jam> {
+    (n > 3).match({ true => Err(Jam.Paper), false => Ok })
+}
+
+print_page = (n: i32) Res<Jam> {
+    feed(n).try();
+    println("printed {}", n);
+}
+
+first_unit = (n: i32) Res<Jam> {
+    (n % 2 == 0).match({
+        true  => { println("even {}", n); },
+        false => Err(Jam.Ink),
+    })
+}
+
+first_err = (n: i32) Res<(), Jam> {
+    (n % 2 == 0).match({
+        false => Err(Jam.Ink),
+        true  => println("even {}", n),
+    })
+}
+
+say = (r: Res<Jam>) {
+    r.match({ Ok => println("ok"), Err(j) => println("jam {}", j.variant_name()) })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    say(print_page(2));
+    say(print_page(5));
+    say(first_unit(4));
+    say(first_unit(3));
+    say(first_err(6));
+    say(first_err(1));
+    Ok(0);
+}

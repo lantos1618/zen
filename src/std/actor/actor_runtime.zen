@@ -44,7 +44,7 @@
 { str } = std.text
 { thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
 { cond_wait, cond_signal, cond_broadcast, parker_init, park, unpark, park_clear } = std.sys.sys_thread
-{ word_at, load, store, lock, unlock, alloc, free, size_of, set_checked } = std.actor.actor_pool
+{ word_at, load, store, lock, unlock, alloc, free, set_checked } = std.actor.actor_pool
 { slot_at, slot_of_ref, take_slot, give_slot } = std.actor.actor_registry
 { MAX_MESSAGE_BYTES } = std.actor.actor_limits
 { PB_ONCE, PB_GLOBALS, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND, CYCLE_WALK } = std.actor.actor_layout

@@ -275,15 +275,6 @@ slab_of = (block: Ptr<u8>) Ptr<u8> {
     pointer_at(address_of(block) / SLAB_BYTES * SLAB_BYTES)
 }
 
-// The usable bytes of a block `alloc` returned.
-size_of* = (block: Ptr<u8>) usize {
-    slab = slab_of(block);
-    (load(slab, 0) == LARGE).match({
-        true  => load(slab, 1) - SLAB_HEADER,
-        false => load(slab, 1),
-    })
-}
-
 // Return a block to this thread's list (any thread may free any block).
 free* = (heap: Ptr<u8>, central: Ptr<u8>, block: Ptr<u8>) {
     slab = slab_of(block);
@@ -313,16 +304,6 @@ give_batch = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) {
     store(batch, 1, central_stack(central, c).read(0));
     central_stack(central, c).write(0, first);
     unlock(central_lock(central, c));
-}
-
-// Give the cached blocks back to the central stacks, whole batches only
-// (a thread that stops running actors keeps less than a batch per class).
-flush* = (heap: Ptr<u8>, central: Ptr<u8>) {
-    Range(0, CLASSES).loop((c) {
-        loop(() { heap_count(heap, c).read(0) >= BATCH }, (h) {
-            give_batch(heap, central, c);
-        });
-    });
 }
 
 // A result the caller has no use for.

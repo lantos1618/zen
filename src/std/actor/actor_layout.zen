@@ -5,9 +5,6 @@
 // The runtime's globals live in one mapping made by the first spawn and
 // found through the process block. A Ref is (generation << 32 | slot).
 
-{ PARKER_BYTES, MUTEX_BYTES, COND_BYTES } = std.sys.sys_thread
-{ CENTRAL_BYTES, HEAP_BYTES } = std.actor.actor_pool
-
 // ---------------------------------------------------------------------
 // the process block
 // ---------------------------------------------------------------------

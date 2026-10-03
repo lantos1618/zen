@@ -14,6 +14,8 @@
 | `zen lsp [REQUESTS REPLIES]` | language server over stdio, or over two files |
 | `zen help [COMMAND]` | help for zen or one command |
 
+The `zen` command line is declared as types (`src/zen/zen_cli.zen`), one
+struct per command, and parsed as the next section describes.
 `zen help run`, `zen -h run` and `zen run --help` print the same help. A
 command line that does not parse prints what was wrong and the help of the
 command it addressed, on standard error, and exits 2:
@@ -57,11 +59,122 @@ variables `zen help` lists are:
 The modes, the toolchain fields of `build.zen` and build reuse are described
 under "How the compiler gets built" in [DESIGN.md](DESIGN.md).
 
-## `std.cli`: declarative command lines
+## `std.cli`: command lines from types
 
-`std.cli.Command<T>` is the library behind the `zen` command. One declaration
-drives parsing, validation, usage errors and help, so the accepted grammar and
-its help cannot drift apart.
+A program declares its command line as types, and `parse<T>` reads argv into
+a `T`. A struct that implements `Cli` is one command: each field is one
+argument, and the field's type decides what kind. An enum that implements
+`Cli` is a set of subcommands, one per variant.
+
+```zen
+{ Cli, Spec, parse } = std.cli
+
+Mode = { Debug | Release | Small }
+
+BuildArgs = {
+    verbose :: bool = false,           // -v, --verbose
+    jobs    :: u32 = 2,                // --jobs <N>, a u32
+    mode    :: Mode = Mode.Debug,      // --mode <MODE>: debug, release or small
+    define  :: Vec<str>,               // -D, --define <NAME>, repeatable
+    out     :: Res<Path>,              // --out <OUT>, optional
+    input   : Path,                    // <INPUT>, positional and required
+}
+
+BuildArgs.impl(Cli, {
+    about: "Build one input",
+    verbose: Spec(short: 'v', help: "Print more detail"),
+    jobs: Spec(value: "N", help: "Worker count", env: "TOOL_JOBS"),
+    mode: Spec(help: "Build mode"),
+    define: Spec(short: 'D', value: "NAME", help: "Add a definition"),
+})
+
+Cmd = { Build: BuildArgs | Run: RunArgs | Init }
+Cmd.impl(Cli, { name: "tool", about: "Build and run things", version: "1.0.0" })
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    parse<Cmd>(env, a).match({
+        Err(exit) => Ok(exit.status),
+        Ok(cmd)   => cmd.match({
+            Build(args) => build(env, a, args),
+            Run(args)   => run(env, a, args),
+            Init        => init(env, a),
+        }),
+    })
+}
+```
+
+**The field's declaration decides its argument.** A field declared `::` is
+named on the command line, `--` and the field's name with `_` spelled `-`
+(`emit_c_dir` is `--emit-c-dir`). A field declared `:` is positional, in
+declaration order, and help names it by the field's name in capitals. The
+field's type decides the rest:
+
+| field type | argument |
+|---|---|
+| `bool` | a switch; `::` only |
+| `str`, `Path` | one value |
+| `u8` `u16` `u32` `u64` `usize` `i8` `i16` `i32` `i64` | one value, refused outside the type's range |
+| an enum whose variants carry nothing | one of its variants' names, in kebab case (`VeryLoud` is `very-loud`) |
+| `Res<T>` of any of those | optional: an omitted argument is `None` |
+| `Vec<str>` | `::`: repeatable; `:`: one or more words; with `trailing: true`, the words after `--` |
+
+A `::` field with a default is optional and takes the default when the
+command line and its variable omit it; help shows a default written as a
+literal or as a variant. A `::` field with no default that is not a `bool`,
+`Res` or `Vec` is a required option. A `:` field cannot have a default (a
+struct body reads `name: T = value` as a constant), so a positional is
+required unless it is a `Res<T>`. Any other field type is a compile error at
+the field, naming these shapes.
+
+**The impl is the table.** It binds the command's settings, each a `str`:
+`name` (the program's name, otherwise argv[0]'s file name), `about`, `note`
+(text after the generated help) and `version` (adds `-V`, `--version`). It
+binds a `Spec` under the name of any field, or of any variant of an enum,
+setting what the type leaves open: `help`, `short`, `value` (the value's name
+in help, or a positional's), `env`, `hidden` and `trailing`. The compiler
+checks the table: an entry that names no field, variant or setting, a setting
+that is not a `str`, a field entry that is not a `Spec`, and a `Spec` that
+sets `kind`, `choices`, `min`, `max`, `default`, `required` or `many` are
+errors at that entry. A name that is both a setting and a field is the
+setting when its value is a `str`.
+
+**An enum is its subcommands.** Each variant is a subcommand named by the
+variant in kebab case; its payload is that subcommand's command, and a
+payload that is itself such an enum nests. A variant without a payload is a
+subcommand without arguments, described by its `Spec`'s `help`; a payload's
+own `about` describes it otherwise. Every such command gets `help [COMMAND]`
+as its last subcommand, so `tool help build`, `tool -h build` and
+`tool build -h` print the same help.
+
+**Errors come from the types.** A refused command line names what was wrong
+in the type's terms, then prints the help of the command the words
+addressed:
+
+```text
+tool: invalid value `fast` for `--mode`: expected debug, release or small
+tool: invalid value `4294967296` for `--jobs`: expected an integer from 0 to 4294967295
+tool: required argument `INPUT` is missing
+tool: unknown option `--bogus` for `tool build`
+```
+
+`parse<T>(env, a)` reads the process's arguments; help goes to standard
+output and answers `Exit(status: 0)`, a refusal goes to standard error and
+answers `Exit(status: 2)`. `outcome<T>(env, a, argv)` parses any word list and
+answers `Res<T, Stop>`, where `Stop` is `Help(String)`, `Refused(Refusal)`
+or `Failed(AllocError)`, for a program that prints these itself (`zen` does).
+The allocator holds repeated values and help text; argv and option values
+are borrowed.
+
+`parse` is a compiler-provided door, like `to_json` and `env.args<T>()`: the
+C backend writes each type's parser at the call, from the type's fields,
+variants and table, into calls of the `Command` engine below.
+
+## `std.cli.Command`: the engine underneath
+
+`std.cli.Command<T>` is the engine `parse<T>` drives, and a program may build
+one by hand. One declaration drives parsing, validation, usage errors and
+help, so the accepted grammar and its help cannot drift apart.
 
 `T` is the program's enum of argument ids, one enum per command. Parsing
 reports each argument it found as a `Found<T>` carrying its id, so a program
@@ -103,11 +216,13 @@ help name) and a `Spec`, whose fields are all optional:
 | `short` | a one-letter spelling: `-v`, `-x value`, `-xvalue` |
 | `value` | the value's name in help, `VALUE` by default |
 | `kind` | `Text`, or `Unsigned`/`Signed`, checked as integers while parsing |
+| `min`, `max` | the range an integer must lie in |
 | `choices` | accepted values separated by `|` |
 | `default` | the value when neither the command line nor `env` gives one |
 | `env` | a variable consulted when the command line omits the argument |
 | `required`, `many` | must appear; may repeat |
 | `hidden` | accepted but left out of help |
+| `trailing` | for a derived `Vec<str>` field: the words after `--` (`trailing_args()` by hand) |
 
 Each declaration returns an `Arg` handle; `conflicts(a, b)` and `requires(a, b)`
 relate two of them. Relations count only explicit values: a default satisfies

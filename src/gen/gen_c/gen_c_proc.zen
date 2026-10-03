@@ -16,8 +16,16 @@ uses_proc = (be: CBackend) bool {
 // declarations under strict C modes, including when std.proc is not used.
 emit_native_features* = (be: CBackend, out :: Emit) Res<AllocError> {
     (be.uses_proc() || be.c_headers.len > 0 || be.uses_sys()).then(() {
+        be.uses_sys().then(() { out.say("#define ZG_TRAP_GUARD 1").try(); });
         out.say("#ifndef _GNU_SOURCE").try();
         out.say("#define _GNU_SOURCE").try();
+        out.say("#endif").try();
+    });
+    // std.sys needs the BSD extensions (MAP_ANONYMOUS, madvise) that macOS
+    // hides once another floor asks for strict POSIX.
+    be.uses_sys().then(() {
+        out.say("#ifndef _DARWIN_C_SOURCE").try();
+        out.say("#define _DARWIN_C_SOURCE 1").try();
         out.say("#endif").try();
     });
     Ok

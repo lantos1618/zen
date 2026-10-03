@@ -162,6 +162,11 @@ atomic_load_acquire_usize* = (word: Ptr<usize>) usize
 // way (thread bodies, actor turns); see std.sys.sys_thread.
 call_entry* = (code: usize, first: Ptr<u8>, second: Ptr<u8>) ()
 
+// As call_entry, but a checked trap inside the call ends only the call:
+// the answer is 1 when it trapped, 0 when it returned. Targets that cannot
+// unwind a trap make the plain call, and a trap ends the process.
+guarded_call* = (code: usize, first: Ptr<u8>, second: Ptr<u8>) i32
+
 // The runtime's zeroed block of process-wide state (256 bytes). Its first
 // word is the exit hook the runtime calls after main returns; std.sys owns
 // the rest.

@@ -115,6 +115,7 @@ emit_sys_globals* = (be :: CBackend, out :: Emit) Res<AllocError> {
                 "uint64_t zg_sys_globals[32] __attribute__((aligned(16)));"
             ).try();
             out.say("__thread uintptr_t zg_sys_word;").try();
+            out.say("__thread void *zg_trap_guard;").try();
             out.line()
         },
     })
@@ -299,6 +300,9 @@ sys_body = (name: str) Res<str> {
         ),
         "envp"                       => Ok(
             "extern char **environ; return (uint8_t **)environ;"
+        ),
+        "guarded_call"               => Ok(
+            "jmp_buf here; void *outer = zg_trap_guard; if (setjmp(here)) { zg_trap_guard = outer; return 1; } zg_trap_guard = (void *)&here; ((void (*)(uint8_t *, uint8_t *))(uintptr_t)a0)(a1, a2); zg_trap_guard = outer; return 0;"
         ),
         "call_entry"                 => Ok(
             "((void (*)(uint8_t *, uint8_t *))(uintptr_t)a0)(a1, a2);"

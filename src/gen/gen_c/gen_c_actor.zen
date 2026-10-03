@@ -1017,10 +1017,13 @@ write_stopped_callback = (
     be.behavior_of(actor, "stopped").try().match({
         None    => Ok,
         Ok(hit) => {
+            // A non-null second argument marks an actor a trap ended: its
+            // `stopped` does not run.
+            body.add("    if (!zg_raw) {\n").try();
             be.write_context(body).try();
             sym = be.behavior_symbol(actor, hit).try();
             body.fmt(
-                "    (void)({}(&zg_self->zg_state, {}));\n",
+                "    (void)({}(&zg_self->zg_state, {}));\n    }}\n",
                 sym.view(),
                 be.context_arg(actor, hit).try()
             )

@@ -76,6 +76,12 @@ emit_trap = (out :: Emit) Res<AllocError> {
     out.say("#define ZG_NORETURN").try();
     out.say("#endif").try();
     out.line().try();
+    // In a program with actors, a trap inside a guarded call (an actor's
+    // turn, std.sys.guarded_call) ends that call instead of the process.
+    out.say("#if defined(ZG_TRAP_GUARD)").try();
+    out.say("#include <setjmp.h>").try();
+    out.say("extern __thread void *zg_trap_guard;").try();
+    out.say("#endif").try();
     out.say(
         "static ZG_NORETURN void zg_trap(const char *file, unsigned long line,"
     ).try();
@@ -86,6 +92,9 @@ emit_trap = (out :: Emit) Res<AllocError> {
         "fprintf(stderr, \"%s:%lu:%lu: trap: %s\\n\", file, line, col, what);"
     ).try();
     out.say("fflush(stderr);").try();
+    out.say("#if defined(ZG_TRAP_GUARD)").try();
+    out.say("if (zg_trap_guard) longjmp(*(jmp_buf *)zg_trap_guard, 1);").try();
+    out.say("#endif").try();
     out.say("exit(134);").try();
     out.dedent();
     out.say("}").try();

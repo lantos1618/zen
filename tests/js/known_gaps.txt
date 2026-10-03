@@ -19,6 +19,7 @@ tests/corpus/actor/send_phase_keeps_message_shapes # UNSUPPORTED: error: unsuppo
 tests/corpus/actor/stop_runs_stopped_then_drops_state_once # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/surface_is_usable # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/task_summary/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/trap_ends_only_that_actor # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/waiting_sender_of_a_stopped_receiver_is_refused # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/ast/structural_walk_handles_deep_trees # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
 tests/corpus/ast/structural_walk_preserves_owners # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does

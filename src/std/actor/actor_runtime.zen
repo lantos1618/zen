@@ -39,7 +39,7 @@
 { atomic_load_usize, atomic_store_usize, atomic_add_usize, atomic_cas_usize } = std.sys
 { atomic_swap_usize, atomic_load_u32, atomic_cas_u32, atomic_store_u32 } = std.sys
 { atomic_store_release_usize } = std.sys
-{ thread_word, set_thread_word, process_block, call_entry, pointer_at, address_of } = std.sys
+{ thread_word, set_thread_word, process_block, call_entry, guarded_call, pointer_at, address_of } = std.sys
 { cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, mmap, map_private_anonymous } = std.sys
 { thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
 { cond_wait, cond_signal, cond_broadcast, parker_init, park, unpark, park_clear } = std.sys.sys_thread
@@ -53,13 +53,13 @@
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
 { S_QUEUED, S_CLOSED, S_FULL, S_RELEASES, S_BREAKS, S_FINALIZED, S_HANDOFFS } = std.actor.actor_layout
-{ S_PREEMPTS, S_STEALS, S_SPREADS } = std.actor.actor_layout
+{ S_PREEMPTS, S_STEALS, S_SPREADS, S_FAILED } = std.actor.actor_layout
 { L_WORKER, L_ACTOR, L_YIELD, L_HEAP, LOCAL_BYTES } = std.actor.actor_layout
 { W_HEAD, W_TAIL, W_NEXT, W_TURNS, W_IN_TURN, W_PREEMPT, W_SEEN, W_TICK, W_ID } = std.actor.actor_layout
 { W_RANDOM, W_SPINNING, W_PARKER, W_RING, WORKER_BYTES } = std.actor.actor_layout
 { S_LIFE, S_BODY, S_WAITING } = std.actor.actor_layout
 { COUNT_MASK, CLOSED, SCHED, BLOCKED, WAITED, GEN_SHIFT, GEN_MASK } = std.actor.actor_layout
-{ B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_SPARE, B_RECORD } = std.actor.actor_layout
+{ B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_FAILED, B_RECORD } = std.actor.actor_layout
 { D_OUTBOX, D_OUT_N, D_OUT_CAP, D_FIRST, D_LAST, D_LOCK, D_BLOCKED, SIDE_BYTES } = std.actor.actor_layout
 { OUTBOX_ENTRY, PENDING, DONE, REFUSED, WAITER_BYTES, M_NEXT, M_TURN, M_PAYLOAD } = std.actor.actor_layout
 
@@ -847,7 +847,15 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
             m = mailbox_take(a);
             m.is_null().then(() { h.break(); });
             taken = taken + 1;
-            call_entry(load(m, M_TURN), record, m.offset(M_PAYLOAD));
+            // A failed actor's remaining messages are dropped, not run.
+            (load(a, B_FAILED) == 0).then(() {
+                trapped = guarded_call(
+                    load(m, M_TURN),
+                    record,
+                    m.offset(M_PAYLOAD)
+                ) != 0;
+                trapped.then(() { fail(g, l, a, slot); });
+            });
             free_block(g, l, m);
             queued = aload(a, B_SIDE) != 0 && load(at(aload(a, B_SIDE)), D_OUT_N) > 0;
             // A queued send parks the turn (S: at its end); a preempted,
@@ -868,6 +876,16 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
     done = (v & CLOSED) != 0 && (v & BLOCKED) == 0 && count_of(v) == taken && mailbox_empty(a)
         && finalize(g, l, a, slot, v);
     (!done).then(() { release(g, l, a, slot, gen, taken, yielded); });
+}
+
+// A checked trap ended one of `a`'s turns: the actor stops here. It runs
+// none of its remaining messages and not its own `stopped` (its state may
+// be half-updated); its state and memory are still dropped and freed.
+// Senders see Closed from now on. (W4 adds the `failed` hook and links.)
+fail = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, slot: Ptr<u8>) {
+    store(a, B_FAILED, 1);
+    aset(slot, S_LIFE, CLOSED).ignore_word();
+    stat(g, S_FAILED);
 }
 
 // Give up `a` after a turn that took `taken` messages: one add drops them
@@ -921,10 +939,18 @@ finalize = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, slot: Ptr<u8>, v: usize) bool {
         false => false,
         true  => {
             release_waiters(g, l, a, slot, true);
+            // The stopped entry runs the actor's `stopped` (skipped for a
+            // failed actor: a non-null second argument), then drops.
             stopped = load(a, B_STOPPED);
-            (stopped != 0).then(
-                () { call_entry(stopped, a.offset(B_RECORD), null_ptr<u8>()); }
-            );
+            failed  = load(a, B_FAILED) != 0;
+            (stopped != 0).then(() {
+                marker = failed.match({ true => a, false => null_ptr<u8>() });
+                guarded_call(
+                    stopped,
+                    a.offset(B_RECORD),
+                    marker
+                ).ignore_status();
+            });
             side = at(load(a, B_SIDE));
             (!side.is_null()).then(() {
                 (load(side, D_OUT_CAP) > 0).then(() { free_block(g, l, at(load(side, D_OUTBOX))); });
@@ -1649,3 +1675,6 @@ unused = (flag: bool) {}
 
 // A word the caller has no use for.
 ignore_word = (word: usize) {}
+
+// A status the caller has no use for.
+ignore_status = (code: i32) {}

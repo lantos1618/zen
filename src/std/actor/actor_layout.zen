@@ -92,6 +92,7 @@ S_HANDOFFS*: usize = 6
 S_PREEMPTS*: usize = 7
 S_STEALS*: usize = 8
 S_SPREADS*: usize = 9        // run-queue halves moved to the injector
+S_FAILED*: usize = 10        // actors ended by a checked trap
 
 // ---------------------------------------------------------------------
 // a thread's local state
@@ -171,7 +172,7 @@ B_REF*: usize = 3            // this actor's Ref
 B_RUN_NEXT*: usize = 4       // link in the injector
 B_STOPPED*: usize = 5        // code address of the stopped entry, or 0
 B_SIDE*: usize = 6           // send-or-park state, made on first need
-B_SPARE*: usize = 7
+B_FAILED*: usize = 7          // 1 once a checked trap ended a turn
 B_RECORD*: usize = 64        // byte offset of the compiler's record
 
 // The send-or-park side record: the outbox (sends waiting for room), the

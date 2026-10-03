@@ -39,7 +39,6 @@
 { Unit } = zen.zen_path
 
 { Publisher } = zen.zen_write
-{ migrate_res } = zen.zen_migrate_res
 { Inputs, inputs } = zen.zen_inputs
 
 // The import root of a target's dependencies, named after its `deps` list.
@@ -783,20 +782,7 @@ Build* = {
 
     // check_all owns declaration scope and traversal order.
     check_tree = (self :: @Self, job: BuildArgs) Res<AllocError> {
-        c ::= self.checked().try();
-        (self.faults == 0).then(() {
-            self.env.var("ZEN_MIGRATE_RES").match({
-                Ok(mode) => migrate_res(
-                    self.env,
-                    self.alloc,
-                    c,
-                    self.root,
-                    self.std_base(),
-                    mode
-                ).try(),
-                None     => (),
-            });
-        });
+        c      ::= self.checked().try();
         report ::= self.alloc.String().try();
         c.render_diags(report).try();
         // Graph checks cover self-imports and cross-module constant cycles.

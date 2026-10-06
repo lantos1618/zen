@@ -63,7 +63,7 @@ instance_fn = (
     depth : usize
 ) Res<AllocError> {
     key = c.instance_key(e).try();
-    (f.tparams.len == e.args.len && c.unseen(seen, key)).match({
+    (f.tparams.len == e.args.len && unseen(seen, key)).match({
         false => Ok,
         true  => f.body.match({
             None  => Ok,
@@ -83,7 +83,7 @@ instance_fn = (
     })
 }
 
-unseen = (c: Checker, seen: Map<str, bool>, key: str) bool {
+unseen = (seen: Map<str, bool>, key: str) bool {
     seen.get(key).match({ Ok(_) => false, None => true })
 }
 

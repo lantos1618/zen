@@ -27,8 +27,6 @@ RING*: usize = 256
 RING_MASK*: usize = 255
 // A mailbox's bound: a default send to a fuller mailbox waits for room.
 BOUND*: usize = 256
-// Hops a full send follows along "waiting on" links looking for itself.
-CYCLE_WALK*: usize = 16
 // Slots per registry chunk, and chunks: 32M actors alive at once.
 CHUNK_SLOTS*: usize = 65536
 CHUNK_SHIFT*: usize = 16

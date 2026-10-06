@@ -29,7 +29,7 @@
 // drains below half its bound releases waiters oldest first, moving each
 // one's messages into its mailbox (per-pair FIFO holds). Before parking, a
 // sender records whom it waits on; a send to a full receiver whose chain of
-// "waiting on" leads back to the sender within CYCLE_WALK hops goes through
+// "waiting on" leads back to the sender goes through
 // over the bound instead, so a cycle of full mailboxes never wedges. A
 // sender that is not running a turn (main, a plain thread) waits for room
 // instead. `offer` never waits: a full mailbox answers Full.
@@ -47,7 +47,7 @@
 { word_at, load, store, lock, unlock, alloc, free, set_checked } = std.actor.actor_pool
 { slot_at, slot_of_ref, take_slot, give_slot } = std.actor.actor_registry
 { MAX_MESSAGE_BYTES } = std.actor.actor_limits
-{ PB_ONCE, PB_GLOBALS, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND, CYCLE_WALK } = std.actor.actor_layout
+{ PB_ONCE, PB_GLOBALS, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND } = std.actor.actor_layout
 { G_STATE, G_WORKERS, G_WORKER_BASE, G_IDLE, G_SPINNING, G_SLEEPING, G_DETACHED } = std.actor.actor_layout
 { G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
 { G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
@@ -61,7 +61,7 @@
 { S_LIFE, S_BODY, S_WAITING } = std.actor.actor_layout
 { COUNT_MASK, CLOSED, SCHED, BLOCKED, WAITED, GEN_SHIFT, GEN_MASK } = std.actor.actor_layout
 { B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_FAILED, B_RECORD } = std.actor.actor_layout
-{ D_OUTBOX, D_OUT_N, D_OUT_CAP, D_FIRST, D_LAST, D_LOCK, D_BLOCKED, SIDE_BYTES } = std.actor.actor_layout
+{ D_OUTBOX, D_OUT_N, D_OUT_CAP, D_FIRST, D_LAST, D_LOCK, SIDE_BYTES } = std.actor.actor_layout
 { OUTBOX_ENTRY, PENDING, DONE, REFUSED, WAITER_BYTES, M_NEXT, M_TURN, M_PAYLOAD } = std.actor.actor_layout
 
 // ---------------------------------------------------------------------
@@ -586,24 +586,31 @@ outbox_holds = (me: Ptr<u8>, r: usize) bool {
     })
 }
 
-// Whether `to` waits, through a chain of full mailboxes no longer than
-// CYCLE_WALK, on `me`: then parking would close a cycle. Slots are never
-// freed, so the walk only reads live words; a reused slot fails the
-// generation check and ends it.
+// Whether `to`, followed through the waiting-on words of the actors it
+// waits on, leads back to `me`. A blocked actor waits on one receiver at a
+// time, so this walks a single chain, of any length: it stops at an actor
+// that waits on nothing, at a loop that does not pass through `me` (Brent's
+// marker, moved at each power of two), or after one hop per registry slot.
+// Slots are never freed, so it only reads live words; a reused slot fails
+// the generation check and ends it.
 cycle_through = (g: Ptr<u8>, me: Ptr<u8>, to: usize) bool {
-    mine = load(me, B_REF);
+    mine  = load(me, B_REF);
+    limit = aload(g, G_SLOT_FRESH);
     r    ::= to;
+    mark ::= to;
     hops :: usize = 0;
-    loop<bool>(() { hops < CYCLE_WALK }, (h) {
+    lap  :: usize = 1;
+    loop<bool>(() { hops < limit }, (h) {
         slot = slot_of_ref(g, r);
         next = slot.is_null().match({ true => 0, false => aload(
             slot,
             S_WAITING
         ) });
-        (next == 0 || gen_of(aload(slot, S_LIFE)) != ref_gen(r)).then(() { h.break(false); });
         (next == mine).then(() { h.break(true); });
+        (next == 0 || next == mark || gen_of(aload(slot, S_LIFE)) != ref_gen(r)).then(() { h.break(false); });
         r    = next;
         hops = hops + 1;
+        (hops == lap).then(() { mark = r; lap = lap * 2; });
     }).value_or(false)
 }
 
@@ -650,42 +657,61 @@ outbox_put = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, r: usize, m: Ptr<u8>) {
 // waiting for room
 // ---------------------------------------------------------------------
 
-// The end of a turn whose outbox holds sends: wait on every receiver it
-// names. The actor is marked blocked, with one extra hold so that no
-// receiver can release it before every waiter is linked; whichever release
-// brings the hold count to zero unblocks it.
+// The end of a turn whose outbox holds sends: the actor is marked blocked
+// and waits on its receivers one at a time, oldest send first.
 outbox_park = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, slot: Ptr<u8>) {
+    aset(slot, S_LIFE, BLOCKED);
+    wait_next(g, l, me, true);
+}
+
+// Link `me` on the receiver of its oldest pending send, after naming that
+// receiver in its waiting-on word: the word then always names the one
+// receiver the actor waits on, so the cycle walk sees every edge of the
+// wait-for graph and the last edge of a cycle finds the cycle. A receiver
+// with room, or whose wait would close a cycle, takes its sends at once and
+// the next is tried. Once a waiter is linked, the receiver that releases it
+// carries on from here; with nothing pending the actor is unblocked (on its
+// own turn, its release does the rest).
+wait_next = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, own_turn: bool) {
     side    = at(load(me, B_SIDE));
     entries = at(load(side, D_OUTBOX));
     n       = load(side, D_OUT_N);
-    aset(slot, S_LIFE, BLOCKED);
-    astore(side, D_BLOCKED, 1);
-    Range(0, n).loop((i) {
-        to    = load(entries.offset(i * OUTBOX_ENTRY), 0);
-        first = Range(0, i).find((j) {
-            load(entries.offset(j * OUTBOX_ENTRY), 0) == to
-        }).match({ Ok(_) => false, None => true });
-        (first && aload(entries.offset(i * OUTBOX_ENTRY), 2) == PENDING).then(() {
-            aadd(side, D_BLOCKED, 1);
-            astore(slot, S_WAITING, to);
-            register_waiter(g, l, me, to);
+    slot    = slot_of_ref(g, load(me, B_REF));
+    loop((h) {
+        Range(0, n).find((i) {
+            aload(entries.offset(i * OUTBOX_ENTRY), 2) == PENDING
+        }).match({
+            Ok(i) => {
+                to = load(entries.offset(i * OUTBOX_ENTRY), 0);
+                astore(slot, S_WAITING, to);
+                register_waiter(g, l, me, to).then(() { h.break(); });
+            },
+            None  => {
+                astore(slot, S_WAITING, 0);
+                own_turn.match({
+                    true  => { aclear(slot, S_LIFE, BLOCKED); },
+                    false => unblock(g, l, me),
+                });
+                h.break();
+            },
         });
     });
-    (asub(side, D_BLOCKED, 1) == 1).then(() { aclear(slot, S_LIFE, BLOCKED); });
 }
 
 // Wait on receiver `to`: link a waiter and mark its mailbox waited on, in
 // one step with reading its count. Either the receiver's next end-of-turn
 // sees the mark, or this read sees the room that turn made: nothing is
 // missed. If there is room after all, or waiting would close a cycle,
-// deliver now.
-register_waiter = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, to: usize) {
+// deliver now. True when the waiter stays linked: the actor's outbox then
+// belongs to whoever releases it.
+register_waiter = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, to: usize) bool {
     slot = slot_of_ref(g, to);
     old  = aadd(slot, S_LIFE, 1);
     (gen_of(old) != ref_gen(to) || (old & CLOSED) != 0).match({
         true  => {
             asub(slot, S_LIFE, 1);
             resolve(g, l, me, to, null_ptr<u8>(), REFUSED);
+            false
         },
         false => {
             r    = at(load(slot, S_BODY));
@@ -698,6 +724,7 @@ register_waiter = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, to: usize) {
                     unlock(word);
                     asub(slot, S_LIFE, 1);
                     resolve(g, l, me, to, null_ptr<u8>(), REFUSED);
+                    false
                 },
                 false => {
                     w = new_block(g, l, WAITER_BYTES);
@@ -728,6 +755,7 @@ register_waiter = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, to: usize) {
                     unlock(word);
                     room.then(() { resolve(g, l, me, to, r, DONE); });
                     asub(slot, S_LIFE, 1);
+                    !room
                 },
             });
         },
@@ -735,9 +763,8 @@ register_waiter = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, to: usize) {
 }
 
 // Settle the sender's pending entries for receiver `to`: deliver them into
-// `r` (DONE) or drop them (REFUSED), then count that receiver off the
-// sender's holds. The sender stays blocked, so alive, until the last hold
-// goes; after that only its slot is touched.
+// `r` (DONE) or drop them (REFUSED). The sender stays blocked, so alive,
+// until its caller moves it on with `wait_next`.
 resolve = (
     g      : Ptr<u8>,
     l      : Ptr<u8>,
@@ -766,7 +793,6 @@ resolve = (
         });
     });
     (delivered && try_acquire(rslot, ref_gen(to))).then(() { schedule(g, l, r); });
-    (asub(side, D_BLOCKED, 1) == 1).then(() { unblock(g, l, sender); });
 }
 
 // The sender's last receiver let it go: clear its blocked bit, and queue it
@@ -813,8 +839,15 @@ release_waiters = (
                 // room was never accepted, so it is refused.
                 refuse = closing || (aload(slot, S_LIFE) & CLOSED) != 0;
                 how    = refuse.match({ true => REFUSED, false => DONE });
-                resolve(g, l, at(load(node, 1)), load(node, 2), a, how);
+                sender = at(load(node, 1));
+                to     = load(node, 2);
                 free_block(g, l, node);
+                // Unlocked: moving the sender on links it on another
+                // receiver, under that receiver's lock.
+                unlock(word);
+                resolve(g, l, sender, to, a, how);
+                wait_next(g, l, sender, false);
+                lock(word);
             });
             closing.then(
                 () { side.offset(D_LOCK * 8 + 4).to<u32>().write(0, 1); }
@@ -904,10 +937,14 @@ release = (
 ) {
     t ::= taken;
     loop((h) {
-        old     = asub(slot, S_LIFE, t + SCHED);
-        rest    = count_of(old) - t;
-        t       = 0;
-        free_up = (old & WAITED) != 0 && (rest < BOUND / 2 || (old & CLOSED) != 0);
+        old  = asub(slot, S_LIFE, t + SCHED);
+        rest = count_of(old) - t;
+        t    = 0;
+        // A blocked actor takes no turns, so no later release would free
+        // its waiters: let them in while there is any room.
+        free_up = (old & WAITED) != 0 && (
+            rest < BOUND / 2 || (old & CLOSED) != 0 || ((old & BLOCKED) != 0 && rest < BOUND)
+        );
         again   = free_up || ((old & BLOCKED) == 0 && (rest > 0 || (old & CLOSED) != 0 || yielded));
         (again && try_acquire(slot, gen)).match({
             false => h.break(),
@@ -1234,11 +1271,29 @@ actor_should_park* = () bool {
 }
 
 // Every tick, flag each worker whose turn has not changed since the last
-// tick: that turn has run for at least one tick.
+// tick: that turn has run for at least one tick. Also the watchdog: every
+// worker asleep with actors blocked for ZEN_ACTOR_WATCHDOG_MS (default
+// 1000; 0 turns it off) means nothing can unblock them, so the wait-for
+// graph is reported, once until the number of blocked actors changes.
 sysmon = (g: Ptr<u8>) {
-    tick = load(g, G_SYSMON_NS).to_u64();
+    ns    = load(g, G_SYSMON_NS);
+    tick  = ns.to_u64();
+    limit = (env_number("ZEN_ACTOR_WATCHDOG_MS", 1000) * 1000000 + ns - 1) / ns;
+    still :: usize = 0;
+    told  :: usize = 0;
     loop(() { aload(g, G_STATE) != 2 }, (h) {
         nanosleep_ns(tick).discard();
+        (limit > 0).then(() {
+            blocked = quiet(g).match({ true => blocked_actors(g), false => 0 });
+            still   = (blocked > 0).match({ true => still + 1, false => 0 });
+            (still >= limit && blocked != told).then(() {
+                stall_report(
+                    g,
+                    "every worker asleep past ZEN_ACTOR_WATCHDOG_MS"
+                );
+                told = blocked;
+            });
+        });
         Range(0, load(g, G_WORKERS)).loop((i) {
             w    = worker_at(g, i);
             turn = aload(w, W_TURNS);
@@ -1631,6 +1686,9 @@ actor_shutdown* = () {
             live = live_actors(g);
             // Nothing left, or the last round of stops freed nothing: actors
             // still alive are wedged waiting for each other.
+            (live > 0 && live == before && blocked_actors(g) > 0).then(() {
+                stall_report(g, "wedged at exit; stopping them");
+            });
             (live == 0 || live == before).then(() { h.break(); });
             before = live;
             Range(1, aload(g, G_SLOT_FRESH)).loop((i) {
@@ -1659,6 +1717,105 @@ live_actors = (g: Ptr<u8>) usize {
         (aload(slot_at(g, i), S_BODY) != 0).then(() { n = n + 1; });
     });
     n
+}
+
+// Actors waiting for room in a full mailbox.
+blocked_actors = (g: Ptr<u8>) usize {
+    n :: usize = 0;
+    Range(1, aload(g, G_SLOT_FRESH)).loop((i) {
+        slot = slot_at(g, i);
+        (aload(slot, S_BODY) != 0 && (aload(slot, S_LIFE) & BLOCKED) != 0).then(() { n = n + 1; });
+    });
+    n
+}
+
+// The wait-for graph on stderr: each blocked actor (by registry index), its
+// mailbox depth and the one actor it waits on, then the cycles in it. Only
+// slot words are read, and slots are never freed, so this is safe while
+// other threads run; a graph that is still changing may read inconsistently.
+REPORT_ACTORS: usize = 64
+REPORT_CYCLES: usize = 16
+
+stall_report = (g: Ptr<u8>, why: str) {
+    buf = map(4096);
+    (!buf.is_null()).then(() {
+        blocked = blocked_actors(g);
+        n :: usize = put_text(buf, 0, "actor-runtime: stuck (");
+        n = put_text(buf, n, why);
+        n = put_text(buf, n, "): ");
+        n = put_number(buf, n, blocked);
+        n = put_text(buf, n, " actors blocked, ");
+        n = put_number(buf, n, aload(g, G_SLEEPING));
+        n = put_text(buf, n, " of ");
+        n = put_number(buf, n, load(g, G_WORKERS));
+        n = put_text(buf, n, " workers asleep\n");
+        write_all(2, str(data: buf, len: n)).ignore();
+        shown :: usize = 0;
+        Range(1, aload(g, G_SLOT_FRESH)).loop((i) {
+            slot = slot_at(g, i);
+            life = aload(slot, S_LIFE);
+            (shown < REPORT_ACTORS && aload(slot, S_BODY) != 0 && (life & BLOCKED) != 0).then(() {
+                k :: usize = put_text(buf, 0, "actor-runtime:   actor ");
+                k = put_number(buf, k, i);
+                k = put_text(buf, k, " mailbox ");
+                k = put_number(buf, k, count_of(life));
+                k = put_text(buf, k, " waits on ");
+                k = put_number(buf, k, ref_index(aload(slot, S_WAITING)));
+                k = put_text(buf, k, "\n");
+                write_all(2, str(data: buf, len: k)).ignore();
+                shown = shown + 1;
+            });
+        });
+        (blocked > shown).then(() {
+            k :: usize = put_text(buf, 0, "actor-runtime:   and ");
+            k = put_number(buf, k, blocked - shown);
+            k = put_text(buf, k, " more blocked\n");
+            write_all(2, str(data: buf, len: k)).ignore();
+        });
+        cycles :: usize = 0;
+        Range(1, aload(g, G_SLOT_FRESH)).loop((i) {
+            (cycles < REPORT_CYCLES && cycle_from(g, i)).then(() {
+                k :: usize = put_text(buf, 0, "actor-runtime:   cycle ");
+                k = put_number(buf, k, i);
+                j ::= ref_index(aload(slot_at(g, i), S_WAITING));
+                // A long cycle is cut short to fit the line.
+                loop(() { j != i && k < 4000 }, (c) {
+                    k = put_text(buf, k, " -> ");
+                    k = put_number(buf, k, j);
+                    j = ref_index(aload(slot_at(g, j), S_WAITING));
+                });
+                k = (j == i).match({ true => put_text(buf, k, " -> "), false => put_text(buf, k, " ...") });
+                k = (j == i).match({ true => put_number(
+                    buf,
+                    k,
+                    i
+                ), false => k });
+                k = put_text(buf, k, "\n");
+                write_all(2, str(data: buf, len: k)).ignore();
+                cycles = cycles + 1;
+            });
+        });
+    });
+}
+
+// Whether blocked actor `i` starts a wait-for cycle with `i` its lowest
+// index, so each cycle is reported once (the walk of `cycle_through`).
+cycle_from = (g: Ptr<u8>, i: usize) bool {
+    limit = aload(g, G_SLOT_FRESH);
+    j    ::= i;
+    mark ::= i;
+    hops :: usize = 0;
+    lap  :: usize = 1;
+    loop<bool>(() { hops < limit }, (h) {
+        slot = slot_at(g, j);
+        next = ref_index(aload(slot, S_WAITING));
+        (aload(slot, S_BODY) == 0 || (aload(slot, S_LIFE) & BLOCKED) == 0 || next < i).then(() { h.break(false); });
+        (next == i).then(() { h.break(true); });
+        (next == mark || next >= limit).then(() { h.break(false); });
+        j    = next;
+        hops = hops + 1;
+        (hops == lap).then(() { mark = j; lap = lap * 2; });
+    }).value_or(false)
 }
 
 // Every worker asleep with nothing queued, and no thread finishing a turn

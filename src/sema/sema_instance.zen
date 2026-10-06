@@ -1,0 +1,171 @@
+// Template-style generic checking. The declaration pass types a generic
+// body once with type variables and cannot judge what they leave open
+// (`x + 1` on a `T`). Every settled instantiation reachable from the
+// instantiations recorded there types the body again with its arguments,
+// so an operation the arguments do not support is reported by sema rather
+// than by a backend. The answers are discarded; lowering still reads the
+// declaration pass.
+
+{ Function, BlockId } = std.ast
+{ AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, Range } = std.core
+{ TyId } = sema.sema_ty
+{ decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ Inst, InstEdge, owner_of, has_var, subst } = sema.sema_inst
+{ push_bounds } = sema.sema_decl
+{ param_type, ret_type } = sema.sema_denote
+{ block_type } = sema.sema_type
+{ check_return, statement_tail } = sema.sema_hoist
+
+// Matches `sema_depth`: past this the depth check has already reported.
+INSTANCE_BUDGET: usize = 24
+
+// Earlier faults suppress instance checks, so one cause reports once.
+check_instances* = (c :: Checker) Res<AllocError> {
+    (c.diag_count() > 0).match({
+        true  => Ok,
+        false => c.instance_roots(),
+    })
+}
+
+instance_roots = (c :: Checker) Res<AllocError> {
+    seen  ::= c.alloc.Map<str, bool>();
+    edges ::= c.alloc.Vec<InstEdge>();
+    Range(0, c.edge_count()).loop((h, i) {
+        c.edge_at(i).when_ok((e) { edges.add(e).try() });
+    });
+    edges.loop((h, e) { c.instance(e, seen, 0).try() });
+    Ok;
+}
+
+instance = (c :: Checker, e: InstEdge, seen :: Map<str, bool>, depth: usize)
+           Res<AllocError> {
+    (depth < INSTANCE_BUDGET && c.settled(e.args)).match({
+        false => Ok,
+        true  => c.tree.decl_at(e.to_decl).match({
+            None  => Ok,
+            Ok(d) => d.kind.match({
+                Function(f) => c.instance_fn(f, e, seen, depth),
+                _           => Ok,
+            }),
+        }),
+    })
+}
+
+instance_fn = (
+    c     :: Checker,
+    f     : Function,
+    e     : InstEdge,
+    seen  :: Map<str, bool>,
+    depth : usize
+) Res<AllocError> {
+    key = c.instance_key(e).try();
+    (f.tparams.len == e.args.len && c.unseen(seen, key)).match({
+        false => Ok,
+        true  => f.body.match({
+            None  => Ok,
+            Ok(b) => {
+                seen.set(key, true).try();
+                mark = c.edge_count();
+                c.check_instance(f, b, e).try();
+                next ::= c.alloc.Vec<InstEdge>();
+                Range(mark, c.edge_count()).loop((h, i) {
+                    c.edge_at(i).when_ok((n) { next.add(n).try() });
+                });
+                c.truncate_edges(mark);
+                next.loop((h, n) { c.instance(n, seen, depth + 1).try() });
+                Ok
+            },
+        }),
+    })
+}
+
+unseen = (c: Checker, seen: Map<str, bool>, key: str) bool {
+    seen.get(key).match({ Ok(_) => false, None => true })
+}
+
+instance_key = (c :: Checker, e: InstEdge) Res<str, AllocError> {
+    out ::= c.alloc.String("{}:{}", e.to_decl.module, e.to_decl.decl).try();
+    e.args.loop((h, t) { out.fmt(",{}", c.types.key_at(t)).try() });
+    Ok(out.view());
+}
+
+settled = (c: Checker, args: Vec<TyId>) bool {
+    args.find((t) { c.has_var(t) }).match({ Ok(_) => false, None => true })
+}
+
+// One body typed with each parameter bound to its argument. The signature
+// is the declaration's, substituted: a written `Res<T>` keeps the reading
+// it has at the declaration (`T` unbounded means absence).
+check_instance = (c :: Checker, f: Function, body: BlockId, e: InstEdge)
+                 Res<AllocError> {
+    mi    = e.to_decl.module.to_usize();
+    smark = c.mark();
+    tmark = c.tvar_mark();
+    bmark = c.bound_mark();
+    rmark = c.raised_mark();
+    was   = c.swap_memos(c.fresh_memos());
+    inst   ::= c.alloc.Inst();
+    params ::= c.alloc.Vec<TyId>();
+    c.bind_tparams(f, e.to_tvars).try();
+    ret = c.declared_signature(f, mi, params).try();
+    c.release_tvars(tmark).try();
+    c.bind_tparams(f, e.args).try();
+    Range(0, e.to_tvars.len).loop((h, i) {
+        e.to_tvars.get(i).when_ok((v) {
+            e.args.get(i).when_ok((arg) { inst.bind(v, arg).try() });
+        });
+    });
+    poison = c.types.unknown().try();
+    f.tparams.loop((h, tp) { c.push_bounds(tp, Ctx(mi, poison)).try() });
+    ret_now = c.subst(ret, inst).try();
+    ctx     = Ctx(
+        module: mi,
+        ret: ret_now,
+        has_ret: c.types.at(ret_now).match({ Res(_) => true, _ => false }),
+        self_ty: poison,
+        has_self: false
+    );
+    Range(0, f.params.len).loop((h, i) {
+        f.params.get(i).when_ok((p) {
+            raw = params.get(i).value_or(poison);
+            c.bind(
+                p.name.text,
+                c.subst(raw, inst).try(),
+                p.mutable,
+                true
+            ).try();
+        });
+    });
+    owner = c.owner_of(mi, f.name.text).try();
+    c.enter_owner(owner);
+    typed = c.block_type(body, ctx).try();
+    c.enter_owner("");
+    got = c.statement_tail(body, ctx.ret, typed).try();
+    c.check_return(body, ctx, got).try();
+    c.release_raised(rmark);
+    c.swap_memos(was);
+    c.release_bounds(bmark).try();
+    c.release_tvars(tmark).try();
+    c.release(smark).try();
+}
+
+bind_tparams = (c :: Checker, f: Function, tys: Vec<TyId>) Res<AllocError> {
+    Range(0, f.tparams.len).loop((h, i) {
+        f.tparams.get(i).when_ok((tp) {
+            tys.get(i).when_ok((ty) { c.bind_tvar(tp.name.text, ty).try() });
+        });
+    });
+    Ok;
+}
+
+// The return and parameter types as the declaration reads them.
+declared_signature = (c :: Checker, f: Function, mi: usize, out :: Vec<TyId>)
+                     Res<TyId, AllocError> {
+    ctx = Ctx(mi, c.types.unknown().try());
+    f.params.loop((h, p) { out.add(c.param_type(p, ctx).try()).try() });
+    c.ret_type(f, ctx)
+}

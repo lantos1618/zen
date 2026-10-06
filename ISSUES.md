@@ -410,9 +410,20 @@ Asking `members_of` during `construct` does the same, for the same reason: it
 walks impls and instantiates, in the middle of the resolution that is queueing
 the construction.
 
-**4. `==` does not check its two sides against each other.** A missing `Eq` IS
-caught (`5 == Tester` → "`Tester` has none"), so the rule exists and stops one
-step short: `5 == "five"` is silent.
+**4. ~~`==` does not check its two sides against each other~~ — CLOSED.**
+A literal operand now takes the other side's type only when that type can
+spell it (`sema_operand.literal_operand`): an integer literal any number, a
+float literal a float. `5 == "five"`, `s == 3` and `5 != true` (which compiled
+and printed `true`) are type mismatches; see
+`must-fail/sema/equality_*`.
+
+**6. ~~Operators, returns and members inside a generic body are checked only
+against type variables~~ — CLOSED for free generic functions.**
+`sema_instance.zen` types each settled instantiation's body again with its
+arguments, so `<T>(x: T) T { x + 1 }` called with a `str` is an operator
+error in sema rather than a `cc` error. Answers from that pass are discarded;
+lowering still reads the declaration pass. Members of generic types record no
+instantiation edge yet, so their bodies are still checked only once.
 
 **5. A misleading diagnostic falls out of (2).** A call at the wrong arity to a
 name the receiver DOES have reports "no `<name>` on `<Type>`" — the sentence for

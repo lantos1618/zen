@@ -13,6 +13,7 @@
 { check_overloads, same_fn_signature, fn_signatures_overlap } = sema.sema_call
 { Cand, cands_of, omittable_tail } = sema.sema_cand
 { check_depth } = sema.sema_depth
+{ check_instances } = sema.sema_instance
 { check_varargs } = sema.sema_vararg
 { check_layout } = sema.sema_layout
 { type_of, block_type } = sema.sema_type
@@ -57,6 +58,7 @@ check_all* = (c :: Checker) Res<AllocError> {
     // Layout and depth require the complete cross-module declaration graph.
     c.check_layout().try();
     c.check_depth().try();
+    c.check_instances().try();
     // Vararg legality is positional, while type nodes do not store parents.
     check_varargs(c).try();
 }
@@ -726,7 +728,7 @@ enter_generics = (c :: Checker, f: Function, owner: str, mi: usize)
     Ok;
 }
 
-push_bounds = (c :: Checker, tp: TParam, ctx: Ctx) Res<AllocError> {
+push_bounds* = (c :: Checker, tp: TParam, ctx: Ctx) Res<AllocError> {
     text = tp.name.text;
     tp.bounds.loop((h, b) {
         c.push_bound(text, c.type_from_ast(b, ctx).try()).try();

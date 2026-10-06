@@ -1,0 +1,14 @@
+// A member call on an unbounded `T` is resolved on each concrete type it
+// is instantiated with; `i32` has no `nothing_here`.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+get = <T>(x: T) i32 { x.nothing_here(1) }
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", get(3));
+    Ok(0)
+}

@@ -50,7 +50,7 @@ written_operand = (c: Checker, id: ExprId) bool {
 pair_agrees = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
               Res<AllocError> {
     c.is_literal_ty(lhs).match({
-        true  => c.check_literal(b.lhs, rhs),
+        true  => c.literal_operand(b.lhs, lhs, rhs),
         false => c.rhs_operand(b, lhs, rhs),
     })
 }
@@ -60,9 +60,28 @@ pair_agrees = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
 rhs_operand = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
               Res<AllocError> {
     c.is_literal_ty(rhs).match({
-        true  => c.check_literal(b.rhs, lhs),
+        true  => c.literal_operand(b.rhs, rhs, lhs),
         false => c.settled_agree(b, lhs, rhs),
     })
+}
+
+// A literal takes the other operand's type only when that type can spell
+// it: an integer literal any number, a float literal a float. `5 != true`
+// and `s == 3` are refused here rather than by the backend.
+literal_operand = (c :: Checker, lit: ExprId, own: TyId, other: TyId)
+                  Res<AllocError> {
+    c.spells_literal(own, other).match({
+        true  => c.check_literal(lit, other),
+        false => {
+            at = c.tree.expr_at(lit).span;
+            c.coerce(at.file, at, own, other, "")
+        },
+    })
+}
+
+spells_literal = (c: Checker, own: TyId, other: TyId) bool {
+    c.is_literal_ty(other) || c.float_operand(other)
+        || (c.prim_name(own).eq("int") && c.integer_operand(other))
 }
 
 settled_agree = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)

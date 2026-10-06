@@ -1,0 +1,15 @@
+// A generic body is checked again for each concrete instantiation; the
+// operator `x + 1` has no meaning for `str`, so sema refuses it at the
+// instantiated body instead of leaving the backend to reject it.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+inc = <T>(x: T) T { x + 1 }
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", inc("s"));
+    Ok(0)
+}

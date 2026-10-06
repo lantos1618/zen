@@ -789,6 +789,7 @@ call_edge* = (c :: Checker, id: ExprId, k: Cand, inst: Inst)
         from_owner: c.owner_of_body(),
         to_owner: k.owner,
         to_name: k.name,
+        to_decl: k.id,
         to_tvars: k.tvars,
         args: args,
         span: c.tree.expr_at(id).span,

@@ -6,6 +6,7 @@
 { Res, Ok, None, Range } = std.core
 { TyId, TyNamed, TyRes, TyFn, TyArray, ResForm } = sema.sema_ty
 { decl_at } = sema.sema_def
+{ DeclId } = sema.sema_id
 { Checker } = sema.sema_check
 
 Inst* = {
@@ -58,6 +59,7 @@ InstEdge* = {
     from_owner*: str,
     to_owner*: str,
     to_name*: str,
+    to_decl*: DeclId,
     // the callee's own `Ty.Var`s and what this call gave them, both in
     // declaration order, so the pair is a substitution
     to_tvars*: Vec<TyId>,

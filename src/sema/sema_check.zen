@@ -88,6 +88,28 @@ CheckedCall* = {
 // rejected calls expose no selection, including after a contextual recheck.
 CallResolution* = { Checking | Rejected | Checked: CheckedCall }
 
+// Answers keyed by expression. An instance check types a generic body again
+// under a fresh set and then restores the declaration pass's answers.
+// Written-type answers stay shared: declarations resolve them in their own
+// type-parameter scope.
+Memos* = {
+    expr_memo* :: Map<ExprId, TyId>,
+    meta_walks* :: Map<ExprId, Vec<str>>,
+    meta_name_reads* :: Map<ExprId, bool>,
+    meta_projs* :: Map<ExprId, bool>,
+    supply_memo* :: Map<ExprId, TyId>,
+    calls* :: Map<ExprId, CallResolution>,
+    bit_widths* :: Map<ExprId, bool>,
+    discriminant_calls* :: Map<ExprId, DiscriminantCall>,
+    variant_name_calls* :: Map<ExprId, VariantNameCall>,
+    param_memo* :: Map<ExprId, bool>,
+    callee_access* :: Map<ExprId, bool>,
+    lambda_insts* :: Map<ExprId, Inst>,
+    bound_views* :: Map<ExprId, bool>,
+    statement_tails* :: Map<ExprId, bool>,
+    lambda_failures* :: Map<ExprId, Dropped>,
+}
+
 Checker* = {
     tree*: Ast,
     world* :: World,
@@ -452,6 +474,10 @@ Checker* = {
 
     edge_count* = (self: @Self) usize { self.edges.len }
 
+    truncate_edges* = (self :: @Self, mark: usize) {
+        self.edges.truncate(mark);
+    }
+
     edge_at* = (self: @Self, i: usize) Res<InstEdge> { self.edges.get(i) }
 
     // Whose body is being walked. `check_body` brackets one declaration
@@ -609,6 +635,68 @@ Checker* = {
     push_tvar* = (self :: @Self, tp: TParam, ty: TyId) Res<AllocError> {
         self.tparam_decls.set(ty, tp).try();
         self.tvars.add(Binding(tp.name.text, ty))
+    }
+
+    // An instance check binds a parameter's name to its argument.
+    bind_tvar* = (self :: @Self, name: str, ty: TyId) Res<AllocError> {
+        self.tvars.add(Binding(name, ty))
+    }
+
+    fresh_memos* = (self: @Self) Memos {
+        Memos(
+            expr_memo: self.alloc.Map<ExprId, TyId>(),
+            meta_walks: self.alloc.Map<ExprId, Vec<str>>(),
+            meta_name_reads: self.alloc.Map<ExprId, bool>(),
+            meta_projs: self.alloc.Map<ExprId, bool>(),
+            supply_memo: self.alloc.Map<ExprId, TyId>(),
+            calls: self.alloc.Map<ExprId, CallResolution>(),
+            bit_widths: self.alloc.Map<ExprId, bool>(),
+            discriminant_calls: self.alloc.Map<ExprId, DiscriminantCall>(),
+            variant_name_calls: self.alloc.Map<ExprId, VariantNameCall>(),
+            param_memo: self.alloc.Map<ExprId, bool>(),
+            callee_access: self.alloc.Map<ExprId, bool>(),
+            lambda_insts: self.alloc.Map<ExprId, Inst>(),
+            bound_views: self.alloc.Map<ExprId, bool>(),
+            statement_tails: self.alloc.Map<ExprId, bool>(),
+            lambda_failures: self.alloc.Map<ExprId, Dropped>()
+        )
+    }
+
+    // Install `next` and return the answers it replaces.
+    swap_memos* = (self :: @Self, next: Memos) Memos {
+        was                     = Memos(
+            expr_memo: self.expr_memo,
+            meta_walks: self.meta_walks,
+            meta_name_reads: self.meta_name_reads,
+            meta_projs: self.meta_projs,
+            supply_memo: self.supply_memo,
+            calls: self.calls,
+            bit_widths: self.bit_widths,
+            discriminant_calls: self.discriminant_calls,
+            variant_name_calls: self.variant_name_calls,
+            param_memo: self.param_memo,
+            callee_access: self.callee_access,
+            lambda_insts: self.lambda_insts,
+            bound_views: self.bound_views,
+            statement_tails: self.statement_tails,
+            lambda_failures: self.lambda_failures
+        );
+        self.expr_memo          = next.expr_memo;
+        self.meta_walks         = next.meta_walks;
+        self.meta_name_reads    = next.meta_name_reads;
+        self.meta_projs         = next.meta_projs;
+        self.supply_memo        = next.supply_memo;
+        self.calls              = next.calls;
+        self.bit_widths         = next.bit_widths;
+        self.discriminant_calls = next.discriminant_calls;
+        self.variant_name_calls = next.variant_name_calls;
+        self.param_memo         = next.param_memo;
+        self.callee_access      = next.callee_access;
+        self.lambda_insts       = next.lambda_insts;
+        self.bound_views        = next.bound_views;
+        self.statement_tails    = next.statement_tails;
+        self.lambda_failures    = next.lambda_failures;
+        was
     }
 
     release_tvars* = (self :: @Self, mark: usize) Res<AllocError> {
@@ -771,6 +859,10 @@ Checker* = {
     // -----------------------------------------------------------------
 
     raised_mark* = (self: @Self) usize { self.raised.len }
+
+    release_raised* = (self :: @Self, mark: usize) {
+        self.raised.truncate(mark);
+    }
 
     // Return the access represented by a member id, when available.
     access_at* = (self: @Self, id: ExprId) Res<Access> {

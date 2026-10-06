@@ -1,0 +1,14 @@
+// The literal `5` can be returned as a `T` only when the instantiation
+// makes `T` a number; `T = str` is refused by the instance check.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+five = <T>(x: T) T { 5 }
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", five("s"));
+    Ok(0)
+}

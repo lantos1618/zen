@@ -418,12 +418,15 @@ and printed `true`) are type mismatches; see
 `must-fail/sema/equality_*`.
 
 **6. ~~Operators, returns and members inside a generic body are checked only
-against type variables~~ — CLOSED for free generic functions.**
+against type variables~~ — CLOSED for free generic functions and members
+declared in a generic type's body.**
 `sema_instance.zen` types each settled instantiation's body again with its
 arguments, so `<T>(x: T) T { x + 1 }` called with a `str` is an operator
 error in sema rather than a `cc` error. Answers from that pass are discarded;
-lowering still reads the declaration pass. Members of generic types record no
-instantiation edge yet, so their bodies are still checked only once.
+lowering still reads the declaration pass. A call to a member a type's body
+declares records a `MemberEdge`, and its body is typed again with the type's
+parameters bound to the receiver's arguments. A member an impl supplies is
+still checked only once.
 
 **5. A misleading diagnostic falls out of (2).** A call at the wrong arity to a
 name the receiver DOES have reports "no `<name>` on `<Type>`" — the sentence for

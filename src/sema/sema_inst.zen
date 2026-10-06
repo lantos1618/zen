@@ -67,6 +67,19 @@ InstEdge* = {
     span*: Span,
 }
 
+// A call to a member declared in a named type's body. `self_ty` is the
+// receiver, `sig` the member's settled signature, and `inst` binds the
+// member's own type parameters.
+MemberEdge* = {
+    decl*: DeclId,
+    name*: str,
+    decl_span*: Span,
+    self_ty*: TyId,
+    sig*: TyId,
+    inst*: Inst,
+    span*: Span,
+}
+
 // An empty instantiation allocates nothing, so construction cannot fail.
 Inst* = (a: Alloc) Inst {
     Inst(vars: a.Vec<TyId>(), args: a.Vec<TyId>())

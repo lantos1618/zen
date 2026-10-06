@@ -1,0 +1,18 @@
+// A member declared in a generic type's body is checked again for each
+// receiver it is called on; `self.v + 1` has no meaning when `T` is `str`,
+// so sema refuses it in the member's body instead of leaving the backend to.
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Box<T> = {
+    v: T,
+    bump* = (self: @Self) T { self.v + 1 }
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    b = Box<str>(v: "s");
+    println("{}", b.bump());
+    Ok(0)
+}

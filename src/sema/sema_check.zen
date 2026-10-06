@@ -13,7 +13,7 @@
 { module_display } = sema.sema_def
 { Diag, SemaFault, TypeFault } = sema.sema_diag
 { ExportFault, PairFault } = sema.sema_diag
-{ Inst, InstEdge } = sema.sema_inst
+{ Inst, InstEdge, MemberEdge } = sema.sema_inst
 { DiscriminantCall } = sema.sema_discriminant
 { VariantNameCall } = sema.sema_variant_name
 { NumericConversion, IntegerBitOperation } = sema.sema_numeric
@@ -203,6 +203,9 @@ Checker* = {
 
     // Instantiation edges in resolution order.
     edges :: Vec<InstEdge>,
+
+    // Member calls on settled receivers, for `sema_instance.zen`.
+    member_edges :: Vec<MemberEdge>,
 
     owner_now :: str = "",
 
@@ -479,6 +482,20 @@ Checker* = {
     }
 
     edge_at* = (self: @Self, i: usize) Res<InstEdge> { self.edges.get(i) }
+
+    note_member_edge* = (self :: @Self, e: MemberEdge) Res<AllocError> {
+        self.member_edges.add(e)
+    }
+
+    member_edge_count* = (self: @Self) usize { self.member_edges.len }
+
+    truncate_member_edges* = (self :: @Self, mark: usize) {
+        self.member_edges.truncate(mark);
+    }
+
+    member_edge_at* = (self: @Self, i: usize) Res<MemberEdge> {
+        self.member_edges.get(i)
+    }
 
     // Whose body is being walked. `check_body` brackets one declaration
     // with these, so an edge recorded in between knows its caller.
@@ -1057,6 +1074,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         statement_tails: a.Map<ExprId, bool>(),
         carrier_memo: a.Map<TyId, bool>(),
         edges: a.Vec<InstEdge>(),
+        member_edges: a.Vec<MemberEdge>(),
         set_memo: a.Map<TyId, TyId>(),
         raised: a.Vec<TyId>(),
         locals: a.Vec<Binding>(),

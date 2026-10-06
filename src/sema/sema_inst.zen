@@ -67,14 +67,15 @@ InstEdge* = {
     span*: Span,
 }
 
-// A call to a member declared in a named type's body. `self_ty` is the
-// receiver, `sig` the member's settled signature, and `inst` binds the
-// member's own type parameters.
+// A call to a member of a named receiver `self_ty`: declared in its type's
+// body when `bound` is poison, else supplied by its impl of `bound`. `sig` is
+// the member's settled signature and `inst` binds its own type parameters.
 MemberEdge* = {
     decl*: DeclId,
     name*: str,
     decl_span*: Span,
     self_ty*: TyId,
+    bound*: TyId,
     sig*: TyId,
     inst*: Inst,
     span*: Span,

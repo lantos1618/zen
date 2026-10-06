@@ -1,0 +1,19 @@
+// A member an impl supplies to a generic type is checked again for each
+// receiver it is called on: `self.v > 0` has no meaning for `Box<str>`.
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Positive* = {
+    positive* = (self: @Self) bool
+}
+
+Box<T> = { v: T }
+Box.impl(Positive, { positive = (self: @Self) bool { self.v > 0 } })
+
+main = (env: Env) Res<i32, AllocError> {
+    b = Box<str>(v: "s");
+    println("{}", b.positive());
+    Ok(0)
+}

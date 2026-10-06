@@ -96,6 +96,7 @@ CallCheck = {
     body :: Res<BlockId>,
     edge :: Res<InstEdge>,
     member_edge :: Res<MemberEdge>,
+    recv :: Res<TyId>,
 
     run = (self :: @Self, c :: Checker) Res<TyId, AllocError> {
         callee = c.tree.call_callee(self.call);
@@ -516,6 +517,7 @@ CallCheck = {
 
     known_receiver = (self :: @Self, c :: Checker, ac: Access, b: Base)
                      Res<TyId, AllocError> {
+        self.recv = Ok(b.ty);
         found ::= c.alloc.Vec<Found>();
         c.members_of(b.ty, ac.name.text, found).try();
         visible ::= c.alloc.Vec<Found>();
@@ -606,15 +608,14 @@ CallCheck = {
                     (!c.is_unknown(provider)).then(() {
                         self.provider = Ok(provider);
                     });
-                    c.is_unknown(f.bound).then(() {
-                        self.member_edge = c.member_edge(
-                            ac,
-                            f,
-                            ty,
-                            self.inst,
-                            self.node.span
-                        );
-                    });
+                    self.member_edge = c.member_edge(
+                        ac,
+                        f,
+                        self.recv,
+                        ty,
+                        self.inst,
+                        self.node.span
+                    );
                 },
                 _     => (),
             });
@@ -896,7 +897,8 @@ CallCheck = (a: Alloc, id: ExprId, node: Expr, call: Call, ctx: Ctx)
         checked_signature: None,
         body: None,
         edge: None,
-        member_edge: None
+        member_edge: None,
+        recv: None
     )
 }
 
@@ -2080,21 +2082,29 @@ member_span_eq = (a: Span, b: Span) bool {
         && (a.end.col == b.end.col)
 }
 
-// An own member of a named receiver; `sema_instance` keeps the settled ones.
+// A member of a named receiver; `sema_instance` keeps the settled ones.
+// An own member's receiver is its declaring type; a supplied one's is the
+// type the call reached it through.
 member_edge = (
     c    : Checker,
     ac   : Access,
     f    : Found,
+    recv : Res<TyId>,
     sig  : TyId,
     inst : Inst,
     at   : Span
 ) Res<MemberEdge> {
-    c.types.at(f.decl_owner).match({
+    self_ty = c.is_unknown(f.bound).match({
+        true  => f.decl_owner,
+        false => recv.value_or(f.decl_owner),
+    });
+    c.types.at(self_ty).match({
         Named(n) => Ok(MemberEdge(
             decl: n.decl,
             name: ac.name.text,
             decl_span: f.decl_span,
-            self_ty: f.decl_owner,
+            self_ty: self_ty,
+            bound: f.bound,
             sig: sig,
             inst: inst,
             span: at,

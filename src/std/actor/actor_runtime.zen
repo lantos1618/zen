@@ -41,6 +41,7 @@
 { atomic_store_release_usize } = std.sys
 { thread_word, set_thread_word, process_block, call_entry, guarded_call, pointer_at, address_of } = std.sys
 { cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, mmap, map_private_anonymous, write_all } = std.sys
+{ openat, close, at_fdcwd, o_wronly, o_creat, o_trunc, o_cloexec } = std.sys
 { str } = std.text
 { thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
 { cond_wait, cond_signal, cond_broadcast, parker_init, park, unpark, park_clear } = std.sys.sys_thread
@@ -51,6 +52,7 @@
 { G_STATE, G_WORKERS, G_WORKER_BASE, G_IDLE, G_SPINNING, G_SLEEPING, G_DETACHED } = std.actor.actor_layout
 { G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
 { G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
+{ G_TRACE, G_TRACE_N, G_TRACE_CAP, G_TRACE_T0 } = std.actor.actor_layout
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
 { S_QUEUED, S_CLOSED, S_FULL, S_RELEASES, S_BREAKS, S_FINALIZED, S_HANDOFFS } = std.actor.actor_layout
@@ -132,6 +134,46 @@ ref_index = (r: usize) usize { r & COUNT_MASK }
 as_ref = (index: usize, gen: usize) usize { (gen << 32) | index }
 
 stat = (g: Ptr<u8>, which: usize) { aadd(g, G_STATS + which, 1); }
+
+// ZEN_ACTOR_TRACE=<file>: every message's path through the runtime, one
+// event each time it moves, written to <file> at exit. `from` and `to` are
+// registry indices (0: not an actor); for TAKE, SLEEP and WAKE `from` is
+// the worker. The message is its block's address, unique while it lives.
+T_SEND: usize = 1      // into the receiver's mailbox
+T_PARK: usize = 2      // into the sender's outbox: the receiver is full
+T_RELEASE: usize = 3   // from the outbox into the mailbox
+T_REFUSE: usize = 4    // dropped from the outbox: the receiver stopped
+T_TAKE: usize = 5      // out of the mailbox, to run
+T_BREAK: usize = 6     // let in over the bound: waiting would close a cycle
+T_BLOCK: usize = 7     // the sender's turn ended with sends waiting
+T_UNBLOCK: usize = 8
+T_SLEEP: usize = 9
+T_WAKE: usize = 10
+T_CLOSED: usize = 11   // refused: the receiver is gone
+T_WAIT: usize = 12     // the blocked sender now waits on `to`
+TRACE_WORDS: usize = 4
+
+trace = (g: Ptr<u8>, kind: usize, from: usize, to: usize, m: usize) {
+    buf = aload(g, G_TRACE);
+    (buf != 0).then(() {
+        i = aadd(g, G_TRACE_N, 1);
+        (i < load(g, G_TRACE_CAP)).then(() {
+            e = at(buf).offset(i * TRACE_WORDS * 8);
+            store(
+                e,
+                0,
+                monotonic_ns().to_usize().value_or(0) - load(g, G_TRACE_T0)
+            );
+            store(e, 1, kind | (from << 8));
+            store(e, 2, to);
+            store(e, 3, m);
+        });
+    });
+}
+
+index_of = (a: Ptr<u8>) usize {
+    a.is_null().match({ true => 0, false => ref_index(load(a, B_REF)) })
+}
 
 // ---------------------------------------------------------------------
 // globals and the thread's local state
@@ -537,6 +579,7 @@ deliver = (
         old = aload(slot, S_LIFE);
         (gen_of(old) != gen || (old & CLOSED) != 0).then(() {
             stat(g, S_CLOSED);
+            trace(g, T_CLOSED, index_of(me), ref_index(r), addr(m));
             free_block(g, l, m);
             h.break(SEND_CLOSED);
         });
@@ -549,6 +592,7 @@ deliver = (
         (full && !behind && !me.is_null() && cycle_through(g, me, r)).then(() {
             full = false;
             stat(g, S_BREAKS);
+            trace(g, T_BREAK, index_of(me), ref_index(r), addr(m));
         });
         full.then(() {
             (mode == MODE_OFFER).then(() {
@@ -563,6 +607,7 @@ deliver = (
             nanosleep_ns(2000).discard();
         });
         (!full && acas(slot, S_LIFE, old, (old + 1) | SCHED) == old).then(() {
+            trace(g, T_SEND, index_of(me), ref_index(r), addr(m));
             mailbox_put(a, addr(m));
             ((old & SCHED) == 0).then(() { schedule(g, l, a); });
             h.break(SEND_OK);
@@ -651,6 +696,7 @@ outbox_put = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, r: usize, m: Ptr<u8>) {
     astore(e, 2, PENDING);
     store(side, D_OUT_N, n + 1);
     stat(g, S_QUEUED);
+    trace(g, T_PARK, index_of(me), ref_index(r), addr(m));
 }
 
 // ---------------------------------------------------------------------
@@ -661,6 +707,7 @@ outbox_put = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, r: usize, m: Ptr<u8>) {
 // and waits on its receivers one at a time, oldest send first.
 outbox_park = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, slot: Ptr<u8>) {
     aset(slot, S_LIFE, BLOCKED);
+    trace(g, T_BLOCK, index_of(me), 0, 0);
     wait_next(g, l, me, true);
 }
 
@@ -684,14 +731,14 @@ wait_next = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, own_turn: bool) {
             Ok(i) => {
                 to = load(entries.offset(i * OUTBOX_ENTRY), 0);
                 astore(slot, S_WAITING, to);
+                trace(g, T_WAIT, index_of(me), ref_index(to), 0);
                 register_waiter(g, l, me, to).then(() { h.break(); });
             },
             None  => {
                 astore(slot, S_WAITING, 0);
-                own_turn.match({
-                    true  => { aclear(slot, S_LIFE, BLOCKED); },
-                    false => unblock(g, l, me),
-                });
+                trace(g, T_UNBLOCK, index_of(me), 0, 0);
+                own_turn.then(() { aclear(slot, S_LIFE, BLOCKED); });
+                (!own_turn).then(() { unblock(g, l, me); });
                 h.break();
             },
         });
@@ -784,10 +831,14 @@ resolve = (
             (how == DONE).match({
                 true  => {
                     aadd(rslot, S_LIFE, 1);
+                    trace(g, T_RELEASE, index_of(sender), ref_index(to), m);
                     mailbox_put(r, m);
                     delivered = true;
                 },
-                false => free_block(g, l, at(m)),
+                false => {
+                    trace(g, T_REFUSE, index_of(sender), ref_index(to), m);
+                    free_block(g, l, at(m));
+                },
             });
             astore(e, 2, how);
         });
@@ -882,6 +933,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
             m = mailbox_take(a);
             m.is_null().then(() { h.break(); });
             taken = taken + 1;
+            trace(g, T_TAKE, load(w, W_ID), ref_index(mine), addr(m));
             // A failed actor's remaining messages are dropped, not run.
             (load(a, B_FAILED) == 0).then(() {
                 trapped = guarded_call(
@@ -1162,8 +1214,10 @@ sleep = (g: Ptr<u8>, w: Ptr<u8>) Ptr<u8> {
         (asleep == load(g, G_WORKERS) && aload(g, G_STATE) == 1).then(() {
             unpark(g.offset(G_EXIT_PARKER));
         });
+        trace(g, T_SLEEP, load(w, W_ID), 0, 0);
         (aload(g, G_STATE) != 2).then(() { park(parker_of(w)); });
         asub(g, G_SLEEPING, 1);
+        trace(g, T_WAKE, load(w, W_ID), 0, 0);
     });
     claim_back(g, w, bit);
     a
@@ -1397,6 +1451,18 @@ setup = (g: Ptr<u8>, entry: usize) bool {
     store(g, G_SYSMON_NS, env_number("ZEN_ACTOR_SYSMON_US", 1000) * 1000);
     // ZEN_ACTOR_CHECKED=1: one mapping per block, unmapped when freed.
     set_checked(central_of(g), env_number("ZEN_ACTOR_CHECKED", 0) != 0);
+    env_var("ZEN_ACTOR_TRACE").match({
+        None  => (),
+        Ok(_) => {
+            cap = env_number("ZEN_ACTOR_TRACE_EVENTS", 1000000);
+            buf = map(cap * TRACE_WORDS * 8);
+            (!buf.is_null()).then(() {
+                store(g, G_TRACE_CAP, cap);
+                store(g, G_TRACE_T0, monotonic_ns().to_usize().value_or(0));
+                astore(g, G_TRACE, addr(buf));
+            });
+        },
+    });
     base = map(n * WORKER_BYTES);
     ready ::= !base.is_null();
     ready.then(() {
@@ -1706,6 +1772,75 @@ actor_shutdown* = () {
         Range(0, aload(g, G_THREADS)).loop((i) {
             t = aload(g.offset(G_THREAD_LIST), i);
             (t != 0).then(() { thread_join(at(t)).ignore(); });
+        });
+        trace_dump(g);
+    });
+}
+
+// The trace as text, one event per line, oldest first.
+TRACE_OUT: usize = 65536
+
+trace_dump = (g: Ptr<u8>) {
+    buf = aload(g, G_TRACE);
+    out = (buf != 0).match({ true => map(TRACE_OUT), false => null_ptr<u8>() });
+    (!out.is_null()).then(() {
+        env_var("ZEN_ACTOR_TRACE").match({
+            None     => (),
+            Ok(path) => {
+                n ::= put_text(out, 0, path);
+                // A fresh mapping is zeroed: the path is already terminated.
+                fd = openat(
+                    at_fdcwd(),
+                    out,
+                    o_wronly() + o_creat() + o_trunc() + o_cloexec(),
+                    420
+                );
+                (fd >= 0).then(() {
+                    f       = fd.to_i32().value_or(-1);
+                    claimed = aload(g, G_TRACE_N);
+                    cap     = load(g, G_TRACE_CAP);
+                    kept    = (claimed < cap).match({ true => claimed, false => cap });
+                    n       = put_text(
+                        out,
+                        0,
+                        "# zen actor trace: index ns kind from to message\n"
+                    );
+                    n       = put_text(
+                        out,
+                        n,
+                        "# kinds: 1 send 2 park 3 release 4 refuse 5 take 6 break 7 block 8 unblock 9 sleep 10 wake 11 closed 12 wait\n"
+                    );
+                    n       = put_text(out, n, "# workers ");
+                    n       = put_number(out, n, load(g, G_WORKERS));
+                    n       = put_text(out, n, " events ");
+                    n       = put_number(out, n, claimed);
+                    n       = put_text(out, n, " kept ");
+                    n       = put_number(out, n, kept);
+                    n       = put_text(out, n, "\n");
+                    Range(0, kept).loop((i) {
+                        e    = at(buf).offset(i * TRACE_WORDS * 8);
+                        word = load(e, 1);
+                        n    = put_number(out, n, i);
+                        n    = put_text(out, n, " ");
+                        n    = put_number(out, n, load(e, 0));
+                        n    = put_text(out, n, " ");
+                        n    = put_number(out, n, word & 255);
+                        n    = put_text(out, n, " ");
+                        n    = put_number(out, n, word >> 8);
+                        n    = put_text(out, n, " ");
+                        n    = put_number(out, n, load(e, 2));
+                        n    = put_text(out, n, " ");
+                        n    = put_number(out, n, load(e, 3));
+                        n    = put_text(out, n, "\n");
+                        (n > TRACE_OUT - 160).then(() {
+                            write_all(f, str(data: out, len: n)).ignore();
+                            n = 0;
+                        });
+                    });
+                    write_all(f, str(data: out, len: n)).ignore();
+                    close(f).discard();
+                });
+            },
         });
     });
 }

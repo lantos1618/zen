@@ -42,6 +42,17 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   when actors are still wedged at exit, the runtime prints the wait-for graph
   on stderr: each blocked actor's registry index, mailbox depth and the actor
   it waits on, then the cycles.
+- Message trace: `ZEN_ACTOR_TRACE=<file>` records each message's path, an
+  event every time it moves: sent into a mailbox, parked in the sender's
+  outbox, released into the mailbox, refused, taken by a worker, plus actors
+  blocking, unblocking and waiting on a receiver, workers sleeping and
+  waking, and loops broken. Events go into a fixed buffer
+  (`ZEN_ACTOR_TRACE_EVENTS`, default 1000000; later events are counted, not
+  kept) and are written at `actor_shutdown`, one line each:
+  `index ns kind from to message`. `from` and `to` are registry indices (0
+  for a thread that is no actor; the worker for take, sleep and wake), and
+  the message is its block's address, unique while it lives. With the
+  variable unset each trace point is one load and a branch.
 
 ## Executable checks
 

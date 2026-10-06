@@ -20,8 +20,9 @@ program prints one `bench=...` line of `key=value` numbers.
 
 Runtime settings: `ZEN_ACTOR_WORKERS`, `ZEN_ACTOR_SYSMON_US` (0 turns
 preemption off), `ZEN_ACTOR_WATCHDOG_MS` (0 turns the stuck-runtime
-report off), `ZEN_ACTOR_CHECKED=1` (one mapping per block, for
-sanitizer runs).
+report off), `ZEN_ACTOR_TRACE=<file>` (every message's path, written
+at exit; see docs/ACTOR_RUNTIME.md), `ZEN_ACTOR_CHECKED=1` (one mapping
+per block, for sanitizer runs).
 
 On dev-box, from this directory:
 

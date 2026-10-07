@@ -1,0 +1,362 @@
+// Chatter: PEERS actors (default 10k) on a random graph, each with FANOUT
+// neighbours, talking noisily for DURATION seconds. A peer's tick sends a
+// random burst (1..MAX_BURST) of messages with random-length payloads to
+// random neighbours; a received message is forwarded on with probability
+// FORWARD% until its hops run out, so traffic is gossip, not a fixed pipe.
+// SLOW% of peers spend WORK hashing rounds per message; DIE% stop halfway,
+// so their neighbours start seeing Closed. Random graphs are full of long
+// wait-for cycles under backpressure, so this also probes for wedges.
+//
+// Each peer reports to Stats every REPORT messages and once at flush.
+// Checks: sent_ok == received + dropped_in_flight (conservation),
+// latency (send -> behaviour start), throughput per window, RSS.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Vec } = std.collections
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param, rss } = common
+
+BLOB: str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+Stats = {
+    since :: u64 = 0,
+    window :: u64 = 0,
+    sent :: u64 = 0,
+    received :: u64 = 0,
+    closed :: u64 = 0,
+    full :: u64 = 0,
+    bytes :: u64 = 0,
+    lat_sum :: u64 = 0,
+    lat_max :: u64 = 0,
+    over_1ms :: u64 = 0,
+    over_10ms :: u64 = 0,
+    over_100ms :: u64 = 0,
+    t_sent :: u64 = 0,
+    t_received :: u64 = 0,
+    t_closed :: u64 = 0,
+    flushed :: u64 = 0,
+}
+
+Stats.impl(Actor, {
+    begin = (self :: @Self, ctx: Context) { self.since = ctx.env.clock.since_start().ns; }
+
+    count = (
+        self :: @Self,
+        ctx: Context,
+        sent: u64,
+        received: u64,
+        closed: u64,
+        full: u64,
+        bytes: u64,
+        lat_sum: u64,
+        lat_max: u64,
+        o1: u64,
+        o10: u64,
+        o100: u64
+    ) {
+        self.sent     = self.sent + sent;
+        self.received = self.received + received;
+        self.closed   = self.closed + closed;
+        self.full     = self.full + full;
+        self.bytes    = self.bytes + bytes;
+        self.lat_sum  = self.lat_sum + lat_sum;
+        (lat_max > self.lat_max).then(() { self.lat_max = lat_max; });
+        self.over_1ms   = self.over_1ms + o1;
+        self.over_10ms  = self.over_10ms + o10;
+        self.over_100ms = self.over_100ms + o100;
+    }
+
+    flushed_one = (self :: @Self, ctx: Context) { self.flushed = self.flushed + 1; }
+
+    report = (self :: @Self, ctx: Context, last: u64) {
+        now             = ctx.env.clock.since_start().ns;
+        ms              = (now - self.since) / 1000000 + 1;
+        n               = self.received + 1;
+        self.window     = self.window + 1;
+        self.t_sent     = self.t_sent + self.sent;
+        self.t_received = self.t_received + self.received;
+        self.t_closed   = self.t_closed + self.closed;
+        println(
+            "bench=chatter window={} sent_per_s={} recv_per_s={} mb_per_s={} closed={} full={} lat_avg_us={} lat_max_us={} over_1ms={} over_10ms={} over_100ms={} rss_mb={}",
+            self.window,
+            self.sent * 1000 / ms,
+            self.received * 1000 / ms,
+            self.bytes * 1000 / ms / 1048576,
+            self.closed,
+            self.full,
+            self.lat_sum / n / 1000,
+            self.lat_max / 1000,
+            self.over_1ms,
+            self.over_10ms,
+            self.over_100ms,
+            rss(ctx.env, ctx.alloc) / 1048576
+        );
+        (last == 1).then(() {
+            println(
+                "bench=chatter-total sent={} received={} closed={} in_flight_or_lost={} peers_flushed={}",
+                self.t_sent,
+                self.t_received,
+                self.t_closed,
+                self.t_sent - self.t_received,
+                self.flushed
+            );
+        });
+        self.sent       = 0;
+        self.received   = 0;
+        self.closed     = 0;
+        self.full       = 0;
+        self.bytes      = 0;
+        self.lat_sum    = 0;
+        self.lat_max    = 0;
+        self.over_1ms   = 0;
+        self.over_10ms  = 0;
+        self.over_100ms = 0;
+        self.since      = now;
+    }
+})
+
+Peer = {
+    id: u64,
+    stats: Ref<Stats>,
+    until: u64,
+    die_at: u64,
+    slow: bool,
+    work: u64,
+    max_burst: u64,
+    forward: u64,
+    report_every: u64,
+    seed :: u64,
+    me :: Res<Ref<Peer>> = None,
+    near :: Res<Vec<Ref<Peer>>> = None,
+    sink :: u64 = 1,
+    sent :: u64 = 0,
+    received :: u64 = 0,
+    closed :: u64 = 0,
+    full :: u64 = 0,
+    bytes :: u64 = 0,
+    lat_sum :: u64 = 0,
+    lat_max :: u64 = 0,
+    o1 :: u64 = 0,
+    o10 :: u64 = 0,
+    o100 :: u64 = 0,
+    events :: u64 = 0,
+    flushed :: bool = false,
+}
+
+Peer.impl(Actor, {
+    begin = (self :: @Self, ctx: Context, me: Ref<Peer>) {
+        self.me   = Ok(me);
+        self.near = Ok(ctx.alloc.Vec<Ref<Peer>>());
+    }
+
+    link = (self :: @Self, ctx: Context, to: Ref<Peer>) {
+        // A match binds a copy of the Vec descriptor: add to it, then store it back.
+        self.near.match({
+            Ok(near) => {
+                grown ::= near;
+                grown.add(to).ignore();
+                self.near = Ok(grown);
+            },
+            None     => (),
+        });
+    }
+
+    tick = (self :: @Self, ctx: Context) {
+        now = ctx.env.clock.since_start().ns;
+        (self.die_at > 0 && now >= self.die_at).match({
+            true  => self.me.match({ Ok(me) => me.stop(), None => () }),
+            false => (now < self.until).then(() {
+                burst = 1 + self.next() % self.max_burst;
+                i :: u64 = 0;
+                loop(() { i < burst }, (h) {
+                    self.say(ctx, 2 + self.next() % 6);
+                    i = i + 1;
+                });
+                self.me.match({ Ok(me) => me.tick().ignore(), None => () });
+            }),
+        });
+    }
+
+    talk = (self :: @Self, ctx: Context, from: u64, hops: u64, sent_ns: u64, blob: str) {
+        now           = ctx.env.clock.since_start().ns;
+        lat           = now - sent_ns;
+        self.received = self.received + 1;
+        self.lat_sum  = self.lat_sum + lat;
+        (lat > self.lat_max).then(() { self.lat_max = lat; });
+        (lat > 1000000).then(() { self.o1 = self.o1 + 1; });
+        (lat > 10000000).then(() { self.o10 = self.o10 + 1; });
+        (lat > 100000000).then(() { self.o100 = self.o100 + 1; });
+        self.slow.then(() {
+            i :: u64 = 0;
+            loop(() { i < self.work }, (h) {
+                self.sink = self.sink *% 6364136223846793005 +% blob.len.to_u64();
+                i         = i + 1;
+            });
+        });
+        (hops > 0 && self.next() % 100 < self.forward && now < self.until).then(() {
+            self.say(ctx, hops - 1);
+        });
+        self.bump(ctx);
+    }
+
+    flush_now = (self :: @Self, ctx: Context) { self.flush(ctx); }
+
+    // A stopped peer still runs the messages it accepted: report after them.
+    stopped = (self :: @Self, ctx: Context) { self.flush(ctx); }
+})
+
+// Helpers called inside a peer's own turn (any method in the Actor impl
+// would be a behaviour).
+say = (self :: Peer, ctx: Context, hops: u64) {
+    self.near.match({
+        None     => (),
+        Ok(near) => (near.len > 0).then(() {
+            pick = (self.next() % near.len.to_u64()).to_usize().value_or(0);
+            // Heavy-tailed payload: mostly tiny, sometimes the whole blob.
+            r   = self.next() % 100;
+            len = (r < 70).match({
+                true  => self.next() % 32,
+                false => (r < 97).match({ true => self.next() % 256, false => BLOB.len.to_u64() }),
+            }).to_usize().value_or(0);
+            near.get(pick).match({
+                None   => (),
+                Ok(to) => to.talk(
+                    self.id,
+                    hops,
+                    ctx.env.clock.since_start().ns,
+                    BLOB.slice(0, len)
+                ).match({
+                    Ok(_)                  => { self.sent = self.sent + 1; self.bytes = self.bytes + len.to_u64(); },
+                    Err(ActorError.Closed) => { self.closed = self.closed + 1; },
+                    Err(ActorError.Full)   => { self.full = self.full + 1; },
+                }),
+            });
+        }),
+    });
+    self.bump(ctx);
+}
+
+bump = (self :: Peer, ctx: Context) {
+    self.events = self.events + 1;
+    (self.events % self.report_every == 0).then(() { self.push(ctx); });
+}
+
+push = (self :: Peer, ctx: Context) {
+    self.stats.count(
+        self.sent,
+        self.received,
+        self.closed,
+        self.full,
+        self.bytes,
+        self.lat_sum,
+        self.lat_max,
+        self.o1,
+        self.o10,
+        self.o100
+    ).ignore();
+    self.sent     = 0;
+    self.received = 0;
+    self.closed   = 0;
+    self.full     = 0;
+    self.bytes    = 0;
+    self.lat_sum  = 0;
+    self.lat_max  = 0;
+    self.o1       = 0;
+    self.o10      = 0;
+    self.o100     = 0;
+}
+
+flush = (self :: Peer, ctx: Context) {
+    (!self.flushed).then(() {
+        self.flushed = true;
+        self.push(ctx);
+        self.stats.flushed_one().ignore();
+    });
+}
+
+next = (self :: Peer) u64 {
+    x ::= self.seed;
+    x         = x ^ (x << 13);
+    x         = x ^ (x >> 7);
+    x         = x ^ (x << 17);
+    self.seed = x;
+    x
+}
+
+Rng = {
+    s :: u64,
+    next = (self :: @Self) u64 {
+        self.s = self.s ^ (self.s << 13);
+        self.s = self.s ^ (self.s >> 7);
+        self.s = self.s ^ (self.s << 17);
+        self.s
+    }
+}
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    a        = env.mem.alloc();
+    peers    = param(env, "PEERS", 10000);
+    fanout   = param(env, "FANOUT", 8);
+    duration = param(env, "DURATION", 10);
+    interval = param(env, "INTERVAL", 1);
+    slow_pct = param(env, "SLOW", 5);
+    die_pct  = param(env, "DIE", 2);
+    start    = env.clock.since_start().ns;
+    until    = start + duration.to_u64() * 1000000000;
+    half     = start + duration.to_u64() * 500000000;
+    stats    = env.spawn(Stats()).try();
+    stats.begin().try();
+    all ::= a.Vec<Ref<Peer>>();
+    rng ::= Rng(s: 88172645463325252);
+    i   :: usize = 0;
+    loop(() { i < peers }, (h) {
+        p = env.spawn(Peer(
+            id: i.to_u64(),
+            stats: stats,
+            until: until,
+            die_at: (rng.next() % 100 < die_pct.to_u64()).match({ true => half, false => 0 }),
+            slow: rng.next() % 100 < slow_pct.to_u64(),
+            work: param(env, "WORK", 20000).to_u64(),
+            max_burst: param(env, "MAX_BURST", 64).to_u64(),
+            forward: param(env, "FORWARD", 50).to_u64(),
+            report_every: param(env, "REPORT", 1000).to_u64(),
+            seed: rng.next() | 1,
+        )).try();
+        p.begin(p).try();
+        all.add(p).ignore();
+        i = i + 1;
+    });
+    all.loop((p) {
+        k :: usize = 0;
+        loop(() { k < fanout }, (h) {
+            pick = (rng.next() % peers.to_u64()).to_usize().value_or(0);
+            all.get(pick).match({ Ok(to) => p.link(to).ignore(), None => () });
+            k = k + 1;
+        });
+    });
+    println(
+        "bench=chatter-start peers={} fanout={} spawn_ms={} rss_mb={}",
+        peers,
+        fanout,
+        (env.clock.since_start().ns - start) / 1000000,
+        rss(env, a) / 1048576
+    );
+    all.loop((p) { p.tick().ignore(); });
+    windows = duration / interval;
+    w :: usize = 0;
+    loop(() { w < windows }, (h) {
+        env.threads.sleep(interval.to_u64() * 1000);
+        stats.report(0).try();
+        w = w + 1;
+    });
+    // Let forwarded gossip die down, then make every live peer report.
+    env.threads.sleep(1000);
+    all.loop((p) { p.flush_now().ignore(); });
+    env.threads.sleep(2000);
+    stats.report(1).try();
+    Ok(0)
+}

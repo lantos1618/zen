@@ -1,0 +1,64 @@
+// A floods B and C, so it waits on both; then B floods A. The cycle A -> B
+// -> A closes only after A has started waiting, and A also waits on C. A
+// sender waits on one receiver at a time, so B's send finds the cycle and
+// goes through over the bound instead of waiting for ever. Every message
+// arrives once, in order, and all three actors finish.
+
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+COUNT: u64 = 2000
+
+Peer = {
+    name: u64,
+    next :: u64 = 0,
+    out_of_order :: u64 = 0,
+}
+
+Peer.impl(Actor, {
+    flood = (self :: @Self, ctx: Context, to: Ref<Peer>) {
+        i :: u64 = 0;
+        loop(() { i < COUNT }, (h) {
+            to.note(i).ignore();
+            i = i + 1;
+        });
+    }
+
+    flood_two = (self :: @Self, ctx: Context, first: Ref<Peer>, second: Ref<Peer>) {
+        i :: u64 = 0;
+        loop(() { i < COUNT }, (h) {
+            first.note(i).ignore();
+            second.note(i).ignore();
+            i = i + 1;
+        });
+    }
+
+    note = (self :: @Self, ctx: Context, n: u64) {
+        (n != self.next).then(
+            () { self.out_of_order = self.out_of_order + 1; }
+        );
+        self.next = n + 1;
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        println(
+            "peer {} got {} out of order {}",
+            self.name,
+            self.next,
+            self.out_of_order
+        );
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    a = env.spawn(Peer(name: 1)).try();
+    b = env.spawn(Peer(name: 2)).try();
+    c = env.spawn(Peer(name: 3)).try();
+    a.flood_two(b, c).try();
+    b.flood(a).try();
+    Ok(0)
+}

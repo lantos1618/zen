@@ -27,8 +27,6 @@ RING*: usize = 256
 RING_MASK*: usize = 255
 // A mailbox's bound: a default send to a fuller mailbox waits for room.
 BOUND*: usize = 256
-// Hops a full send follows along "waiting on" links looking for itself.
-CYCLE_WALK*: usize = 16
 // Slots per registry chunk, and chunks: 32M actors alive at once.
 CHUNK_SLOTS*: usize = 65536
 CHUNK_SHIFT*: usize = 16
@@ -66,6 +64,10 @@ G_SYSMON_NS*: usize = 22     // sysmon tick; 0 when preemption is off
 G_ENV*: usize = 23           // the compilers' shared copy of the process Env
 G_STATS*: usize = 24         // counters, STATS words
 STATS*: usize = 16
+G_TRACE*: usize = 40         // ZEN_ACTOR_TRACE: event buffer address (0 when off)
+G_TRACE_N*: usize = 41       // events claimed, possibly past the capacity
+G_TRACE_CAP*: usize = 42     // events the buffer holds
+G_TRACE_T0*: usize = 43      // monotonic ns when tracing started
 // Regions, in bytes.
 G_CENTRAL*: usize = 512      // std.actor.actor_pool's central part
 G_CHUNKS*: usize = 1152      // the registry's chunk table, CHUNKS words

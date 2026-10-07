@@ -4,6 +4,8 @@
 // its bound and taken them, in order. With one worker the interleaving is
 // the same every run: the sender parks with 344 waiting, the receiver's
 // end-of-turn release finds it, and every message arrives exactly once.
+// The sender's next turn reports to the receiver, behind all 600 messages,
+// so a single actor prints and the output order is fixed.
 
 { Res, Ok, loop } = std.core
 { Env } = std.env
@@ -21,13 +23,11 @@ Receiver.impl(Actor, {
             () { self.out_of_order = self.out_of_order + 1; }
         );
         self.next = n + 1;
-        (n == 599).then(() {
-            println(
-                "received {} out of order {}",
-                self.next,
-                self.out_of_order
-            );
-        });
+    }
+
+    report = (self :: @Self, ctx: Context, sent: u64) {
+        println("sender ran again after {} sends", sent);
+        println("received {} out of order {}", self.next, self.out_of_order);
     }
 })
 
@@ -41,8 +41,8 @@ Sender.impl(Actor, {
         });
     }
 
-    report = (self :: @Self, ctx: Context) {
-        println("sender ran again after {} sends", self.sent);
+    report = (self :: @Self, ctx: Context, to: Ref<Receiver>) {
+        to.report(self.sent).ignore();
     }
 })
 
@@ -52,6 +52,6 @@ main = (env: Env) Res<i32, Error> {
     receiver = env.spawn(Receiver()).try();
     sender   = env.spawn(Sender()).try();
     sender.flood(receiver, 600).try();
-    sender.report().try();
+    sender.report(receiver).try();
     Ok(0)
 }

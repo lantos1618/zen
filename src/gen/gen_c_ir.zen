@@ -10,18 +10,36 @@
 { Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
 { trap_message } = gen.gen_ir
 { IrFeature } = gen.gen_ir_feature
+{ simplify } = gen.gen_asm_regalloc
+{ reachable_only, ordered } = gen.gen_asm_prepare
+{ reads, written, exit_read } = gen.gen_asm_flow
 
 supports* = (feature: IrFeature) bool {
     feature.match({ Traps => true, _ => false })
 }
 
+// Each function is first cleaned up by the passes the native renderers use:
+// unreachable blocks dropped, copies propagated, unread pure values removed,
+// and blocks ordered so most jumps fall through.
 emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
     writer ::= C(
         out: a.String().try(),
         location: a.String().try(),
-        labels: a.Vec<bool>()
+        labels: a.Vec<bool>(),
+        read: a.Vec<bool>(),
+        declared: a.Vec<bool>(),
+        operands: a.Vec<usize>()
     );
-    writer.program(program).try();
+    simple ::= a.Vec<Func>();
+    program.functions.loop((function) {
+        simple.add(
+            ordered(
+                a,
+                simplify(a, reachable_only(a, function).try()).try()
+            ).try()
+        ).try();
+    });
+    writer.program(Program(functions: simple, entry: program.entry)).try();
     Ok(writer.out)
 }
 
@@ -29,6 +47,11 @@ C = {
     out :: String,
     location :: String,
     labels :: Vec<bool>,
+    // Per slot of the function being rendered: whether anything reads it,
+    // and whether it needs a declaration (read or written).
+    read :: Vec<bool>,
+    declared :: Vec<bool>,
+    operands :: Vec<usize>,
 
     program = (self :: @Self, program: Program) Res<(), AllocError> {
         self.out.runtime().try();
@@ -60,29 +83,35 @@ C = {
     function = (self :: @Self, index: usize, function: Func) Res<(), AllocError> {
         self.signature(index, function).try();
         self.out.add(" {\n").try();
+        self.slot_uses(function).try();
         Range(function.parameters, function.slots.len).loop((i) {
-            self.out.fmt("  int32_t v{};\n", i).try();
+            self.declared.get(i).value_or(false).then(() {
+                self.out.fmt("  int32_t v{};\n", i).try();
+            });
         });
-        // Discarded effect results still have IR slots. sizeof marks their
-        // declarations used without reading an uninitialized value.
-        Range(0, function.slots.len).loop((i) {
-            self.out.fmt("  (void)sizeof(v{});\n", i).try();
+        Range(0, function.parameters).loop((i) {
+            (!self.read.get(i).value_or(false)).then(() {
+                self.out.fmt("  (void)v{};\n", i).try();
+            });
         });
         self.labels.clear();
         function.blocks.loop((_) { self.labels.add(false).try(); });
-        self.labels.set(0, true);
-        function.blocks.loop((block) {
+        function.blocks.loop((h, b, block) {
             block.exit.match({
-                Return(_)      => (),
-                Jump(to)       => { self.labels.set(to, true); },
-                Branch(branch) => {
-                    self.labels.set(branch.yes, true);
-                    self.labels.set(branch.no, true);
+                Jump(to)       => {
+                    (to != b + 1).then(() { self.labels.set(to, true); });
                 },
-                Trap(_)        => (),
+                Branch(branch) => {
+                    (branch.yes != b + 1).then(
+                        () { self.labels.set(branch.yes, true); }
+                    );
+                    (branch.no != b + 1 || branch.yes == b + 1).then(
+                        () { self.labels.set(branch.no, true); }
+                    );
+                },
+                _              => (),
             });
         });
-        self.out.add("  goto b0;\n").try();
         function.blocks.loop((h, block_id, block) {
             self.labels.get(block_id).value_or(false).then(() {
                 self.out.fmt("b{}:\n", block_id).try();
@@ -90,21 +119,77 @@ C = {
             block.code.loop(
                 (instruction) { self.instruction(instruction).try(); }
             );
-            self.terminator(block.exit).try();
+            self.terminator(block.exit, block_id + 1).try();
         });
         self.out.add("}\n")
     }
 
-    terminator = (self :: @Self, exit: Terminator) Res<(), AllocError> {
+    slot_uses = (self :: @Self, function: Func) Res<(), AllocError> {
+        self.read.clear();
+        self.declared.clear();
+        function.slots.loop((_) {
+            self.read.add(false).try();
+            self.declared.add(false).try();
+        });
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                self.operands.clear();
+                reads(instruction, self.operands).try();
+                self.operands.loop((slot) {
+                    self.read.set(slot, true);
+                    self.declared.set(slot, true);
+                });
+            });
+            exit_read(block.exit).when_ok((slot) {
+                self.read.set(slot, true);
+                self.declared.set(slot, true);
+            });
+        });
+        Ok
+    }
+
+    unread = (self :: @Self, slot: usize) bool {
+        !self.read.get(slot).value_or(false)
+    }
+
+    // The left side for a value written to `slot`: an assignment, or a
+    // discarded expression statement when nothing reads the slot.
+    target = (self :: @Self, slot: usize) Res<(), AllocError> {
+        self.read.get(slot).value_or(false).match({
+            true  => self.out.fmt("  v{} = ", slot),
+            false => self.out.add("  (void)"),
+        })
+    }
+
+    // `next` is the block rendered after this one; a jump to it falls through.
+    terminator = (self :: @Self, exit: Terminator, next: usize)
+                 Res<(), AllocError> {
         exit.match({
             Return(value)  => self.out.fmt("  return v{};\n", value),
-            Jump(to)       => self.out.fmt("  goto b{};\n", to),
-            Branch(branch) => self.out.fmt(
-                "  if (v{} != 0) goto b{}; else goto b{};\n",
-                branch.value,
-                branch.yes,
-                branch.no
-            ),
+            Jump(to)       => (to == next).match({
+                true  => Ok,
+                false => self.out.fmt("  goto b{};\n", to),
+            }),
+            Branch(branch) => (branch.no == next && branch.yes != next).match({
+                true  => self.out.fmt(
+                    "  if (v{}) goto b{};\n",
+                    branch.value,
+                    branch.yes
+                ),
+                false => (branch.yes == next).match({
+                    true  => self.out.fmt(
+                        "  if (!v{}) goto b{};\n",
+                        branch.value,
+                        branch.no
+                    ),
+                    false => self.out.fmt(
+                        "  if (v{}) goto b{}; else goto b{};\n",
+                        branch.value,
+                        branch.yes,
+                        branch.no
+                    ),
+                }),
+            }),
             Trap(fault)    => {
                 self.out.add("  zg_ir_trap(").try();
                 self.position(fault.span).try();
@@ -115,16 +200,14 @@ C = {
 
     instruction = (self :: @Self, instruction: Instruction) Res<(), AllocError> {
         instruction.match({
-            Constant(value)    => self.out.fmt(
-                "  v{} = {};\n",
-                value.out,
-                value.value
-            ),
-            Copy(value)        => self.out.fmt(
-                "  v{} = v{};\n",
-                value.out,
-                value.source
-            ),
+            Constant(value)    => self.unread(value.out).match({
+                true  => Ok,
+                false => self.out.fmt("  v{} = {};\n", value.out, value.value),
+            }),
+            Copy(value)        => self.unread(value.out).match({
+                true  => Ok,
+                false => self.out.fmt("  v{} = v{};\n", value.out, value.source),
+            }),
             UnaryValue(value)  => self.unary(value),
             BinaryValue(value) => self.binary(value),
             Invoke(value)      => self.call(value),
@@ -152,13 +235,13 @@ C = {
 
     unary = (self :: @Self, value: Unary) Res<(), AllocError> {
         value.op.match({
-            Not => self.out.fmt("  v{} = !v{};\n", value.out, value.input),
+            Not => self.unread(value.out).match({
+                true  => Ok,
+                false => self.out.fmt("  v{} = !v{};\n", value.out, value.input),
+            }),
             Neg => {
-                self.out.fmt(
-                    "  v{} = zg_ir_i32(-(int64_t)v{}, ",
-                    value.out,
-                    value.input
-                ).try();
+                self.target(value.out).try();
+                self.out.fmt("zg_ir_i32(-(int64_t)v{}, ", value.input).try();
                 self.position(value.span).try();
                 self.out.add(");\n")
             },
@@ -166,7 +249,7 @@ C = {
     }
 
     binary = (self :: @Self, value: Binary) Res<(), AllocError> {
-        self.out.fmt("  v{} = ", value.out).try();
+        self.target(value.out).try();
         value.op.match({
             Add          => self.out.fmt(
                 "zg_ir_i32((int64_t)v{} + v{}",
@@ -211,7 +294,8 @@ C = {
     }
 
     call = (self :: @Self, call: Invocation) Res<(), AllocError> {
-        self.out.fmt("  v{} = zg_ir_f{}(", call.out, call.function).try();
+        self.target(call.out).try();
+        self.out.fmt("zg_ir_f{}(", call.function).try();
         call.args.loop((h, index, slot) {
             (index > 0).then(() { self.out.add(", ").try(); });
             self.out.fmt("v{}", slot).try();
@@ -232,13 +316,23 @@ C = {
     }
 }
 
-// Encode every byte: each following backslash terminates the preceding hex
-// escape, and explicit fwrite lengths preserve embedded NUL and invalid UTF-8.
+// Printable ASCII stays as is; every other byte, and `"`, `\` and `?`
+// (trigraphs), becomes a three-digit octal escape, which cannot run into
+// the byte after it. Explicit fwrite lengths preserve embedded NUL and
+// invalid UTF-8.
 bytes = (out :: String, text: str) Res<(), AllocError> {
     out.add('"').try();
     text.loop((byte) {
-        out.add("\\x").try();
-        out.write_hex_fixed(byte.to_u64(), 2).try();
+        plain = byte >= 32 && byte < 127 && byte != 34 && byte != 92 && byte != 63;
+        plain.match({
+            true  => out.add(byte).try(),
+            false => out.fmt(
+                "\\{}{}{}",
+                byte / 64,
+                byte / 8 % 8,
+                byte % 8
+            ).try(),
+        });
     });
     out.add('"')
 }
@@ -250,25 +344,27 @@ runtime = (out :: String) Res<(), AllocError> {
         "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
     ).try();
     out.add(
-        "_Noreturn void zg_ir_trap(const char *where, const char *message) {\n"
+        "static inline _Noreturn void zg_ir_trap(const char *where, const char *message) {\n"
     ).try();
     out.add(
         "  fflush(stdout); fputs(where, stderr); fputs(\"trap: \", stderr); fputs(message, stderr); fputc('\\n', stderr); exit(134);\n}\n"
     ).try();
-    out.add("int32_t zg_ir_i32(int64_t value, const char *where) {\n").try();
+    out.add(
+        "static inline int32_t zg_ir_i32(int64_t value, const char *where) {\n"
+    ).try();
     out.add(
         "  if (value < INT32_MIN || value > INT32_MAX) zg_ir_trap(where, \"integer overflow\");\n  return (int32_t)value;\n}\n"
     ).try();
     out.add(
-        "void zg_ir_divisor(int32_t left, int32_t right, const char *where) {\n"
+        "static inline void zg_ir_divisor(int32_t left, int32_t right, const char *where) {\n"
     ).try();
     out.add(
         "  if (right == 0) zg_ir_trap(where, \"divide by zero\");\n  if (left == INT32_MIN && right == -1) zg_ir_trap(where, \"integer overflow\");\n}\n"
     ).try();
     out.add(
-        "int32_t zg_ir_div(int32_t left, int32_t right, const char *where) { zg_ir_divisor(left, right, where); return left / right; }\n"
+        "static inline int32_t zg_ir_div(int32_t left, int32_t right, const char *where) { zg_ir_divisor(left, right, where); return left / right; }\n"
     ).try();
     out.add(
-        "int32_t zg_ir_rem(int32_t left, int32_t right, const char *where) { zg_ir_divisor(left, right, where); return left % right; }\n"
+        "static inline int32_t zg_ir_rem(int32_t left, int32_t right, const char *where) { zg_ir_divisor(left, right, where); return left % right; }\n"
     )
 }

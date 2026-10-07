@@ -31,7 +31,7 @@ These facts were read from the trees on 2026-09-29.
 | IR verifier | `src/gen/gen_verify.zen` | 341 lines | IR only |
 | JS renderer | `src/gen/gen_js.zen` | 272 lines | IR only |
 | x86-64 renderer | `src/gen/gen_asm_x86.zen` | 342 lines | IR only |
-| IR→C pilot | `src/gen/gen_c_ir.zen` | 254 lines | IR only (a differential oracle, not selectable from the CLI) |
+| IR→C pilot | `src/gen/gen_c_ir.zen` | 370 lines | IR only (a differential oracle, not selectable from the CLI) |
 
 The in-flight branches this design has to absorb:
 

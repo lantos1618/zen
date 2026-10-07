@@ -94,8 +94,11 @@ or String does not extend its allocator's lifetime.
 
 `gen.gen_c_ir.emit_c(a, program)` is an experimental C renderer for the same
 IR. It returns `Res<String, AllocError>` after the caller verifies the program
-and checks `supports`. Its C11 output uses direct labels and branches, explicit
-arithmetic checks, and length-aware byte output. It is an importable API, not
+and checks `supports`. Each function first goes through the same
+machine-independent cleanups as the native targets (`reachable_only`,
+`simplify`, `ordered`). Its C11 output declares only used slots, falls through
+to the next block instead of jumping, and uses explicit arithmetic checks and
+length-aware byte output. It is an importable API, not
 a CLI backend selection; `Codegen.C` continues to use the full-language C
 backend. Its private calling convention does not specify the foreign or
 aggregate ABI.

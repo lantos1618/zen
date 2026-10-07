@@ -41,7 +41,9 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   (default 1000; 0 turns it off; needs sysmon) while actors are blocked, or
   when actors are still wedged at exit, the runtime prints the wait-for graph
   on stderr: each blocked actor's registry index, mailbox depth and the actor
-  it waits on, then the cycles.
+  it waits on, then the cycles. The idle check reads a running count of
+  blocked actors, so an idle runtime with many actors does not rescan the
+  registry every sysmon tick; the registry is walked only to print a report.
 - Message trace: `ZEN_ACTOR_TRACE=<file>` records each message's path, an
   event every time it moves: sent into a mailbox, parked in the sender's
   outbox, released into the mailbox, refused, taken by a worker, plus actors

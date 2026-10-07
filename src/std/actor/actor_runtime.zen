@@ -52,7 +52,7 @@
 { G_STATE, G_WORKERS, G_WORKER_BASE, G_IDLE, G_SPINNING, G_SLEEPING, G_DETACHED } = std.actor.actor_layout
 { G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
 { G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
-{ G_TRACE, G_TRACE_N, G_TRACE_CAP, G_TRACE_T0 } = std.actor.actor_layout
+{ G_TRACE, G_TRACE_N, G_TRACE_CAP, G_TRACE_T0, G_BLOCKED } = std.actor.actor_layout
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
 { S_QUEUED, S_CLOSED, S_FULL, S_RELEASES, S_BREAKS, S_FINALIZED, S_HANDOFFS } = std.actor.actor_layout
@@ -707,6 +707,7 @@ outbox_put = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, r: usize, m: Ptr<u8>) {
 // and waits on its receivers one at a time, oldest send first.
 outbox_park = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, slot: Ptr<u8>) {
     aset(slot, S_LIFE, BLOCKED);
+    aadd(g, G_BLOCKED, 1);
     trace(g, T_BLOCK, index_of(me), 0, 0);
     wait_next(g, l, me, true);
 }
@@ -737,7 +738,10 @@ wait_next = (g: Ptr<u8>, l: Ptr<u8>, me: Ptr<u8>, own_turn: bool) {
             None  => {
                 astore(slot, S_WAITING, 0);
                 trace(g, T_UNBLOCK, index_of(me), 0, 0);
-                own_turn.then(() { aclear(slot, S_LIFE, BLOCKED); });
+                own_turn.then(() {
+                    aclear(slot, S_LIFE, BLOCKED);
+                    asub(g, G_BLOCKED, 1);
+                });
                 (!own_turn).then(() { unblock(g, l, me); });
                 h.break();
             },
@@ -852,6 +856,7 @@ unblock = (g: Ptr<u8>, l: Ptr<u8>, sender: Ptr<u8>) {
     mine = load(sender, B_REF);
     slot = slot_of_ref(g, mine);
     old  = aclear(slot, S_LIFE, BLOCKED);
+    asub(g, G_BLOCKED, 1);
     stat(g, S_RELEASES);
     ((old & SCHED) == 0 && (count_of(old) > 0 || (old & CLOSED) != 0) && try_acquire(slot, ref_gen(mine))).then(() {
         schedule(g, l, sender);
@@ -1338,7 +1343,7 @@ sysmon = (g: Ptr<u8>) {
     loop(() { aload(g, G_STATE) != 2 }, (h) {
         nanosleep_ns(tick).discard();
         (limit > 0).then(() {
-            blocked = quiet(g).match({ true => blocked_actors(g), false => 0 });
+            blocked = quiet(g).match({ true => aload(g, G_BLOCKED), false => 0 });
             still   = (blocked > 0).match({ true => still + 1, false => 0 });
             (still >= limit && blocked != told).then(() {
                 stall_report(

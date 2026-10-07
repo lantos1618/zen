@@ -68,6 +68,7 @@ G_TRACE*: usize = 40         // ZEN_ACTOR_TRACE: event buffer address (0 when of
 G_TRACE_N*: usize = 41       // events claimed, possibly past the capacity
 G_TRACE_CAP*: usize = 42     // events the buffer holds
 G_TRACE_T0*: usize = 43      // monotonic ns when tracing started
+G_BLOCKED*: usize = 44       // actors with BLOCKED set, for the watchdog
 // Regions, in bytes.
 G_CENTRAL*: usize = 512      // std.actor.actor_pool's central part
 G_CHUNKS*: usize = 1152      // the registry's chunk table, CHUNKS words

@@ -1,0 +1,17 @@
+// A member's own type parameters are bound to what each call settled, so
+// `u + 1` is refused for the call that passes a `str`.
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Box<T> = {
+    v: T,
+    with* = <U>(self: @Self, u: U) U { u + 1 }
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    b = Box<i32>(v: 1);
+    println("{}", b.with("s"));
+    Ok(0)
+}

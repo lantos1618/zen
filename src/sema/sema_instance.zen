@@ -1,0 +1,390 @@
+// Template-style generic checking. The declaration pass types a generic
+// body once with type variables and cannot judge what they leave open
+// (`x + 1` on a `T`). Every settled instantiation reachable from the
+// instantiations recorded there types the body again with its arguments,
+// so an operation the arguments do not support is reported by sema rather
+// than by a backend. That covers free functions and the members a generic
+// type's body declares. The answers are discarded; lowering still reads
+// the declaration pass.
+
+{ Function, BlockId, TParam } = std.ast
+{ AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, Range } = std.core
+{ TyId, TyNamed } = sema.sema_ty
+{ decl_at } = sema.sema_def
+{ Checker, Ctx, Memos } = sema.sema_check
+{ Inst, InstEdge, MemberEdge, owner_of, has_var, subst } = sema.sema_inst
+{ push_bounds } = sema.sema_decl
+{ member_fn } = sema.sema_call
+{ LocalImpl, local_impls } = sema.sema_supply
+{ param_type, ret_type } = sema.sema_denote
+{ block_type } = sema.sema_type
+{ check_return, statement_tail } = sema.sema_hoist
+
+// Matches `sema_depth`: past this the depth check has already reported.
+INSTANCE_BUDGET: usize = 24
+
+// Earlier faults suppress instance checks, so one cause reports once.
+check_instances* = (c :: Checker) Res<AllocError> {
+    (c.diag_count() > 0).match({
+        true  => Ok,
+        false => c.instance_roots(),
+    })
+}
+
+instance_roots = (c :: Checker) Res<AllocError> {
+    seen  ::= c.alloc.Map<str, bool>();
+    edges ::= c.alloc.Vec<InstEdge>();
+    Range(0, c.edge_count()).loop((h, i) {
+        c.edge_at(i).when_ok((e) { edges.add(e).try() });
+    });
+    members ::= c.alloc.Vec<MemberEdge>();
+    Range(0, c.member_edge_count()).loop((h, i) {
+        c.member_edge_at(i).when_ok((e) { members.add(e).try() });
+    });
+    edges.loop((h, e) { c.instance(e, seen, 0).try() });
+    members.loop((h, e) { c.member_instance(e, seen, 0).try() });
+    Ok;
+}
+
+// The calls one instance check recorded, checked in turn and then dropped
+// so the declaration pass's graph is what `sema_depth` saw.
+follow = (
+    c     :: Checker,
+    emark : usize,
+    mmark : usize,
+    seen  :: Map<str, bool>,
+    depth : usize
+) Res<AllocError> {
+    next ::= c.alloc.Vec<InstEdge>();
+    Range(emark, c.edge_count()).loop((h, i) {
+        c.edge_at(i).when_ok((n) { next.add(n).try() });
+    });
+    c.truncate_edges(emark);
+    members ::= c.alloc.Vec<MemberEdge>();
+    Range(mmark, c.member_edge_count()).loop((h, i) {
+        c.member_edge_at(i).when_ok((n) { members.add(n).try() });
+    });
+    c.truncate_member_edges(mmark);
+    next.loop((h, n) { c.instance(n, seen, depth + 1).try() });
+    members.loop((h, n) { c.member_instance(n, seen, depth + 1).try() });
+    Ok;
+}
+
+instance = (c :: Checker, e: InstEdge, seen :: Map<str, bool>, depth: usize)
+           Res<AllocError> {
+    (depth < INSTANCE_BUDGET && c.settled(e.args)).match({
+        false => Ok,
+        true  => c.tree.decl_at(e.to_decl).match({
+            None  => Ok,
+            Ok(d) => d.kind.match({
+                Function(f) => c.instance_fn(f, e, seen, depth),
+                _           => Ok,
+            }),
+        }),
+    })
+}
+
+instance_fn = (
+    c     :: Checker,
+    f     : Function,
+    e     : InstEdge,
+    seen  :: Map<str, bool>,
+    depth : usize
+) Res<AllocError> {
+    key = c.instance_key(e).try();
+    (f.tparams.len == e.args.len && unseen(seen, key)).match({
+        false => Ok,
+        true  => f.body.match({
+            None  => Ok,
+            Ok(b) => {
+                seen.set(key, true).try();
+                emark = c.edge_count();
+                mmark = c.member_edge_count();
+                c.check_instance(f, b, e).try();
+                c.follow(emark, mmark, seen, depth)
+            },
+        }),
+    })
+}
+
+unseen = (seen: Map<str, bool>, key: str) bool {
+    seen.get(key).match({ Ok(_) => false, None => true })
+}
+
+instance_key = (c :: Checker, e: InstEdge) Res<str, AllocError> {
+    out ::= c.alloc.String("{}:{}", e.to_decl.module, e.to_decl.decl).try();
+    e.args.loop((h, t) { out.fmt(",{}", c.types.key_at(t)).try() });
+    Ok(out.view());
+}
+
+settled = (c: Checker, args: Vec<TyId>) bool {
+    args.find((t) { c.has_var(t) }).match({ Ok(_) => false, None => true })
+}
+
+// One body typed with each parameter bound to its argument. The signature
+// is the declaration's, substituted: a written `Res<T>` keeps the reading
+// it has at the declaration (`T` unbounded means absence).
+check_instance = (c :: Checker, f: Function, body: BlockId, e: InstEdge)
+                 Res<AllocError> {
+    mi      = e.to_decl.module.to_usize();
+    scratch = c.open_scratch();
+    inst   ::= c.alloc.Inst();
+    params ::= c.alloc.Vec<TyId>();
+    c.bind_tparams(f, e.to_tvars).try();
+    ret = c.declared_signature(f, mi, params).try();
+    c.release_tvars(scratch.tmark).try();
+    c.bind_tparams(f, e.args).try();
+    Range(0, e.to_tvars.len).loop((h, i) {
+        e.to_tvars.get(i).when_ok((v) {
+            e.args.get(i).when_ok((arg) { inst.bind(v, arg).try() });
+        });
+    });
+    poison = c.types.unknown().try();
+    f.tparams.loop((h, tp) { c.push_bounds(tp, Ctx(mi, poison)).try() });
+    ret_now = c.subst(ret, inst).try();
+    settled ::= c.alloc.Vec<TyId>();
+    params.loop((h, p) { settled.add(c.subst(p, inst).try()).try() });
+    c.typed_instance(
+        f,
+        body,
+        c.instance_ctx(mi, ret_now, poison, false),
+        settled
+    ).try();
+    c.close_scratch(scratch)
+}
+
+// A member's body typed with its type's parameters bound to the receiver's
+// arguments, its own to what the call settled, and `@Self` the receiver.
+member_instance = (
+    c     :: Checker,
+    e     : MemberEdge,
+    seen  :: Map<str, bool>,
+    depth : usize
+) Res<AllocError> {
+    (depth < INSTANCE_BUDGET && !c.has_var(e.self_ty)
+        && !c.has_var(e.sig)).match({
+        false => Ok,
+        true  => c.types.at(e.self_ty).match({
+            Named(n) => c.instance_member_fn(n, e).try().match({
+                None   => Ok,
+                Ok(fn) => c.member_instance_fn(n, fn, e, seen, depth),
+            }),
+            _        => Ok,
+        }),
+    })
+}
+
+// The body a member edge reaches: the type's own declaration, or the member
+// of the receiver's impl of `bound` that supplies it. A bound's default is
+// not followed.
+instance_member_fn = (c :: Checker, n: TyNamed, e: MemberEdge)
+                     Res<Res<Function>, AllocError> {
+    c.is_unknown(e.bound).match({
+        true  => Ok(c.member_fn(e.self_ty, e.name, e.decl_span)),
+        false => {
+            impls ::= c.alloc.Vec<LocalImpl>();
+            c.local_impls(n, impls).try();
+            Ok(impls.find((li) {
+                li.bound.eq(e.bound) && supplied_fn(li, e.name).match({
+                    Ok(_) => true,
+                    None  => false,
+                })
+            }).match({
+                Ok(li) => supplied_fn(li, e.name),
+                None   => None,
+            }))
+        },
+    })
+}
+
+supplied_fn = (li: LocalImpl, name: str) Res<Function> {
+    li.im.members.find((m) { m.named(name) }).match({
+        Ok(m) => m.kind.match({ Function(fn) => Ok(fn), _ => None }),
+        None  => None,
+    })
+}
+
+member_instance_fn = (
+    c     :: Checker,
+    n     : TyNamed,
+    f     : Function,
+    e     : MemberEdge,
+    seen  :: Map<str, bool>,
+    depth : usize
+) Res<AllocError> {
+    key = c.member_key(e).try();
+    ((n.args.len > 0 || f.tparams.len > 0) && unseen(seen, key)).match({
+        false => Ok,
+        true  => f.body.match({
+            None  => Ok,
+            Ok(b) => {
+                seen.set(key, true).try();
+                emark = c.edge_count();
+                mmark = c.member_edge_count();
+                c.check_member_instance(n, f, b, e).try();
+                c.follow(emark, mmark, seen, depth)
+            },
+        }),
+    })
+}
+
+member_key = (c :: Checker, e: MemberEdge) Res<str, AllocError> {
+    out ::= c.alloc.String(
+        "{}:{}.{}@{}:{}",
+        e.decl.module,
+        e.decl.decl,
+        e.name,
+        e.decl_span.start.line,
+        e.decl_span.start.col
+    ).try();
+    out.fmt(
+        ",{},{},{}",
+        c.types.key_at(e.self_ty),
+        c.types.key_at(e.bound),
+        c.types.key_at(e.sig)
+    ).try();
+    Ok(out.view());
+}
+
+check_member_instance = (
+    c    :: Checker,
+    n    : TyNamed,
+    f    : Function,
+    body : BlockId,
+    e    : MemberEdge
+) Res<AllocError> {
+    mi      = n.decl.module.to_usize();
+    scratch = c.open_scratch();
+    poison  = c.types.unknown().try();
+    c.tree.decl_at(n.decl).match({
+        Ok(d) => d.kind.match({
+            Struct(s) => c.bind_type_tparams(s.tparams, n.args, mi),
+            Enum(en)  => c.bind_type_tparams(en.tparams, n.args, mi),
+            _         => Ok,
+        }),
+        None  => Ok,
+    }).try();
+    owner = c.owner_of(mi, f.name.text).try();
+    f.tparams.loop((h, tp) {
+        v = c.types.var(tp.name.text, owner).try();
+        c.bind_tvar(tp.name.text, e.inst.arg_for(v)).try();
+    });
+    f.tparams.loop((h, tp) { c.push_bounds(tp, Ctx(mi, poison)).try() });
+    c.types.at(e.sig).match({
+        Fn(sig) => c.typed_instance(
+            f,
+            body,
+            c.instance_ctx(mi, sig.ret, e.self_ty, true),
+            sig.params
+        ),
+        _       => Ok,
+    }).try();
+    c.close_scratch(scratch)
+}
+
+bind_type_tparams = (
+    c       :: Checker,
+    tparams : Vec<TParam>,
+    args    : Vec<TyId>,
+    mi      : usize
+) Res<AllocError> {
+    poison = c.types.unknown().try();
+    Range(0, tparams.len).loop((h, i) {
+        tparams.get(i).when_ok((tp) {
+            args.get(i).when_ok((ty) { c.bind_tvar(tp.name.text, ty).try() });
+        });
+    });
+    tparams.loop((h, tp) { c.push_bounds(tp, Ctx(mi, poison)).try() });
+    Ok;
+}
+
+instance_ctx = (
+    c        : Checker,
+    mi       : usize,
+    ret      : TyId,
+    self_ty  : TyId,
+    has_self : bool
+) Ctx {
+    Ctx(
+        module: mi,
+        ret: ret,
+        has_ret: c.types.at(ret).match({ Res(_) => true, _ => false }),
+        self_ty: self_ty,
+        has_self: has_self
+    )
+}
+
+// The shared part: parameters bound, then the body typed and its tail and
+// returns checked as `check_block` does in the declaration pass.
+typed_instance = (
+    c      :: Checker,
+    f      : Function,
+    body   : BlockId,
+    ctx    : Ctx,
+    params : Vec<TyId>
+) Res<AllocError> {
+    poison = c.types.unknown().try();
+    Range(0, f.params.len).loop((h, i) {
+        f.params.get(i).when_ok((p) {
+            c.bind(
+                p.name.text,
+                params.get(i).value_or(poison),
+                p.mutable,
+                true
+            ).try();
+        });
+    });
+    owner = c.owner_of(ctx.module, f.name.text).try();
+    c.enter_owner(owner);
+    typed = c.block_type(body, ctx).try();
+    c.enter_owner("");
+    got = c.statement_tail(body, ctx.ret, typed).try();
+    c.check_return(body, ctx, got).try();
+}
+
+// Scope marks and the memo set an instance check restores on the way out.
+Scratch = {
+    smark: usize,
+    tmark: usize,
+    bmark: usize,
+    rmark: usize,
+    was: Memos,
+}
+
+open_scratch = (c :: Checker) Scratch {
+    Scratch(
+        smark: c.mark(),
+        tmark: c.tvar_mark(),
+        bmark: c.bound_mark(),
+        rmark: c.raised_mark(),
+        was: c.swap_memos(c.fresh_memos())
+    )
+}
+
+close_scratch = (c :: Checker, s: Scratch) Res<AllocError> {
+    c.release_raised(s.rmark);
+    c.swap_memos(s.was);
+    c.release_bounds(s.bmark).try();
+    c.release_tvars(s.tmark).try();
+    c.release(s.smark).try();
+}
+
+bind_tparams = (c :: Checker, f: Function, tys: Vec<TyId>) Res<AllocError> {
+    Range(0, f.tparams.len).loop((h, i) {
+        f.tparams.get(i).when_ok((tp) {
+            tys.get(i).when_ok((ty) { c.bind_tvar(tp.name.text, ty).try() });
+        });
+    });
+    Ok;
+}
+
+// The return and parameter types as the declaration reads them.
+declared_signature = (c :: Checker, f: Function, mi: usize, out :: Vec<TyId>)
+                     Res<TyId, AllocError> {
+    ctx = Ctx(mi, c.types.unknown().try());
+    f.params.loop((h, p) { out.add(c.param_type(p, ctx).try()).try() });
+    c.ret_type(f, ctx)
+}

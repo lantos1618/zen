@@ -19,7 +19,7 @@
 { construct, instantiate, variant_call_type, call_edge } = sema.sema_apply
 { refuse_variant_surplus, call_inst, callback_types_fit, annotated_callback } = sema.sema_apply
 { infer_callback_targs } = sema.sema_apply
-{ Inst, InstEdge, subst, subst_list, unify_list, tparam_vars, zip, owner_of, unify } = sema.sema_inst
+{ Inst, InstEdge, MemberEdge, subst, subst_list, unify_list, tparam_vars, zip, owner_of, unify } = sema.sema_inst
 { is_case } = sema.sema_case
 { Found, Base, base_of, members_of, actor_spawn_ret, ref_of_actor } = sema.sema_member
 { materialize_receiver } = sema.sema_member
@@ -95,6 +95,8 @@ CallCheck = {
     checked_signature :: Res<CallSignature>,
     body :: Res<BlockId>,
     edge :: Res<InstEdge>,
+    member_edge :: Res<MemberEdge>,
+    recv :: Res<TyId>,
 
     run = (self :: @Self, c :: Checker) Res<TyId, AllocError> {
         callee = c.tree.call_callee(self.call);
@@ -515,6 +517,7 @@ CallCheck = {
 
     known_receiver = (self :: @Self, c :: Checker, ac: Access, b: Base)
                      Res<TyId, AllocError> {
+        self.recv = Ok(b.ty);
         found ::= c.alloc.Vec<Found>();
         c.members_of(b.ty, ac.name.text, found).try();
         visible ::= c.alloc.Vec<Found>();
@@ -605,6 +608,14 @@ CallCheck = {
                     (!c.is_unknown(provider)).then(() {
                         self.provider = Ok(provider);
                     });
+                    self.member_edge = c.member_edge(
+                        ac,
+                        f,
+                        self.recv,
+                        ty,
+                        self.inst,
+                        self.node.span
+                    );
                 },
                 _     => (),
             });
@@ -885,7 +896,9 @@ CallCheck = (a: Alloc, id: ExprId, node: Expr, call: Call, ctx: Ctx)
         inst: a.Inst(),
         checked_signature: None,
         body: None,
-        edge: None
+        edge: None,
+        member_edge: None,
+        recv: None
     )
 }
 
@@ -920,6 +933,9 @@ call_type* = (c :: Checker, id: ExprId, node: Expr, call: Call, ctx: Ctx)
     (c.diag_count() == mark).match({
         true  => {
             check.edge.when_ok((edge) { c.note_edge(edge).try(); });
+            check.member_edge.when_ok((edge) {
+                c.note_member_edge(edge).try();
+            });
             c.record_call(
                 id,
                 CallResolution.Checked(CheckedCall(
@@ -2037,7 +2053,7 @@ ambiguous = (c :: Checker, name: str, a: Cand, b: Cand) Res<AllocError> {
 
 // The function a struct or enum body declares under `name`, for its
 // parameter list.
-member_fn = (c: Checker, ty: TyId, name: str, at: Span) Res<Function> {
+member_fn* = (c: Checker, ty: TyId, name: str, at: Span) Res<Function> {
     c.types.at(ty).match({
         Named(n) => c.tree.decl_at(n.decl).match({
             Ok(decl) => decl.body_members().match({
@@ -2064,4 +2080,35 @@ member_span_eq = (a: Span, b: Span) bool {
         && (a.start.col == b.start.col)
         && (a.end.line == b.end.line)
         && (a.end.col == b.end.col)
+}
+
+// A member of a named receiver; `sema_instance` keeps the settled ones.
+// An own member's receiver is its declaring type; a supplied one's is the
+// type the call reached it through.
+member_edge = (
+    c    : Checker,
+    ac   : Access,
+    f    : Found,
+    recv : Res<TyId>,
+    sig  : TyId,
+    inst : Inst,
+    at   : Span
+) Res<MemberEdge> {
+    self_ty = c.is_unknown(f.bound).match({
+        true  => f.decl_owner,
+        false => recv.value_or(f.decl_owner),
+    });
+    c.types.at(self_ty).match({
+        Named(n) => Ok(MemberEdge(
+            decl: n.decl,
+            name: ac.name.text,
+            decl_span: f.decl_span,
+            self_ty: self_ty,
+            bound: f.bound,
+            sig: sig,
+            inst: inst,
+            span: at,
+        )),
+        _        => None,
+    })
 }

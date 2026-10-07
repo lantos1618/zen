@@ -1,0 +1,12 @@
+// An integer literal takes the other operand's type only when that type
+// is a number; `5 != true` once compiled and printed `true`.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", 5 != true);
+    Ok(0)
+}

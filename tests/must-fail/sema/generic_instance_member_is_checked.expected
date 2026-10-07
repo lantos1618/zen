@@ -1,0 +1,2 @@
+a member is resolved on the receiver's type, so a name declared on another type is not a candidate: no `nothing_here` on `i32`
+9:25

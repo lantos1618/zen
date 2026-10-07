@@ -25,12 +25,14 @@ jobs:
       - name: Install verification dependencies
         run: python -m pip install -r tests/requirements.txt
 
-      # The editor package targets Node 20, and grammar/package.json pins the
-      # tree-sitter CLI used by the Makefile's parse gate.
+      # grammar/package.json pins the tree-sitter CLI used by the Makefile's
+      # parse gate. Node 24, not 20: under Node 20 a Uint8Array that JavaScript
+      # kept still reports its old length after the Zen heap grows, which fails
+      # tests/js/cases/bytes_transfer.
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
           package-manager-cache: false
 
       - name: Install tree-sitter CLI

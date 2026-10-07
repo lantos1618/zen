@@ -1,0 +1,12 @@
+// `5 == "five"` compares an integer literal with a string; sema refuses
+// it rather than handing C an incompatible comparison.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", 5 == "five");
+    Ok(0)
+}

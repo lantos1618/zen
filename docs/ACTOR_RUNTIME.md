@@ -17,8 +17,10 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
 - A mailbox holds 256 messages. A send from a turn to a full mailbox waits
   in the sender's outbox: the sender runs no more turns until the receiver has
   taken those messages. A send whose receiver waits, through full mailboxes, on
-  the sender itself goes through instead, so a cycle never wedges. A send from
-  any other thread waits for room. A send to a stopped actor is `Closed`; a
+  the sender itself goes through instead, so a cycle never wedges. A sender
+  waits on one receiver at a time, oldest send first, so the actor it names
+  as waited on is the whole wait-for edge and a cycle that closes after the
+  first wait is still found. A send from any other thread waits for room. A send to a stopped actor is `Closed`; a
   message larger than `MAX_MESSAGE_BYTES` (32 MiB) is `Full`.
 - `stop()` closes admission; accepted messages still run, then `stopped`,
   then Drop of the state and of the actor's allocator, then the memory is
@@ -35,6 +37,22 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   (`ZEN_ACTOR_SYSMON_US`, default 1000; 0 turns it off). The runtime's
   `actor_yield_check` (for compiler-inserted loop checks) then hands the
   worker to another thread.
+- Watchdog: when every worker has been asleep for `ZEN_ACTOR_WATCHDOG_MS`
+  (default 1000; 0 turns it off; needs sysmon) while actors are blocked, or
+  when actors are still wedged at exit, the runtime prints the wait-for graph
+  on stderr: each blocked actor's registry index, mailbox depth and the actor
+  it waits on, then the cycles.
+- Message trace: `ZEN_ACTOR_TRACE=<file>` records each message's path, an
+  event every time it moves: sent into a mailbox, parked in the sender's
+  outbox, released into the mailbox, refused, taken by a worker, plus actors
+  blocking, unblocking and waiting on a receiver, workers sleeping and
+  waking, and loops broken. Events go into a fixed buffer
+  (`ZEN_ACTOR_TRACE_EVENTS`, default 1000000; later events are counted, not
+  kept) and are written at `actor_shutdown`, one line each:
+  `index ns kind from to message`. `from` and `to` are registry indices (0
+  for a thread that is no actor; the worker for take, sleep and wake), and
+  the message is its block's address, unique while it lives. With the
+  variable unset each trace point is one load and a branch.
 
 ## Executable checks
 

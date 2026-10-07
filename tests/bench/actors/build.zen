@@ -77,6 +77,14 @@ build = (b :: Builder) Res<BuildError> {
         { src: Path("soak.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/soak")) }
     ).try();
     b.exe(
+        "chatter",
+        { src: Path("chatter.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/chatter")) }
+    ).try();
+    b.exe(
+        "chatter-asm",
+        { src: Path("chatter.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/chatter")) }
+    ).try();
+    b.exe(
         "run",
         { src: Path("run.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/run")) }
     ).try();

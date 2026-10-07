@@ -16,10 +16,13 @@ program prints one `bench=...` line of `key=value` numbers.
 | `churn` | actors spawned and stopped: each finalised once, rate | `TOTAL` |
 | `preempt` | CPU-bound turns beside latency probes, with and without sysmon | `HOGS`, `PROBES`, `DURATION`, `TURN_MS` |
 | `soak` | everything at once for `DURATION` s, a line per `INTERVAL` s | `DURATION`, `INTERVAL` |
+| `chatter` | random gossip graph under backpressure: wedges, conservation, latency, RSS | `PEERS`, `FANOUT`, `DURATION`, `MAX_BURST`, `FORWARD`, `SLOW`, `DIE` |
 
 Runtime settings: `ZEN_ACTOR_WORKERS`, `ZEN_ACTOR_SYSMON_US` (0 turns
-preemption off), `ZEN_ACTOR_CHECKED=1` (one mapping per block, for
-sanitizer runs).
+preemption off), `ZEN_ACTOR_WATCHDOG_MS` (0 turns the stuck-runtime
+report off), `ZEN_ACTOR_TRACE=<file>` (every message's path, written
+at exit; see docs/ACTOR_RUNTIME.md), `ZEN_ACTOR_CHECKED=1` (one mapping
+per block, for sanitizer runs).
 
 On dev-box, from this directory:
 

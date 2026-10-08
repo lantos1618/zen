@@ -1971,6 +1971,24 @@ Collector.impl(Actor, {
     }
 })
 
+// the protocol form: one `receive` over a message enum. `ref.send(m)`
+// enqueues m for it. a Ref<Msg> names only the protocol: a Ref<A>
+// converts to it wherever A receives Msg, and offers send, stop and
+// join, never A's own behaviors. ctx.me is the running actor's Ref<Self>
+Reply = { Total: u64 }
+Msg   = { Add: u64 | Get: Ref<Reply> }
+
+Counter = { total :: u64 = 0 }
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Msg) {
+        m.match({
+            Add(n)    => { self.total = self.total + n; },
+            Get(back) => back.send(Reply.Total(self.total)).ignore(),
+        })
+    }
+})
+
 
 // what this program expects: a schema, not string fishing.
 // fields are bindings, so defaults use the same syntax as any

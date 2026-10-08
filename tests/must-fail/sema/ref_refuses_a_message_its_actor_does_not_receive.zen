@@ -7,7 +7,7 @@ Other = { Ping | Pong }
 Counter = {}
 
 Counter.impl(Actor, {
-    receive = (self :: @Self, ctx: Context, m: Msg) ()
+    receive = (self :: @Self, ctx: Context, m: Msg) { }
 })
 
 bad = (counter: Ref<Counter>) Ref<Other> { counter }

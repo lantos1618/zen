@@ -21,6 +21,14 @@ build = (b :: Builder) Res<BuildError> {
         { src: Path("pingpong.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/pingpong")) }
     ).try();
     b.exe(
+        "pingpong_msg",
+        { src: Path("pingpong_msg.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/pingpong_msg")) }
+    ).try();
+    b.exe(
+        "pingpong_msg-asm",
+        { src: Path("pingpong_msg.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/pingpong_msg")) }
+    ).try();
+    b.exe(
         "ring",
         { src: Path("ring.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/ring")) }
     ).try();

@@ -43,9 +43,9 @@ feed = (inbox: Ref<Msg>, n: u64) Res<(), ActorError> {
 Error = ActorStartError | ActorError
 
 main = (env: Env) Res<i32, Error> {
-    printer = env.spawn(Printer()).try();
-    counter = env.spawn(Counter()).try();
-    inbox: Ref<Msg> = counter;
+    printer             = env.spawn(Printer()).try();
+    counter             = env.spawn(Counter()).try();
+    inbox: Ref<Msg>     = counter;
     replies: Ref<Reply> = printer;
     inbox.send(Msg.Report(replies)).try();
     feed(counter, 40).try();

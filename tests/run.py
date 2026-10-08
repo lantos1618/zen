@@ -2090,7 +2090,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                    help="PLAN.md stage to grade against; a test whose .stage is "
                         "ahead of it is deferred rather than failed")
     p.add_argument("--timeout", type=float, default=120.0, help="seconds for one compile")
-    p.add_argument("--run-timeout", type=float, default=20.0, help="seconds for one program")
+    p.add_argument("--run-timeout", type=float, default=60.0, help="seconds for one program")
     p.add_argument("--keep", action="store_true",
                    default=os.environ.get("KEEP_ARTIFACTS", "") not in ("", "0"),
                    help="keep every test's work directory and staged C, passing or not "

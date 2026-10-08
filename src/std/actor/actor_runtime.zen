@@ -1338,14 +1338,16 @@ sysmon = (g: Ptr<u8>) {
     loop(() { aload(g, G_STATE) != 2 }, (h) {
         nanosleep_ns(tick).discard();
         (limit > 0).then(() {
-            blocked = quiet(g).match({ true => blocked_actors(g), false => 0 });
-            still   = (blocked > 0).match({ true => still + 1, false => 0 });
-            (still >= limit && blocked != told).then(() {
-                stall_report(
-                    g,
-                    "every worker asleep past ZEN_ACTOR_WATCHDOG_MS"
-                );
-                told = blocked;
+            still = quiet(g).match({ true => still + 1, false => 0 });
+            (still == limit).then(() {
+                blocked = blocked_actors(g);
+                (blocked > 0 && blocked != told).then(() {
+                    stall_report(
+                        g,
+                        "every worker asleep past ZEN_ACTOR_WATCHDOG_MS"
+                    );
+                    told = blocked;
+                });
             });
         });
         Range(0, load(g, G_WORKERS)).loop((i) {

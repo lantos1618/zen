@@ -1,22 +1,52 @@
 // A receiver stops itself while a sender waits for room in its mailbox.
 // The 256 messages it accepted before the stop still run, then `stopped`;
 // the 344 that waited in the sender's outbox were never accepted, so they
-// are refused, and the sender is released to run again.
+// are refused, and the sender is released to run again. The two report to
+// a log actor that prints once it has heard from both, so the receiver
+// stopping and the sender running again may happen in either order.
 
 { Res, Ok, None, loop } = std.core
 { Env } = std.env
 { Actor, Ref, ActorError, ActorStartError, Context } = std.actor
 { println } = std.io
 
+Log = {
+    took :: Res<u64> = None,
+    released :: bool = false,
+}
+
+show = (took: Res<u64>, released: bool) {
+    took.when_ok((n) {
+        released.then(() {
+            println("sender released");
+            println("receiver took {}", n);
+        });
+    });
+}
+
+Log.impl(Actor, {
+    receiver_took = (self :: @Self, ctx: Context, n: u64) {
+        self.took = Ok(n);
+        show(self.took, self.released);
+    }
+
+    sender_released = (self :: @Self, ctx: Context) {
+        self.released = true;
+        show(self.took, self.released);
+    }
+})
+
 Receiver = {
     me :: Res<Ref<Receiver>> = None,
+    log :: Res<Ref<Log>> = None,
     taken :: u64 = 0,
 }
 
 Receiver.impl(Actor, {
-    link = (self :: @Self, ctx: Context, me: Ref<Receiver>) { self.me = Ok(
-        me
-    ); }
+    link = (self :: @Self, ctx: Context, me: Ref<Receiver>, log: Ref<Log>) {
+        self.me  = Ok(me);
+        self.log = Ok(log);
+    }
 
     take = (self :: @Self, ctx: Context, n: u64) {
         self.taken = self.taken + 1;
@@ -25,10 +55,12 @@ Receiver.impl(Actor, {
         );
     }
 
-    stopped = (self :: @Self, ctx: Context) { println(
-        "receiver took {}",
-        self.taken
-    ); }
+    stopped = (self :: @Self, ctx: Context) {
+        self.log.match({
+            Ok(log) => log.receiver_took(self.taken).ignore(),
+            None    => (),
+        });
+    }
 })
 
 Sender = { sent :: u64 = 0 }
@@ -41,17 +73,20 @@ Sender.impl(Actor, {
         });
     }
 
-    report = (self :: @Self, ctx: Context) { println("sender released"); }
+    report = (self :: @Self, ctx: Context, log: Ref<Log>) {
+        log.sender_released().ignore();
+    }
 })
 
 Error = ActorStartError | ActorError
 
 main = (env: Env) Res<i32, Error> {
+    log      = env.spawn(Log()).try();
     receiver = env.spawn(Receiver()).try();
     sender   = env.spawn(Sender()).try();
-    receiver.link(receiver).try();
+    receiver.link(receiver, log).try();
     sender.flood(receiver, 600).try();
-    sender.report().try();
+    sender.report(log).try();
     receiver.join();
     Ok(0)
 }

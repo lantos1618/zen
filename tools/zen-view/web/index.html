@@ -224,7 +224,12 @@ function sync(){
   const upto = live ? T.n : indexAt(cursorNs);
   if (!M || upto < M.upto) M = fresh();
   apply(upto);
-  if (live) cursorNs = endNs();
+  if (live) cursorNs = lastActivity();
+}
+// The last turn's end: a program idling before exit still shows its work.
+function lastActivity(){
+  for (let i = T.n - 1; i >= 0 && i >= T.n - 500000; i--){ const k = T.kind[i]; if (k === K.DONE || k === K.FAIL) return T.ns[i]; }
+  return endNs();
 }
 function windowRate(ns, span){
   const lo = indexAt(ns - span), hi = indexAt(ns); let n = 0;
@@ -297,14 +302,22 @@ function renderTopo(rows){
     shown = rows.filter(r => keepSet.has(r[0].i));
     $("topoNote").textContent = `· busiest ${shown.length} of ${rows.length}`;
   } else $("topoNote").textContent = "";
-  const depth = Math.max(...shown.map(r => r[1])) + 1, cols = new Map();
+  const cols = new Map();
   shown.forEach(([a, d]) => { if (!cols.has(d)) cols.set(d, []); cols.get(d).push(a); });
-  nodes = []; const pos = new Map(), nw = 128, nh = 34;
-  const colW = Math.max(nw + 40, (W - 40) / depth);
-  for (const [d, list] of cols){
-    const step = Math.max(nh + 8, (H - 20) / list.length);
-    list.forEach((a, j) => { const x = 20 + d * colW, y = 10 + j * step + (step - nh) / 2;
-      pos.set(a.i, [x, y]); nodes.push({a, x, y, w:nw, h:nh}); });
+  nodes = []; const pos = new Map(), nw = 112, nh = 30;
+  const put = (a, x, y) => { pos.set(a.i, [x, y]); nodes.push({a, x, y, w:nw, h:nh}); };
+  const fits = [...cols.values()].every(l => l.length * (nh + 8) <= H - 20);
+  if (fits){
+    const colW = Math.max(nw + 60, (W - 40) / cols.size);
+    for (const [d, list] of cols){ const step = (H - 20) / list.length;
+      list.forEach((a, j) => put(a, 20 + d * colW, 10 + j * step + (step - nh) / 2)); }
+  } else {
+    // Too many siblings for a column: spawners in the middle, the rest on a ring.
+    const hubs = shown.filter(r => r[0].kids.length).map(r => r[0]), ring = shown.map(r => r[0]).filter(a => !a.kids.length);
+    const cx = W / 2 - nw / 2, cy = H / 2 - nh / 2;
+    hubs.forEach((a, j) => put(a, cx + (j - (hubs.length - 1) / 2) * (nw + 10), cy));
+    const rx = W / 2 - nw / 2 - 10, ry = H / 2 - nh / 2 - 8;
+    ring.forEach((a, j) => { const th = -Math.PI / 2 + 2 * Math.PI * j / ring.length; put(a, cx + rx * Math.cos(th), cy + ry * Math.sin(th)); });
   }
   const rates = edgeRates(cursorNs, 1e9), maxN = Math.max(1, ...[...M.edges.values()].map(e => e.n));
   for (const e of M.edges.values()){
@@ -312,10 +325,10 @@ function renderTopo(rows){
     const r = rates.get(e.from + ">" + e.to) || 0, hot = e.from === selected || e.to === selected;
     g.strokeStyle = r > 0 ? (hot ? "rgba(76,194,255,.95)" : "rgba(76,194,255,.45)") : "rgba(120,130,150,.18)";
     g.lineWidth = 1 + 3 * Math.sqrt(e.n / maxN);
-    const x1 = p[0] + nw, y1 = p[1] + nh / 2, x2 = q[0], y2 = q[1] + nh / 2;
+    const x1 = p[0] + nw / 2, y1 = p[1] + nh / 2, x2 = q[0] + nw / 2, y2 = q[1] + nh / 2;
     g.beginPath();
-    if (e.from === e.to){ g.arc(x1 - 10, p[1] - 4, 8, 0, Math.PI * 2); }
-    else { const dx = Math.max(40, Math.abs(x2 - x1) / 2); g.moveTo(x1, y1); g.bezierCurveTo(x1 + dx, y1, x2 - dx, y2, x2, y2); }
+    if (e.from === e.to){ g.arc(x1 + nw / 2, p[1], 8, 0, Math.PI * 2); }
+    else { const mx = (x1 + x2) / 2 + (y2 - y1) * .15, my = (y1 + y2) / 2 - (x2 - x1) * .15; g.moveTo(x1, y1); g.quadraticCurveTo(mx, my, x2, y2); }
     g.stroke();
     if (r > 0 && (hot || shown.length < 25)){ g.fillStyle = "#8fd8ff"; g.font = "10px ui-monospace,monospace";
       g.fillText(Math.round(r) + "/s", (x1 + x2) / 2 - 12, (y1 + y2) / 2 - 4); }
@@ -326,10 +339,10 @@ function renderTopo(rows){
     g.lineWidth = a.i === selected ? 2 : 1;
     g.beginPath(); g.roundRect(n.x, n.y, n.w, n.h, 5); g.fill(); g.stroke();
     g.fillStyle = s === "stopped" ? "#666" : "#e6edf3"; g.font = "11px ui-monospace,monospace";
-    g.fillText(label(a.i).slice(0, 18), n.x + 7, n.y + 14);
+    g.fillText(label(a.i).slice(0, 15), n.x + 7, n.y + 13);
     const fill = Math.min(1, (a.mail + a.parked) / meta.bound);
-    g.fillStyle = "#1f2633"; g.fillRect(n.x + 7, n.y + 22, n.w - 14, 4);
-    g.fillStyle = fill > .8 ? "#f85149" : fill > .5 ? "#d29922" : "#4cc2ff"; g.fillRect(n.x + 7, n.y + 22, (n.w - 14) * fill, 4);
+    g.fillStyle = "#1f2633"; g.fillRect(n.x + 7, n.y + 20, n.w - 14, 4);
+    g.fillStyle = fill > .8 ? "#f85149" : fill > .5 ? "#d29922" : "#4cc2ff"; g.fillRect(n.x + 7, n.y + 20, (n.w - 14) * fill, 4);
   }
 }
 

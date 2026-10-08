@@ -8,26 +8,30 @@ tests/corpus/actor/actor_mem_supplies_runtime_pages # UNSUPPORTED: error: unsupp
 tests/corpus/actor/actor_mem_that_refuses_pages_fails_spawn # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/buffer_payload_is_owned_by_receiver # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/concurrent_joins_share_one_worker # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/context_me_is_the_actors_own_ref # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/cycle_closing_after_a_wait_is_broken # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/defers_and_spawn_keep_distinct_c_names # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/dynamic_str_is_copied # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/enum_messages_through_send # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
-tests/corpus/actor/context_me_is_the_actors_own_ref # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
-tests/corpus/actor/message_typed_ref_reaches_receive # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/full_mailbox_releases_waiting_sender # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/generic_spawn_settles_state # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `sp
+tests/corpus/actor/message_typed_ref_reaches_receive # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/multiple_actor_types_keep_distinct_c_names # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/oversized_payload_is_rejected # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/producers_keep_their_order_under_contention # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/ring_forwards_a_token_through_many_actors # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/safe_nested_payload_crosses_actor # UNSUPPORTED: safe_nested_payload_crosses_actor.zen:23:15: error: unsupported by this backend: a type sema did not
+tests/corpus/actor/send_after_delivers_later # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/send_cycle_through_full_mailboxes_completes # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/send_phase_keeps_message_shapes # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/stop_runs_stopped_then_drops_state_once # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/surface_is_usable # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/task_summary/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/trap_ends_only_that_actor # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/try_send_answers_full_instead_of_waiting # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/waiting_sender_of_a_stopped_receiver_is_refused # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/watch_races_stop_and_timers # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/watch_reports_how_an_actor_ended # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/ast/structural_walk_handles_deep_trees # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
 tests/corpus/ast/structural_walk_preserves_owners # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
 tests/corpus/backends/c_ir_pilot/main # UNSUPPORTED: main.zen:4:22: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`

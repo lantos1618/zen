@@ -22,6 +22,7 @@
 { OwnCheck, StoreEffects } = sema.sema_store
 { owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer } = sema.sema_copy
 { decl_at } = sema.sema_def
+{ ref_converts } = sema.sema_bound
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
 // classification, and span identifies the original binding in diagnostics.
@@ -935,7 +936,7 @@ Checker* = {
     // Report a mismatch unless `assignable` accepts the pair.
     coerce* = (self :: @Self, file: str, span: Span, got: TyId, want: TyId,
                name: str) Res<AllocError> {
-        self.assignable(got, want).match({
+        (self.assignable(got, want) || self.ref_converts(got, want).try()).match({
             false => self.mismatch(file, span, got, want, name),
             true  => Ok,
         })

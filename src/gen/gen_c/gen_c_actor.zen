@@ -349,12 +349,18 @@ ActorSend = {
             payload.view(),
             sig
         ).try();
+        entry ::= be.alloc.String().try();
+        entry.fmt("&{}", turn.view()).try();
         ActorSendEmission(
-            send: self,
+            id: self.id,
+            call: self.call,
+            access: self.access,
+            ctx: self.ctx,
+            receiver_ty: self.receiver_ty,
             result_ty: ret,
             signature: sig,
             payload: payload.view(),
-            turn: turn.view(),
+            turn: entry.view(),
         ).write(be, out)
     }
 }
@@ -425,7 +431,11 @@ write_turn = (
 }
 
 ActorSendEmission = {
-    send: ActorSend,
+    id: ExprId,
+    call: Call,
+    access: Access,
+    ctx: Ctx,
+    receiver_ty: TyId,
     result_ty: TyId,
     signature: Vec<TyId>,
     payload: str,
@@ -434,14 +444,8 @@ ActorSendEmission = {
     write = (self: @Self, be :: CBackend, out :: String)
             Res<AllocError> {
         recv_code ::= be.alloc.String().try();
-        expr(
-            be,
-            self.send.access.base,
-            self.send.ctx,
-            self.send.receiver_ty,
-            recv_code
-        ).try();
-        recv = be.temp(self.send.receiver_ty, "actor_ref").try();
+        expr(be, self.access.base, self.ctx, self.receiver_ty, recv_code).try();
+        recv = be.temp(self.receiver_ty, "actor_ref").try();
         be.set_line(recv.view(), recv_code.view()).try();
         message ::= be.fresh_name("actor_payload").try();
         be.fmt(
@@ -462,13 +466,13 @@ ActorSendEmission = {
             ).try();
         });
         slice :: usize = 0;
-        self.send.call.args.loop((h, i, arg) {
+        self.call.args.loop((h, i, arg) {
             ty = self.signature.get(i + 2).match({
                 Ok(t) => t,
                 None  => TyId(index: 0),
             });
             value ::= be.alloc.String().try();
-            expr(be, arg.value, self.send.ctx, ty, value).try();
+            expr(be, arg.value, self.ctx, ty, value).try();
             line ::= be.alloc.String().try();
             line.fmt("{}.zg_arg", message.view()).try();
             line.write_usize(i).try();
@@ -496,7 +500,7 @@ ActorSendEmission = {
         count.write_usize(slices).try();
         send = be.runtime_symbol("actor_send").try();
         be.fmt(
-            "int {} = {}({}.{}, (size_t)&{}, (uint8_t *)&{}, sizeof({}), (uint8_t *){}, {});\n",
+            "int {} = {}({}.{}, (size_t){}, (uint8_t *)&{}, sizeof({}), (uint8_t *){}, {});\n",
             status.view(),
             send.view(),
             recv.view(),
@@ -536,7 +540,10 @@ lower_actor_send* = (
     out      :: String
 ) Res<AllocError> {
     be.message_behavior(actor_ty, a.name.text).try().match({
-        None    => be.unsupported(id, "an unresolved actor behavior", out),
+        None    => a.name.text.eq("send").match({
+            true  => be.lower_message_send(id, c, a, rty, actor_ty, ctx, out),
+            false => be.unsupported(id, "an unresolved actor behavior", out),
+        }),
         Ok(hit) => ActorSend(
             id: id,
             call: c,
@@ -546,6 +553,47 @@ lower_actor_send* = (
             hit: hit,
             ctx: ctx,
         ).lower(be, out),
+    })
+}
+
+// `send` on a message-typed Ref: the payload is the one message and the
+// turn is 0, so the actor runs the receive turn it started with.
+lower_message_send = (
+    be      :: CBackend,
+    id      : ExprId,
+    c       : Call,
+    a       : Access,
+    rty     : TyId,
+    message : TyId,
+    ctx     : Ctx,
+    out     :: String
+) Res<AllocError> {
+    be.need_actor();
+    ret = be.sub(be.check.type_of(id, ctx).try()).try();
+    be.request_type(ret).try();
+    sig ::= be.alloc.Vec<TyId>();
+    [message, message, message].loop((h, ty) { sig.add(ty).try() });
+    be.check.actor_payload_unsafe(message).try().match({
+        true  => be.unsupported(
+            id,
+            "an actor payload without a concrete mailbox transfer",
+            out
+        ),
+        false => {
+            n       = be.next_actor_site();
+            payload = be.write_message_record(n, sig).try();
+            ActorSendEmission(
+                id: id,
+                call: c,
+                access: a,
+                ctx: ctx,
+                receiver_ty: rty,
+                result_ty: ret,
+                signature: sig,
+                payload: payload.view(),
+                turn: "0",
+            ).write(be, out)
+        },
     })
 }
 

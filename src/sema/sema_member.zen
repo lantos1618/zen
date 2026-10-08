@@ -15,6 +15,7 @@
 { check_literal } = sema.sema_trap
 { impl_members, bound_member_types, LocalImpl, local_impls, bound_members } = sema.sema_supply
 { bound_module } = sema.sema_supply
+{ is_actor_type } = sema.sema_bound
 { impl_bound_type, impl_span, prim_named } = sema.sema_supply
 { type_of } = sema.sema_type
 { type_from_ast, param_type } = sema.sema_denote
@@ -475,7 +476,41 @@ behavior_members = (c :: Checker, ty: TyId, name: str, out :: Vec<Found>)
             (out.len == 0 && name.eq("send")).match({
                 true  => c.behavior_set(a, "receive", out),
                 false => Ok,
+            }).try();
+            (out.len == 0 && name.eq("send") && !c.is_actor_type(a).try()).match({
+                true  => c.message_send(ty, a, out),
+                false => Ok,
             })
+        },
+    })
+}
+
+// `send` on a message-typed Ref<M>: one M, the same result as a behavior
+// send. It is declared with the Ref's own members.
+message_send = (c :: Checker, ref_ty: TyId, message: TyId, out :: Vec<Found>)
+               Res<AllocError> {
+    stop ::= c.alloc.Vec<Found>();
+    c.members_of(ref_ty, "stop", stop).try();
+    stop.get(0).match({
+        None  => Ok,
+        Ok(s) => {
+            ps ::= c.alloc.Vec<TyId>();
+            ps.add(message).try();
+            unit  = c.types.prim("()").try();
+            error = c.actor_named_type("ActorError").try().match({
+                None    => c.types.unknown(),
+                Ok(err) => Ok(err),
+            }).try();
+            ret   = c.types.res_failure(unit, error).try();
+            out.add(supplied_found(
+                "send",
+                c.types.fn_ty(ps, ret).try(),
+                s.bound,
+                ref_ty,
+                s.decl_span,
+                s.module,
+                s.span
+            ))
         },
     })
 }

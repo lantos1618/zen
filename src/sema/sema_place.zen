@@ -12,6 +12,7 @@
 { type_from_ast } = sema.sema_denote
 { settle_variant_at } = sema.sema_apply
 { refuse_handle_value } = sema.sema_handle
+{ ref_converts } = sema.sema_bound
 { Res, Ok, None } = std.core
 
 bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
@@ -214,7 +215,8 @@ settled_elem = (c :: Checker, ty: TyId, a: TyArray) Res<TyId, AllocError> {
 check_assign = (c :: Checker, b: Bind, got: TyId, want: TyId, ctx: Ctx)
                Res<AllocError> {
     node = c.tree.expr_at(b.value);
-    (c.assignable(got, want) || c.nullary_settles(got, want)).match({
+    (c.assignable(got, want) || c.nullary_settles(got, want)
+        || c.ref_converts(got, want).try()).match({
         true  => Ok,
         false => c.mismatch(node.span.file, node.span, got, want, ""),
     }).try();

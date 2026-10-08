@@ -1,0 +1,59 @@
+// A Ref<Msg> is typed by the message, not the actor: a Ref<Counter> passes
+// where a Ref<Msg> is wanted because Counter receives Msg, and a reply
+// address in a message names only what the asker receives.
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Reply = { Total: u64 | Empty }
+
+Printer = {}
+
+Printer.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, r: Reply) {
+        r.match({
+            Total(n) => println("total {}", n),
+            Empty    => println("empty"),
+        });
+    }
+})
+
+Msg = { Add: u64 | Report: Ref<Reply> }
+
+Counter = { total :: u64 = 0 }
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Msg) {
+        m.match({
+            Add(n)    => { self.total = self.total + n; },
+            Report(p) => (self.total == 0).match({
+                true  => p.send(Reply.Empty).ignore(),
+                false => p.send(Reply.Total(self.total)).ignore(),
+            }),
+        });
+    }
+})
+
+feed = (inbox: Ref<Msg>, n: u64) Res<(), ActorError> {
+    inbox.send(Msg.Add(n))
+}
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    printer = env.spawn(Printer()).try();
+    counter = env.spawn(Counter()).try();
+    inbox: Ref<Msg> = counter;
+    replies: Ref<Reply> = printer;
+    inbox.send(Msg.Report(replies)).try();
+    feed(counter, 40).try();
+    feed(inbox, 2).try();
+    inbox.send(Msg.Report(printer)).try();
+    inbox.stop();
+    inbox.join();
+    printer.stop();
+    printer.join();
+    Ok(0)
+}

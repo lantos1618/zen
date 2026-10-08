@@ -13,6 +13,7 @@
 { refuse_handle_value } = sema.sema_handle
 { check_dropped_tail, check_discarded } = sema.sema_effect
 { type_of } = sema.sema_type
+{ ref_converts } = sema.sema_bound
 { Res, Ok, None, loop } = std.core
 
 can_hoist* = (c: Checker, got: TyId, want: TyId) bool {
@@ -26,7 +27,7 @@ can_hoist* = (c: Checker, got: TyId, want: TyId) bool {
 
 hoist_check = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
                Res<AllocError> {
-    c.assignable(got, want).match({
+    (c.assignable(got, want) || c.ref_converts(got, want).try()).match({
         true  => Ok,
         false => c.hoist_into(file, span, got, want),
     })
@@ -191,7 +192,7 @@ tail_fits = (c :: Checker, blk: Block, id: ExprId, got: TyId, want: TyId)
 return_fits = (c :: Checker, blk: Block, id: ExprId, got: TyId, want: TyId)
               Res<AllocError> {
     node = c.tree.expr_at(id);
-    c.assignable(got, want).match({
+    (c.assignable(got, want) || c.ref_converts(got, want).try()).match({
         true  => c.check_literal(id, want),
         false => c.refuse_return(blk, node, got, want),
     })

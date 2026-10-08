@@ -9,7 +9,7 @@
 { Def, decl_at } = sema.sema_def
 { SemaFault, NameFault, TypeFault, ExportFault } = sema.sema_diag
 { Checker, UNRESOLVED } = sema.sema_check
-{ opaque, Found, members_of, member_type, named_as } = sema.sema_member
+{ opaque, Found, members_of, member_type, named_as, ref_of_actor } = sema.sema_member
 { bound_members, bound_member_type, has_member, impl_span, impl_bound_type } = sema.sema_supply
 { storage_seat_name, LocalImpl, local_impls, prim_named } = sema.sema_supply
 { Cand, TBound, is_tvar, omittable } = sema.sema_cand
@@ -701,4 +701,79 @@ eq_needs_impl = (c :: Checker, b: Binary, operand: TyId)
             found: operand
         ))
     )
+}
+
+// A Ref<A> stands in for a Ref<M> when actor A receives M: a message-typed
+// Ref reaches the actor's receive turn.
+ref_converts* = (c :: Checker, got: TyId, want: TyId) Res<bool, AllocError> {
+    c.ref_of_actor(got).try().match({
+        None  => Ok(false),
+        Ok(a) => c.ref_of_actor(want).try().match({
+            None  => Ok(false),
+            Ok(m) => c.types.at(a).match({
+                Named(n) => c.receives_message(n, a, m),
+                _        => Ok(false),
+            }),
+        }),
+    })
+}
+
+// Whether `ty` implements Actor.
+is_actor_type* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+    c.types.at(ty).match({
+        Named(n) => {
+            impls ::= c.alloc.Vec<LocalImpl>();
+            c.local_impls(n, impls).try();
+            Ok(impls.find((li) { c.actor_bound(li.bound) }).match({
+                Ok(_) => true,
+                None  => false,
+            }))
+        },
+        _        => Ok(false),
+    })
+}
+
+receives_message = (
+    c       :: Checker,
+    n       : TyNamed,
+    ty      : TyId,
+    message : TyId
+) Res<bool, AllocError> {
+    impls ::= c.alloc.Vec<LocalImpl>();
+    c.local_impls(n, impls).try();
+    hit ::= false;
+    impls.loop((h, li) {
+        c.actor_bound(li.bound).then(() {
+            li.im.members.loop((h2, m) {
+                m.named("receive").then(() {
+                    c.receive_message(m, n, ty).try().match({
+                        None    => (),
+                        Ok(got) => c.same_type(got, message).then(() { hit = true; }),
+                    });
+                });
+            });
+        });
+    });
+    Ok(hit)
+}
+
+// The message type of a one-message `receive` behavior.
+receive_message = (c :: Checker, m: Member, n: TyNamed, ty: TyId)
+                  Res<Res<TyId>, AllocError> {
+    m.kind.match({
+        Function(f) => f.body.match({
+            None  => Ok(None),
+            Ok(_) => {
+                full = c.member_type(m, n.decl.module.to_usize(), ty).try();
+                Ok(c.types.at(full).match({
+                    Fn(sig) => (sig.params.len == 3).match({
+                        true  => sig.params.get(2),
+                        false => None,
+                    }),
+                    _       => None,
+                }))
+            },
+        }),
+        _           => Ok(None),
+    })
 }

@@ -10,7 +10,7 @@
 { Checker, Ctx, UNRESOLVED } = sema.sema_check
 { tparam_vars, push_tparams } = sema.sema_inst
 { has_var, unify, subst, Inst } = sema.sema_inst
-{ satisfies_bound } = sema.sema_bound
+{ satisfies_bound, ref_converts } = sema.sema_bound
 { can_hoist } = sema.sema_hoist
 { type_from_ast, param_type } = sema.sema_denote
 { pack_elem, pack_slot } = sema.sema_vararg
@@ -341,7 +341,7 @@ fits = (c :: Checker, a: Actual, p: TyId) Res<bool, AllocError> {
 }
 
 value_fits = (c :: Checker, a: Actual, p: TyId) Res<bool, AllocError> {
-    (c.assignable(a.ty, p) || c.can_hoist(a.ty, p)).match({
+    (c.assignable(a.ty, p) || c.can_hoist(a.ty, p) || c.ref_converts(a.ty, p).try()).match({
         true  => Ok(true),
         false => c.satisfies_bound(a.ty, p),
     })

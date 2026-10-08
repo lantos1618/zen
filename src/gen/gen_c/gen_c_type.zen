@@ -22,6 +22,8 @@
 { sub_with, enter_struct_tparams, leave_tparams } = gen.gen_c.gen_c_mono
 { intern_named } = gen.gen_c.gen_c_mono
 { request_slots } = gen.gen_c.gen_c_fat
+{ ref_of_actor } = gen.gen_c.gen_c_actor
+{ write_qname } = gen.gen_c.gen_c_layout
 
 // spelling
 
@@ -113,8 +115,30 @@ maybe_named_ctype = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
         Ok(s) => be.write_native_record(n, s, out),
         None  => be.foreign_binding(n).match({
             Ok(_) => out.add("int"),
-            None  => be.named_ctype(id, out),
+            None  => be.named_ctype(be.one_ref(id, n).try(), out),
         }),
+    })
+}
+
+canon_ref* = (be :: CBackend, id: TyId) Res<TyId, AllocError> {
+    be.types().at(id).match({
+        Named(n) => be.one_ref(id, n),
+        _        => Ok(id),
+    })
+}
+
+// Every Ref is `{ id }`, so all of them share one C struct: a Ref<A>
+// passes where a Ref<M> is wanted with no conversion at any site.
+one_ref = (be :: CBackend, id: TyId, n: TyNamed) Res<TyId, AllocError> {
+    be.ref_of_actor(id).try().match({
+        None  => Ok(id),
+        Ok(_) => {
+            args ::= be.alloc.Vec<TyId>();
+            args.add(be.check.types.prim("u64").try()).try();
+            qname ::= be.alloc.String().try();
+            be.write_qname(qname, n).try();
+            be.check.types.named(n.decl, qname.view(), n.name, args)
+        },
     })
 }
 

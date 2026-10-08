@@ -23,7 +23,7 @@
 
 { Vec } = std.collections
 { String, str } = std.text
-{ Res, Ok, None, Range } = std.core
+{ Res, Ok, None, Range, Err } = std.core
 { ExprId, Call } = std.ast
 { Span, nowhere } = std.source
 { TyId, Def, DeclId, CheckedCall } = sema.sema
@@ -508,21 +508,24 @@ send = (
     span     : Span
 )
        Res<Value, LowerError> {
-    hook   = lo.behavior(actor_ty, name, c.args.len + 2, span).match({
+    hook = lo.behavior(actor_ty, name, c.args.len + 2, span).match({
         Ok(h) => Ok(h),
         None  => name.eq("send").match({
             true  => lo.behavior(actor_ty, "receive", c.args.len + 2, span),
             false => None,
         }),
-    }).ok_or(unsupported(span, "an unresolved actor behavior")).try();
-    layout = lo.layout_of(actor_ty, span).try();
+    });
+    // `send` on a message-typed Ref names no behavior: its one message runs
+    // the receive turn the actor started with.
+    message = name.eq("send") && c.args.len == 1;
+    send_target(hook.match({ Ok(_) => true, None => message }), span).try();
     fields  ::= lo.alloc.Vec<FieldAt>();
     buffers ::= lo.alloc.Vec<bool>();
     at      :: usize = 0;
     widest  :: usize = 1;
     strs    :: usize = 0;
     c.args.loop((h, i, arg) {
-        formal = lo.param_type(hook, i + 2).try();
+        formal = lo.send_formal(hook, actor_ty, i).try();
         actual = lo.type_of(arg.value).try();
         lo.transferable(formal, actual, span).try();
         class  = lo.class_of(formal).try();
@@ -583,21 +586,12 @@ send = (
             slice = slice + 1;
         });
     });
-    index      = lo.enqueue_synth(
-        lo.stand_in(span).try(),
-        Synth.Actor(ActorEntry(
-            kind: EntryKind.Turn,
-            layout: layout,
-            hook: Ok(hook),
-            fields: fields,
-            buffers: buffers
-        ))
-    ).try();
+    turn       = lo.send_turn(hook, actor_ty, fields, buffers, span).try();
     usize_ty   = lo.prim("usize").try();
     pointer_ty = lo.byte_pointer().try();
     no_slices  = lo.word_const(Scalar.Ptr, 0).try();
     send_args ::= lo.one(cell).try();
-    send_args.more(lo.code_of(index).try()).try();
+    send_args.more(turn).try();
     send_args.more(Source.Computed(Value(slot: data, ty: pointer_ty))).try();
     send_args.more(Source.Computed(Value(
         slot: lo.word_const(Scalar.U64, size.to_i64_bits()).try(),
@@ -621,6 +615,52 @@ send = (
     lo.jump(done).try();
     lo.start(done);
     Ok(out)
+}
+
+send_target = (found: bool, span: Span) Res<LowerError> {
+    found.match({
+        true  => Ok,
+        false => Err(unsupported(span, "an unresolved actor behavior")),
+    })
+}
+
+send_formal = (lo :: Lowerer, hook: Res<Callee>, message: TyId, i: usize)
+              Res<TyId, LowerError> {
+    hook.match({
+        Ok(h) => lo.param_type(h, i + 2),
+        None  => Ok(message),
+    })
+}
+
+// The turn a send names: a behavior's own entry, or 0 for the receive turn.
+send_turn = (
+    lo       :: Lowerer,
+    hook     : Res<Callee>,
+    actor_ty : TyId,
+    fields   : Vec<FieldAt>,
+    buffers  : Vec<bool>,
+    span     : Span
+) Res<Source, LowerError> {
+    hook.match({
+        None  => Ok(Source.Computed(Value(
+            slot: lo.word_const(Scalar.U64, 0).try(),
+            ty: lo.prim("usize").try()
+        ))),
+        Ok(h) => {
+            layout = lo.layout_of(actor_ty, span).try();
+            index  = lo.enqueue_synth(
+                lo.stand_in(span).try(),
+                Synth.Actor(ActorEntry(
+                    kind: EntryKind.Turn,
+                    layout: layout,
+                    hook: Ok(h),
+                    fields: fields,
+                    buffers: buffers
+                ))
+            ).try();
+            lo.code_of(index)
+        },
+    })
 }
 
 // When `status` is `code`, store Ok(()) or Err(reason) in `out` and leave.

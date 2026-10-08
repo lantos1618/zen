@@ -2,14 +2,16 @@
 // nodes come from size classes, so a steady stream of messages allocates
 // nothing from the kernel.
 //
-// Each thread that runs actors keeps its own free list per class (`Heap`),
-// touched without atomics. A block may be freed by any thread: it goes onto
-// that thread's own list, whichever thread carved it. A list that grows
-// past two batches hands one batch (BATCH blocks, linked) to the class's
-// central stack under a spin lock, and a thread whose list is empty takes a
-// batch back before it carves new memory. So a producer whose messages are
-// freed by a consumer on another core pays one lock per BATCH messages,
-// not an atomic per message: remote frees are batched.
+// Each thread that runs actors keeps its own stack of free block addresses
+// per class (`Heap`), touched without atomics. A block may be freed by any
+// thread: its address goes onto that thread's own stack, whichever thread
+// carved it, and nothing is written into the block, so a block freed by a
+// consumer is not pulled back across cores until its next owner writes it.
+// A full stack hands its oldest BATCH addresses, copied into a batch array,
+// to the class's central stack under a spin lock, and a thread whose stack
+// is empty takes a batch back before it carves new memory. So a producer
+// whose messages are freed by a consumer on another core pays one lock per
+// BATCH messages, not an atomic per message: remote frees are batched.
 //
 // Blocks carry no header. Memory comes from the kernel in 2 MiB spans cut
 // into 64 KiB slabs aligned to 64 KiB, and a slab's first 64 bytes record
@@ -79,29 +81,38 @@ class_of = (bytes: usize) usize {
     })
 }
 
-// A thread's cache: per class, its free list, the list's length, and the
-// slab it is carving (next block, end). Four words per class.
-HEAP_WORDS: usize = 4
-HEAP_BYTES*: usize = 1152
+// A thread's cache: per class, how many free blocks it holds, the slab it
+// is carving (next block, end), a spare batch array, then a stack of up to
+// CAP free block addresses. Freeing writes the address here, not into the
+// block, so a block freed on one core is not read again before its next
+// owner writes it.
+CAP: usize = 128
+HEAP_WORDS: usize = 132
+HEAP_BYTES*: usize = 38016
 
-heap_free = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+heap_count = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
     heap,
     c * HEAP_WORDS
 ) }
 
-heap_count = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+heap_next = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
     heap,
     c * HEAP_WORDS + 1
 ) }
 
-heap_next = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+heap_end = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
     heap,
     c * HEAP_WORDS + 2
 ) }
 
-heap_end = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+heap_spare = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
     heap,
     c * HEAP_WORDS + 3
+) }
+
+heap_stack = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
+    heap,
+    c * HEAP_WORDS + 4
 ) }
 
 // The process-wide part, inside the runtime's globals: per class a lock
@@ -109,7 +120,7 @@ heap_end = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
 //
 //     +0                  per class: lock (u32), then the batch stack
 //     +CLASSES * 16       the span lock, the next slab, the span's end
-CENTRAL_BYTES*: usize = 608
+CENTRAL_BYTES*: usize = 624
 
 central_lock = (central: Ptr<u8>, c: usize) Ptr<u32> { central.offset(
     c * 16
@@ -136,6 +147,21 @@ set_checked* = (central: Ptr<u8>, on: bool) {
 }
 
 checked = (central: Ptr<u8>) bool { load(central, CLASSES * 2 + 3) != 0 }
+
+// Batch arrays not holding a batch: a lock, then a stack linked through
+// each array's first word.
+empty_lock = (central: Ptr<u8>) Ptr<u32> { word_at(
+    central,
+    CLASSES * 2 + 4
+).to<u32>() }
+
+empty_stack = (central: Ptr<u8>) Ptr<usize> { word_at(
+    central,
+    CLASSES * 2 + 5
+) }
+
+// A batch array: the link, then BATCH block addresses.
+ARRAY_BYTES: usize = 528
 
 // `bytes` of fresh zeroed memory starting on an `align` boundary; null
 // when the kernel refuses.
@@ -196,14 +222,12 @@ alloc* = (heap: Ptr<u8>, central: Ptr<u8>, bytes: usize) Ptr<u8> {
     (bytes > LARGEST || checked(central)).match({
         true  => alloc_large(bytes),
         false => {
-            c    = class_of(bytes);
-            head = heap_free(heap, c).read(0);
-            (head != 0).match({
+            c = class_of(bytes);
+            n = heap_count(heap, c).read(0);
+            (n > 0).match({
                 true  => {
-                    block = pointer_at(head);
-                    heap_free(heap, c).write(0, load(block, 0));
-                    heap_count(heap, c).write(0, heap_count(heap, c).read(0) - 1);
-                    block
+                    heap_count(heap, c).write(0, n - 1);
+                    pointer_at(heap_stack(heap, c).read(n - 1))
                 },
                 false => refill(heap, central, c),
             })
@@ -211,23 +235,76 @@ alloc* = (heap: Ptr<u8>, central: Ptr<u8>, bytes: usize) Ptr<u8> {
     })
 }
 
-// The class's list is empty: take a batch from the central stack, else
+// The class's stack is empty: take a batch from the central stack, else
 // carve the next block of the thread's slab, else start a new slab.
 refill = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) Ptr<u8> {
     lock(central_lock(central, c));
     batch = central_stack(central, c).read(0);
     (batch != 0).then(() {
-        central_stack(central, c).write(0, load(pointer_at(batch), 1));
+        central_stack(central, c).write(0, load(pointer_at(batch), 0));
     });
     unlock(central_lock(central, c));
     (batch != 0).match({
         true  => {
-            block = pointer_at(batch);
-            heap_free(heap, c).write(0, load(block, 0));
+            array = pointer_at(batch);
+            stack = heap_stack(heap, c);
+            Range(0, BATCH).loop((i) { stack.write(i, load(array, i + 1)); });
+            keep_array(heap, central, c, array);
             heap_count(heap, c).write(0, BATCH - 1);
-            block
+            pointer_at(stack.read(BATCH - 1))
         },
         false => carve(heap, central, c),
+    })
+}
+
+// An emptied batch array: the class's spare, or back to the shared stack.
+keep_array = (heap: Ptr<u8>, central: Ptr<u8>, c: usize, array: Ptr<u8>) {
+    (heap_spare(heap, c).read(0) == 0).match({
+        true  => heap_spare(heap, c).write(0, address_of(array)),
+        false => {
+            lock(empty_lock(central));
+            store(array, 0, empty_stack(central).read(0));
+            empty_stack(central).write(0, address_of(array));
+            unlock(empty_lock(central));
+        },
+    });
+}
+
+// An array to hand a batch over in: the class's spare, else a shared one,
+// else a fresh slab cut into arrays. Null when out of memory.
+take_array = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) Ptr<u8> {
+    spare = heap_spare(heap, c).read(0);
+    (spare != 0).match({
+        true  => { heap_spare(heap, c).write(0, 0); pointer_at(spare) },
+        false => {
+            lock(empty_lock(central));
+            top = empty_stack(central).read(0);
+            (top != 0).then(
+                () { empty_stack(central).write(0, load(pointer_at(top), 0)); }
+            );
+            unlock(empty_lock(central));
+            (top != 0).match({
+                true  => pointer_at(top),
+                false => {
+                    slab = new_slab(central);
+                    (!slab.is_null()).then(() {
+                        store(slab, 0, LARGE - 1);
+                        Range(1, (SLAB_BYTES - SLAB_HEADER) / ARRAY_BYTES).loop((i) {
+                            keep_array(
+                                heap,
+                                central,
+                                c,
+                                slab.offset(SLAB_HEADER + i * ARRAY_BYTES)
+                            );
+                        });
+                    });
+                    slab.is_null().match({
+                        true  => slab,
+                        false => slab.offset(SLAB_HEADER),
+                    })
+                },
+            })
+        },
     })
 }
 
@@ -275,35 +352,40 @@ slab_of = (block: Ptr<u8>) Ptr<u8> {
     pointer_at(address_of(block) / SLAB_BYTES * SLAB_BYTES)
 }
 
-// Return a block to this thread's list (any thread may free any block).
+// Return a block to this thread's stack (any thread may free any block).
 free* = (heap: Ptr<u8>, central: Ptr<u8>, block: Ptr<u8>) {
     slab = slab_of(block);
     c    = load(slab, 0);
     (c == LARGE).match({
         true  => { munmap(address_of(slab), load(slab, 1)).discard(); },
         false => {
-            store(block, 0, heap_free(heap, c).read(0));
-            heap_free(heap, c).write(0, address_of(block));
-            n = heap_count(heap, c).read(0) + 1;
-            heap_count(heap, c).write(0, n);
-            (n >= BATCH * 2).then(() { give_batch(heap, central, c); });
+            full = heap_count(heap, c).read(0) == CAP && !give_batch(heap, central, c);
+            // Out of memory for a batch array: the block is lost, not reused.
+            (!full).then(() {
+                n = heap_count(heap, c).read(0);
+                heap_stack(heap, c).write(n, address_of(block));
+                heap_count(heap, c).write(0, n + 1);
+            });
         },
     });
 }
 
-// Hand the first BATCH blocks of the list to the central stack.
-give_batch = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) {
-    first = heap_free(heap, c).read(0);
-    last ::= pointer_at(first);
-    Range(1, BATCH).loop((i) { last = pointer(last, 0); });
-    heap_free(heap, c).write(0, load(last, 0));
-    heap_count(heap, c).write(0, heap_count(heap, c).read(0) - BATCH);
-    store(last, 0, 0);
-    batch = pointer_at(first);
-    lock(central_lock(central, c));
-    store(batch, 1, central_stack(central, c).read(0));
-    central_stack(central, c).write(0, first);
-    unlock(central_lock(central, c));
+// Hand the oldest BATCH blocks of the stack to the central stack, keeping
+// the most recently freed (likeliest cached) ones. False when no array
+// could be had.
+give_batch = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) bool {
+    array = take_array(heap, central, c);
+    (!array.is_null()).then(() {
+        stack = heap_stack(heap, c);
+        Range(0, BATCH).loop((i) { store(array, i + 1, stack.read(i)); });
+        Range(0, CAP - BATCH).loop((i) { stack.write(i, stack.read(i + BATCH)); });
+        heap_count(heap, c).write(0, CAP - BATCH);
+        lock(central_lock(central, c));
+        store(array, 0, central_stack(central, c).read(0));
+        central_stack(central, c).write(0, address_of(array));
+        unlock(central_lock(central, c));
+    });
+    !array.is_null()
 }
 
 // A result the caller has no use for.

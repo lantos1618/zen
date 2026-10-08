@@ -11,9 +11,11 @@
 
 // Words of the 256-byte process block the runtime owns, after std.sys's
 // exit hook in word 0: a once-word (0 absent, 1 being made, 2 ready,
-// 3 failed) and the globals' address.
+// 3 failed, 4 taking `env.actor_mem`), the globals' address, and the
+// address of the Mem every runtime page comes from (0: the kernel).
 PB_ONCE*: usize = 1
 PB_GLOBALS*: usize = 2
+PB_MEM*: usize = 3
 
 // ---------------------------------------------------------------------
 // limits

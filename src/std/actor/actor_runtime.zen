@@ -40,15 +40,16 @@
 { atomic_swap_usize, atomic_load_u32, atomic_cas_u32, atomic_store_u32 } = std.sys
 { atomic_store_release_usize } = std.sys
 { thread_word, set_thread_word, process_block, call_entry, guarded_call, pointer_at, address_of } = std.sys
-{ cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, mmap, map_private_anonymous, write_all } = std.sys
+{ cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, write_all } = std.sys
 { openat, close, at_fdcwd, o_wronly, o_creat, o_trunc, o_cloexec } = std.sys
 { str } = std.text
 { thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
 { cond_wait, cond_signal, cond_broadcast, parker_init, park, unpark, park_clear } = std.sys.sys_thread
 { word_at, load, store, lock, unlock, alloc, free, set_checked } = std.actor.actor_pool
+{ grab, kernel, actor_mem } = std.actor.actor_pool
 { slot_at, slot_of_ref, take_slot, give_slot } = std.actor.actor_registry
 { MAX_MESSAGE_BYTES } = std.actor.actor_limits
-{ PB_ONCE, PB_GLOBALS, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND } = std.actor.actor_layout
+{ PB_ONCE, PB_GLOBALS, PB_MEM, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND } = std.actor.actor_layout
 { G_STATE, G_WORKERS, G_WORKER_BASE, G_IDLE, G_SPINNING, G_SLEEPING, G_DETACHED } = std.actor.actor_layout
 { G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
 { G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
@@ -201,15 +202,9 @@ local = () Ptr<u8> {
     })
 }
 
-// Zeroed memory straight from the kernel (globals, locals, workers); null
-// when refused.
-map = (bytes: usize) Ptr<u8> {
-    got = mmap(0, bytes, 3, map_private_anonymous(), -1, 0);
-    (got < 0).match({
-        true  => null_ptr<u8>(),
-        false => at(got.to_usize().value_or(0)),
-    })
-}
+// Zeroed memory the runtime keeps (globals, locals, workers), from the
+// actor Mem or the kernel; null when refused.
+map = (bytes: usize) Ptr<u8> { grab(bytes, 8) }
 
 heap_of = (l: Ptr<u8>) Ptr<u8> { l.offset(L_HEAP) }
 
@@ -1418,7 +1413,13 @@ actor_thread* = (arg: Ptr<u8>) {
 // which becomes the process's exit hook. Null when it cannot be made.
 runtime = (entry: usize, exit: usize) Ptr<u8> {
     block = process_block();
-    (atomic_cas_usize(word_at(block, PB_ONCE), 0, 1) == 0).then(() {
+    // 4 is an `env.actor_mem` in progress on another thread: wait it out.
+    seen: Res<usize> = loop<usize>((h) {
+        was = atomic_cas_usize(word_at(block, PB_ONCE), 0, 1);
+        (was != 4).then(() { h.break(was); });
+        nanosleep_ns(1000).discard();
+    });
+    (seen.value_or(1) == 0).then(() {
         g  = map(GLOBALS_BYTES);
         ok = !g.is_null() && setup(g, entry);
         ok.then(() {
@@ -1435,6 +1436,33 @@ runtime = (entry: usize, exit: usize) Ptr<u8> {
         (h) { nanosleep_ns(1000).discard(); }
     );
     globals()
+}
+
+// A home for `env.actor_mem`'s implementor: zeroed kernel memory that is
+// never handed back, so it outlives main (a refused call leaks its page).
+// Null when refused.
+actor_keep* = (bytes: usize) Ptr<u8> { kernel((bytes + 7) / 8 * 8 + 8) }
+
+// `env.actor_mem`: the `bytes`-byte Mem at `mem` becomes where every
+// later runtime page comes from. False once the runtime is made, or being
+// made, or after a Mem was already given.
+actor_use_mem* = (bytes: usize, mem: Ptr<u8>) bool {
+    block = process_block();
+    (atomic_cas_usize(word_at(block, PB_ONCE), 0, 4) == 0).match({
+        false => false,
+        true  => {
+            cell = actor_mem().is_null().match({
+                true  => map(bytes),
+                false => null_ptr<u8>(),
+            });
+            (!cell.is_null()).then(() {
+                cell.copy_from(mem, bytes);
+                atomic_store_usize(word_at(block, PB_MEM), addr(cell));
+            });
+            atomic_store_usize(word_at(block, PB_ONCE), 0);
+            !cell.is_null()
+        },
+    })
 }
 
 // A positive number from the environment, or `fallback`.

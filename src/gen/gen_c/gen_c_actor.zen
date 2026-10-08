@@ -33,6 +33,7 @@
 { passes_address } = gen.gen_c.gen_c_borrow
 { ty_at } = sema.sema_cand
 { fat_value } = gen.gen_c.gen_c_fat
+{ arg_text } = gen.gen_c.gen_c_arg
 { def_type, type_of } = sema.sema_type
 { unsupported } = gen.gen_c.gen_c_report
 
@@ -733,6 +734,109 @@ lower_actor_spawn* = (
             ),
         }),
     })
+}
+
+// `env.actor_mem(mem)`, as gen_lower_actor's `use_actor_mem`: the
+// implementor copied into memory the runtime never hands back, and the
+// runtime given a Mem on that copy.
+lower_actor_mem* = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    ctx : Ctx,
+    out :: String
+) Res<AllocError> {
+    be.need_actor();
+    ret = be.sub(be.check.type_of(id, ctx).try()).try();
+    be.named_type_at("Mem", "std.mem.mem_arena.Mem").try().match({
+        None       => be.unsupported(id, "std.mem.Mem", out),
+        Ok(mem_ty) => c.args.get(0).match({
+            None      => be.unsupported(id, "env.actor_mem without a Mem", out),
+            Ok(first) => {
+                given = be.sub(be.check.type_of(first.value, ctx).try()).try();
+                [ret, mem_ty, given].loop((h, ty) { be.request_type(ty).try() });
+                value = be.temp(given, "actor_mem").try();
+                text ::= be.alloc.String().try();
+                be.arg_text(c, 0, given, ctx, text).try();
+                be.set_line(value.view(), text.view()).try();
+                dst    = be.temp(ret, "t").try();
+                handle = be.temp(mem_ty, "actor_mem").try();
+                (given == mem_ty).match({
+                    true  => {
+                        be.set_line(handle.view(), value.view()).try();
+                        be.write_use_mem(ret, handle.view(), dst.view()).try();
+                    },
+                    false => be.write_kept_mem(
+                        KeptMem(
+                            ret: ret,
+                            mem_ty: mem_ty,
+                            given: given,
+                            value: value.view(),
+                            handle: handle.view(),
+                            dst: dst.view(),
+                        )
+                    ).try(),
+                });
+                out.add(dst.view())
+            },
+        }),
+    })
+}
+
+KeptMem = {
+    ret: TyId,
+    mem_ty: TyId,
+    given: TyId,
+    value: str,
+    handle: str,
+    dst: str,
+}
+
+write_kept_mem = (be :: CBackend, k: KeptMem) Res<AllocError> {
+    keep = be.runtime_symbol("actor_keep").try();
+    kept ::= be.fresh_name("actor_kept").try();
+    g    ::= be.alloc.String().try();
+    be.ctype(k.given, g).try();
+    be.fmt(
+        "{} *{} = ({} *){}(sizeof({}));\n",
+        g.view(),
+        kept.view(),
+        g.view(),
+        keep.view(),
+        g.view()
+    ).try();
+    be.fmt("if (!{}) {{\n", kept.view()).try();
+    be.indent();
+    be.write_assign_err(k.ret, "OutOfMemory", k.dst).try();
+    be.dedent();
+    be.writeln("} else {").try();
+    be.indent();
+    be.fmt("*{} = {};\n", kept.view(), k.value).try();
+    fat ::= be.alloc.String().try();
+    be.fat_value(kept.view(), k.given, k.mem_ty, fat).try();
+    be.set_line(k.handle, fat.view()).try();
+    be.write_use_mem(k.ret, k.handle, k.dst).try();
+    be.dedent();
+    be.writeln("}")
+}
+
+write_use_mem = (be :: CBackend, ret: TyId, handle: str, dst: str)
+                Res<AllocError> {
+    take = be.runtime_symbol("actor_use_mem").try();
+    be.fmt(
+        "if ({}(sizeof({}), (uint8_t *)&{})) {{\n",
+        take.view(),
+        handle,
+        handle
+    ).try();
+    be.indent();
+    be.write_assign_ok_unit(ret, dst).try();
+    be.dedent();
+    be.writeln("} else {").try();
+    be.indent();
+    be.write_assign_err(ret, "Unavailable", dst).try();
+    be.dedent();
+    be.writeln("}")
 }
 
 resolve_actor_spawn = (be :: CBackend, spawn: ActorSpawn, out :: String)

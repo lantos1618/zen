@@ -1,0 +1,4 @@
+second actor_mem: unavailable
+total 42
+runtime pages from the Mem: true
+actor_mem after spawn: unavailable

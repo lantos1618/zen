@@ -1257,6 +1257,19 @@ Env* = {
     args* = <T>(self: @Self) Res<T, ArgError>
 
     spawn* = <A: Actor>(self: @Self, actor: A) Res<Ref<A>, ActorStartError>
+
+    // where the actor runtime's pages come from. by default the kernel;
+    // called before the first spawn, every page the runtime keeps (its
+    // globals, workers, mailboxes, actor bodies, arenas' slabs, trace
+    // buffers) comes from `mem` instead. the runtime still OWNS that
+    // storage and spawn is unchanged: this picks only the page source.
+    // the runtime keeps a copy of `mem` for the rest of the process, so
+    // whatever it points at must outlive every actor (actors drain after
+    // main returns), and its page/release run on any worker thread.
+    // pages need no alignment or zeroing: the runtime asks for more,
+    // aligns inside and zeroes. a refused page is spawn's OutOfMemory.
+    // Unavailable once actors have started or a Mem was already given
+    actor_mem* = <M: Mem>(self: @Self, mem: M) Res<ActorStartError>
 }
 
 // equality and hashing, same shape as Display: one overridable

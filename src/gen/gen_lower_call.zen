@@ -29,7 +29,7 @@
 { DeferEntry, Local } = gen.gen_lower_core
 { member_call, mem_call, sys_call, resolve, to_bound, handle_for_place } = gen.gen_lower_member
 { sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
-{ spawn_actor } = gen.gen_lower_actor
+{ spawn_actor, use_actor_mem } = gen.gen_lower_actor
 { bound_of, dispatch, Bound } = gen.gen_lower_member
 { to_i64_bits } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
@@ -1947,23 +1947,24 @@ env_call = (
 )
            Res<Value, LowerError> {
     name.match({
-        "println" => lo.print_call(c.args, 0, true, Stream.Out, span),
-        "error"   => lo.print_call(c.args, 0, false, Stream.Err, span),
-        "errorln" => lo.print_call(c.args, 0, true, Stream.Err, span),
-        "flush"   => {
+        "println"   => lo.print_call(c.args, 0, true, Stream.Out, span),
+        "error"     => lo.print_call(c.args, 0, false, Stream.Err, span),
+        "errorln"   => lo.print_call(c.args, 0, true, Stream.Err, span),
+        "flush"     => {
             ty = lo.type_of(id).try();
             lo.variant_value(ty, "Ok", Ok(lo.unit().try()), span)
         },
         // Threads and actors (gen_lower_thread, gen_lower_actor).
-        "sleep"   => lo.sleep_thread(id, c, sources, span),
-        "spawn"   => lo.receiver_kind(sources).eq("Threads").match({
+        "sleep"     => lo.sleep_thread(id, c, sources, span),
+        "spawn"     => lo.receiver_kind(sources).eq("Threads").match({
             true  => lo.spawn_thread(id, sources, span),
             false => lo.spawn_actor(id, sources, span),
         }),
-        "join"    => lo.join_thread(id, sources, span),
-        "lock"    => lo.fs_lock(id, c, sources, span),
-        "unlock"  => lo.fs_unlock(id, c, sources, span),
-        "read"    => lo.receiver_kind(sources).eq("Stdin").match({
+        "join"      => lo.join_thread(id, sources, span),
+        "actor_mem" => lo.use_actor_mem(id, sources, span),
+        "lock"      => lo.fs_lock(id, c, sources, span),
+        "unlock"    => lo.fs_unlock(id, c, sources, span),
+        "read"      => lo.receiver_kind(sources).eq("Stdin").match({
             true  => lo.stdin_read(id, sources, span),
             false => lo.sys_env_call(
                 id,
@@ -1973,7 +1974,7 @@ env_call = (
                 span
             ),
         }),
-        _         => {
+        _           => {
             // The remaining capabilities are Zen functions over std.sys.
             target = name.match({
                 "var"         => Ok("var"),

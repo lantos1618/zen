@@ -4,6 +4,8 @@
 # removes entries. Each comment is the verdict when last regenerated.
 tests/corpus/actor/a_generic_actor_matches_a_bound_methods_res # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/a_generic_actors_bound_close_calls_the_bound_impl # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/actor_mem_supplies_runtime_pages # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/actor_mem_that_refuses_pages_fails_spawn # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/buffer_payload_is_owned_by_receiver # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/concurrent_joins_share_one_worker # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/cycle_closing_after_a_wait_is_broken # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma

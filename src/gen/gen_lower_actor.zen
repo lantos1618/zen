@@ -286,6 +286,82 @@ spawn_actor* = (
     Ok(out)
 }
 
+// ---------------------------------------------------------------------
+// env.actor_mem
+// ---------------------------------------------------------------------
+
+// `env.actor_mem(mem)`: the implementor is copied into memory the runtime
+// never hands back, and the runtime keeps a Mem on that copy (a Mem value
+// itself is kept as it is). OutOfMemory when the copy has no home;
+// Unavailable once actors have started or a Mem was already given.
+use_actor_mem* = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    ty     = lo.type_of(id).try();
+    mem_ty = lo.std_type("Mem", "std.mem.mem_arena.Mem", span).try();
+    usize  = lo.prim("usize").try();
+    source = sources.get(1).value_or(Source.Absent);
+    given  = source.match({
+        Given(e)    => lo.type_of(e),
+        Computed(v) => Ok(v.ty),
+        Located(p)  => Ok(p.ty),
+        Absent      => Err(unsupported(span, "env.actor_mem without a Mem")),
+    }).try();
+    value  = lo.argument_value(source, given, span).try();
+    out    = lo.temp(ty).try();
+    done   = lo.label().try();
+    handle = (given == mem_ty).match({
+        true  => value,
+        false => {
+            size    = lo.word_const(
+                Scalar.U64,
+                lo.layout_of(given, span).try().size.to_i64_bits()
+            ).try();
+            kept    = lo.actor_call(
+                "actor_keep",
+                lo.one(Source.Computed(Value(slot: size, ty: usize))).try(),
+                span
+            ).try();
+            no_home = lo.label().try();
+            home    = lo.label().try();
+            lo.branch_to(lo.is_null(kept.slot).try(), no_home, home).try();
+            lo.start(no_home);
+            lo.fail(out, ty, "OutOfMemory", span).try();
+            lo.jump(done).try();
+            lo.start(home);
+            copy = Place(base: Base.Through(kept.slot), offset: 0, ty: given);
+            lo.write(copy, value).try();
+            lo.handle_for_place(copy, mem_ty).try().ok_or(unsupported(span, "an actor Mem that is not a Mem")).try()
+        },
+    });
+    bytes  = lo.word_const(
+        Scalar.U64,
+        lo.layout_of(mem_ty, span).try().size.to_i64_bits()
+    ).try();
+    at     = lo.address(lo.spill(handle)).try();
+    args ::= lo.one(Source.Computed(Value(slot: bytes, ty: usize))).try();
+    args.more(Source.Computed(Value(
+        slot: at,
+        ty: lo.byte_pointer().try()
+    ))).try();
+    taken   = lo.actor_call("actor_use_mem", args, span).try();
+    kept_it = lo.label().try();
+    refused = lo.label().try();
+    lo.branch_to(taken.slot, kept_it, refused).try();
+    lo.start(refused);
+    lo.fail(out, ty, "Unavailable", span).try();
+    lo.jump(done).try();
+    lo.start(kept_it);
+    made = lo.variant_value(ty, "Ok", Ok(lo.unit().try()), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok(out)
+}
+
 // `Err(<name>)` of a Res whose error set names it, into `out`.
 fail = (
     lo   :: Lowerer,

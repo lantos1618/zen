@@ -12,8 +12,8 @@
 { Ptr, null_ptr } = std.mem
 { Range, loop } = std.core
 { atomic_load_usize, atomic_store_usize } = std.sys
-{ pointer_at, address_of, mmap, munmap, map_private_anonymous } = std.sys
-{ word_at, load, store, lock, unlock, map_span } = std.actor.actor_pool
+{ pointer_at, address_of } = std.sys
+{ word_at, load, store, lock, unlock, map_span, grab, give_back } = std.actor.actor_pool
 { G_SLOT_LOCK, G_SLOT_FREE, G_SLOT_NFREE, G_SLOT_CAP, G_SLOT_FRESH } = std.actor.actor_layout
 { G_CHUNKS, CHUNK_SLOTS, CHUNK_SHIFT, CHUNKS, SLOT_CACHE } = std.actor.actor_layout
 { L_SLOTS_N, L_SLOTS } = std.actor.actor_layout
@@ -130,17 +130,17 @@ grow_free = (globals: Ptr<u8>, want: usize) {
     cap ::= load(globals, G_SLOT_CAP);
     (cap == 0).then(() { cap = 16384; });
     loop(() { cap < want }, (h) { cap = cap * 2; });
-    got = mmap(0, cap * 8, 3, map_private_anonymous(), -1, 0);
-    (got >= 0).then(() {
-        fresh = pointer_at(got.to_usize().value_or(0)).to<usize>();
+    got = grab(cap * 8, 8);
+    (!got.is_null()).then(() {
+        fresh = got.to<usize>();
         old   = pointer(globals, G_SLOT_FREE).to<usize>();
         nfree = load(globals, G_SLOT_NFREE);
         Range(0, nfree).loop((i) { fresh.write(i, old.read(i)); });
         (load(globals, G_SLOT_CAP) > 0).then(() {
-            munmap(
-                load(globals, G_SLOT_FREE),
+            give_back(
+                pointer(globals, G_SLOT_FREE),
                 load(globals, G_SLOT_CAP) * 8
-            ).discard();
+            );
         });
         store(globals, G_SLOT_FREE, address_of(fresh.to<u8>()));
         store(globals, G_SLOT_CAP, cap);

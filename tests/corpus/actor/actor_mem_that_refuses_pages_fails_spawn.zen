@@ -1,0 +1,44 @@
+// A Mem that refuses every page makes env.spawn fail with OutOfMemory
+// instead of crashing.
+{ Mem, Page, Arena, AllocError, Ptr } = std.mem
+{ Res, Ok, Err } = std.core
+{ Env } = std.env
+{ Actor, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Refusing = { inner: Mem }
+
+Refusing.impl(Mem, {
+    alloc = (self: @Self) Arena { self.inner.alloc() }
+    page = (self: @Self, size: usize, prev: Ptr<Page>)
+             Res<Ptr<Page>, AllocError> {
+        Err(AllocError.OutOfMemory)
+    }
+    release = <T>(self: @Self, region: Ptr<T>) {
+        self.inner.release(region)
+    }
+})
+
+Counter = { total :: u64 = 0 }
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, n: u64) {
+        self.total = self.total + n;
+    }
+})
+
+main = (env: Env) Res<i32, ActorStartError> {
+    env.actor_mem(Refusing(inner: env.mem)).try();
+    env.spawn(Counter()).match({
+        Ok(c)  => {
+            println("spawned");
+            c.stop();
+            c.join();
+        },
+        Err(e) => e.match({
+            OutOfMemory => println("spawn refused: out of memory"),
+            Unavailable => println("spawn refused: unavailable"),
+        }),
+    });
+    Ok(0)
+}

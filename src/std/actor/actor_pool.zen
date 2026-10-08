@@ -19,9 +19,11 @@
 // the largest class gets its own mapping, aligned the same way, whose
 // header says so; freeing it unmaps it.
 
-{ Ptr, null_ptr } = std.mem
+{ Ptr, null_ptr, Mem, Page } = std.mem
 { Res, Ok, Err, None, loop, Range } = std.core
 { mmap, munmap, madvise, map_private_anonymous, pointer_at, address_of, platform_darwin } = std.sys
+{ atomic_load_usize, process_block } = std.sys
+{ PB_MEM } = std.actor.actor_layout
 { atomic_swap_u32, atomic_store_u32 } = std.sys
 
 // The address of word `i` of the block at `p`, and plain word access.
@@ -183,12 +185,74 @@ map_aligned* = (bytes: usize, align: usize) Ptr<u8> {
     })
 }
 
+// The Mem `env.actor_mem` gave the runtime; null when every runtime page
+// comes straight from the kernel.
+actor_mem* = () Ptr<Mem> {
+    pointer_at(atomic_load_usize(word_at(process_block(), PB_MEM))).to<Mem>()
+}
+
+// `bytes` of zeroed memory on an `align` boundary (a power of two), for
+// anything the runtime keeps; null when refused. Without an actor Mem it
+// is the kernel's, as it always was. With one, the Mem's page is asked
+// for `align` + 8 more bytes so the block can be aligned inside it with
+// the page's address in the word just before it, for `give_back`.
+grab* = (bytes: usize, align: usize) Ptr<u8> {
+    mem = actor_mem();
+    mem.is_null().match({
+        true  => (align <= 4096).match({
+            true  => kernel(bytes),
+            false => map_aligned(bytes, align),
+        }),
+        false => {
+            words = (bytes + 7) / 8;
+            room  = (align < 8).match({ true => 8, false => align });
+            mem.read(0).page(words * 8 + room + 8, null_ptr<Page>()).match({
+                Err(_)   => null_ptr<u8>(),
+                Ok(page) => {
+                    base    = page.to<usize>().read(1);
+                    aligned = (base + 8 + room - 1) / room * room;
+                    store(
+                        pointer_at(aligned - 8),
+                        0,
+                        address_of(page.to<u8>())
+                    );
+                    block = pointer_at(aligned);
+                    Range(0, words).loop((i) { store(block, i, 0); });
+                    block
+                },
+            })
+        },
+    })
+}
+
+// Hand back what `grab(bytes, ..)` gave.
+give_back* = (block: Ptr<u8>, bytes: usize) {
+    mem = actor_mem();
+    mem.is_null().match({
+        true  => { munmap(address_of(block), bytes).discard(); },
+        false => {
+            page = pointer_at(load(pointer_at(address_of(block) - 8), 0));
+            mem.read(0).release(page.to<Page>());
+        },
+    })
+}
+
+// Zeroed pages from the kernel; null when refused.
+kernel* = (bytes: usize) Ptr<u8> {
+    got = mmap(0, bytes, 3, map_private_anonymous(), -1, 0);
+    (got < 0).match({
+        true  => null_ptr<u8>(),
+        false => pointer_at(got.to_usize().value_or(0)),
+    })
+}
+
 // A whole 2 MiB span, asking Linux for one huge page: a million actors'
 // bodies and slots then cost a few hundred page faults instead of tens of
-// thousands. (MADV_HUGEPAGE; macOS has no such advice.)
+// thousands. (MADV_HUGEPAGE; macOS has no such advice. An actor Mem's
+// pages are its own business.)
 map_span* = () Ptr<u8> {
-    span = map_aligned(SPAN_BYTES, SPAN_BYTES);
-    (!span.is_null() && platform_darwin() == 0).then(() {
+    span = grab(SPAN_BYTES, SPAN_BYTES);
+    (!span.is_null() && platform_darwin() == 0 && actor_mem().is_null()).then(() {
         madvise(address_of(span), SPAN_BYTES, 14).discard();
     });
     span
@@ -334,7 +398,7 @@ alloc_large = (bytes: usize) Ptr<u8> {
         false => null_ptr<u8>(),
         true  => {
             total = (bytes + SLAB_HEADER + 4095) / 4096 * 4096;
-            base  = map_aligned(total, SLAB_BYTES);
+            base  = grab(total, SLAB_BYTES);
             base.is_null().match({
                 true  => base,
                 false => {
@@ -357,7 +421,7 @@ free* = (heap: Ptr<u8>, central: Ptr<u8>, block: Ptr<u8>) {
     slab = slab_of(block);
     c    = load(slab, 0);
     (c == LARGE).match({
-        true  => { munmap(address_of(slab), load(slab, 1)).discard(); },
+        true  => give_back(slab, load(slab, 1)),
         false => {
             full = heap_count(heap, c).read(0) == CAP && !give_batch(heap, central, c);
             // Out of memory for a batch array: the block is lost, not reused.

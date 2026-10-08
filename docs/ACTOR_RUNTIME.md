@@ -56,6 +56,16 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   the message is its block's address, unique while it lives. With the
   variable unset each trace point is one load and a branch.
 
+- Pages: everything the runtime keeps (globals, per-thread state, workers,
+  the registry, 2 MiB spans of slabs, large messages, trace buffers) comes
+  through `actor_pool.grab`/`give_back`. Without `env.actor_mem` that is
+  the kernel, aligned mappings and huge-page advice as before. With one,
+  `grab` asks the Mem's `page` for the size plus the alignment plus a word,
+  aligns inside the page, keeps the page's address in the word before the
+  block for `give_back`'s `release`, and zeroes the block. The Mem lives in
+  the process block (`PB_MEM`); `PB_ONCE` 4 marks a call in progress, which
+  the runtime's first start waits out.
+
 ## Executable checks
 
 `make actorcheck` runs the actor corpus (`tests/corpus/actor`), whose

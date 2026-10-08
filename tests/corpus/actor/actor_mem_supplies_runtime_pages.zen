@@ -1,0 +1,57 @@
+// env.actor_mem: every page the actor runtime keeps comes from the given
+// Mem; a second call, or one after the first spawn, is Unavailable.
+{ Mem, Page, Arena, AllocError, Ptr, null_ptr } = std.mem
+{ Res, Ok, Err } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Counting = { inner: Mem, pages: Ptr<usize> }
+
+Counting.impl(Mem, {
+    alloc = (self: @Self) Arena { self.inner.alloc() }
+    page = (self: @Self, size: usize, prev: Ptr<Page>)
+             Res<Ptr<Page>, AllocError> {
+        self.pages.write(0, self.pages.read(0) + 1);
+        self.inner.page(size, prev)
+    }
+    release = <T>(self: @Self, region: Ptr<T>) {
+        self.inner.release(region)
+    }
+})
+
+Counter = { total :: u64 = 0 }
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, n: u64) {
+        self.total = self.total + n;
+        (self.total == 42).then(() { println("total 42"); });
+    }
+})
+
+said = (r: Res<ActorStartError>) str {
+    r.match({
+        Ok     => "kept",
+        Err(e) => e.match({
+            OutOfMemory => "out of memory",
+            Unavailable => "unavailable",
+        }),
+    })
+}
+
+main = (env: Env) Res<i32, ActorStartError | ActorError | AllocError> {
+    // Never released, so the counter outlives every actor.
+    cell  = env.mem.page(64, null_ptr<Page>()).try();
+    pages = cell.to<usize>().offset(4);
+    pages.write(0, 0);
+    env.actor_mem(Counting(inner: env.mem, pages: pages)).try();
+    println("second actor_mem: {}", said(env.actor_mem(env.mem)));
+    c = env.spawn(Counter()).try();
+    c.send(40).try();
+    c.send(2).try();
+    c.stop();
+    c.join();
+    println("runtime pages from the Mem: {}", pages.read(0) > 0);
+    println("actor_mem after spawn: {}", said(env.actor_mem(env.mem)));
+    Ok(0)
+}

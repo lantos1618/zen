@@ -54,20 +54,21 @@
 { G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
 { G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
 { G_TRACE, G_TRACE_N, G_TRACE_CAP, G_TRACE_T0 } = std.actor.actor_layout
+{ G_REC_THREADS, G_REC_ON, G_RINGS, REC_EVENTS, REC_MASK, REC_WORDS, ID_SHIFT } = std.actor.actor_layout
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
 { G_WATCH_LOCK, G_TIMER_LOCK, G_TIMERS, G_TIMER_LAST, G_TIMER_N, G_TIMER_ON, G_TIMER_PARKER } = std.actor.actor_layout
 { S_WATCH, WATCHED, E_NEXT, E_TO, E_GEN, E_AT, E_DONE, E_MSG, E_FAILED, ENTRY_BYTES } = std.actor.actor_layout
 { S_QUEUED, S_CLOSED, S_FULL, S_RELEASES, S_BREAKS, S_FINALIZED, S_HANDOFFS } = std.actor.actor_layout
 { S_PREEMPTS, S_STEALS, S_SPREADS, S_FAILED } = std.actor.actor_layout
-{ L_WORKER, L_ACTOR, L_YIELD, L_HEAP, LOCAL_BYTES } = std.actor.actor_layout
+{ L_WORKER, L_ACTOR, L_YIELD, L_HEAP, L_MSG, L_SEQ, L_RING, L_TAG, LOCAL_BYTES } = std.actor.actor_layout
 { W_HEAD, W_TAIL, W_NEXT, W_TURNS, W_IN_TURN, W_PREEMPT, W_SEEN, W_TICK, W_ID } = std.actor.actor_layout
 { W_RANDOM, W_SPINNING, W_PARKER, W_RING, WORKER_BYTES } = std.actor.actor_layout
 { S_LIFE, S_BODY, S_WAITING } = std.actor.actor_layout
 { COUNT_MASK, CLOSED, SCHED, BLOCKED, WAITED, GEN_SHIFT, GEN_MASK } = std.actor.actor_layout
-{ B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_FAILED, B_RECEIVE, B_RECORD } = std.actor.actor_layout
+{ B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_FAILED, B_RECEIVE, B_NAME, B_RECORD } = std.actor.actor_layout
 { D_OUTBOX, D_OUT_N, D_OUT_CAP, D_FIRST, D_LAST, D_LOCK, SIDE_BYTES } = std.actor.actor_layout
-{ OUTBOX_ENTRY, PENDING, DONE, REFUSED, WAITER_BYTES, M_NEXT, M_TURN, M_PAYLOAD } = std.actor.actor_layout
+{ OUTBOX_ENTRY, PENDING, DONE, REFUSED, WAITER_BYTES, M_NEXT, M_TURN, M_CAUSE, M_PAYLOAD } = std.actor.actor_layout
 
 // ---------------------------------------------------------------------
 // words
@@ -154,9 +155,26 @@ T_SLEEP: usize = 9
 T_WAKE: usize = 10
 T_CLOSED: usize = 11   // refused: the receiver is gone
 T_WAIT: usize = 12     // the blocked sender now waits on `to`
-TRACE_WORDS: usize = 4
+TRACE_WORDS: usize = 6
 
-trace = (g: Ptr<u8>, kind: usize, from: usize, to: usize, m: usize) {
+trace = (g: Ptr<u8>, kind: usize, from: usize, to: usize, m: usize) { trace_event(
+    g,
+    kind,
+    from,
+    to,
+    m,
+    0
+); }
+
+// A take also records the message's recorder id and its cause.
+trace_event = (
+    g    : Ptr<u8>,
+    kind : usize,
+    from : usize,
+    to   : usize,
+    m    : usize,
+    id   : usize
+) {
     buf = aload(g, G_TRACE);
     (buf != 0).then(() {
         i = aadd(g, G_TRACE_N, 1);
@@ -170,6 +188,12 @@ trace = (g: Ptr<u8>, kind: usize, from: usize, to: usize, m: usize) {
             store(e, 1, kind | (from << 8));
             store(e, 2, to);
             store(e, 3, m);
+            store(e, 4, id);
+            store(
+                e,
+                5,
+                (id == 0).match({ true => 0, false => load(at(m), M_CAUSE) })
+            );
         });
     });
 }
@@ -930,11 +954,18 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
         (!side.is_null()).then(() { store(side, D_OUT_N, 0); });
         (load(slot, S_WAITING) != 0).then(() { astore(slot, S_WAITING, 0); });
         record = a.offset(B_RECORD);
+        ring   = recorder(g, l);
         loop(() { taken < TURN_BATCH }, (h) {
             m = mailbox_take(a);
             m.is_null().then(() { h.break(); });
             taken = taken + 1;
-            trace(g, T_TAKE, load(w, W_ID), ref_index(mine), addr(m));
+            id    = (ring != 0).match({ true => note(
+                l,
+                ring,
+                a,
+                m
+            ), false => 0 });
+            trace_event(g, T_TAKE, load(w, W_ID), ref_index(mine), addr(m), id);
             // A failed actor's remaining messages are dropped, not run.
             (load(a, B_FAILED) == 0).then(() {
                 // A send through a message-typed Ref names no turn: it runs
@@ -948,7 +979,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
                     record,
                     m.offset(M_PAYLOAD)
                 ) != 0;
-                trapped.then(() { fail(g, l, a, slot); });
+                trapped.then(() { fail(g, l, a, slot); blame(g, l, a, m); });
             });
             free_block(g, l, m);
             queued = aload(a, B_SIDE) != 0 && load(at(aload(a, B_SIDE)), D_OUT_N) > 0;
@@ -962,6 +993,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
         });
     });
     store(l, L_ACTOR, 0);
+    store(l, L_MSG, 0);
     current = at(load(l, L_WORKER));
     (!current.is_null()).then(() { arel(current, W_IN_TURN, 0); });
     v       = aload(slot, S_LIFE);
@@ -970,6 +1002,128 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
     done = (v & CLOSED) != 0 && (v & BLOCKED) == 0 && count_of(v) == taken && mailbox_empty(a)
         && finalize(g, l, a, slot, v);
     (!done).then(() { release(g, l, a, slot, gen, taken, yielded); });
+}
+
+// The flight recorder. Each thread that runs turns keeps a ring of the
+// messages it took, made the first time it runs one; 0 when it has none
+// (ZEN_ACTOR_RECORDER=0, too many threads, or no memory).
+recorder = (g: Ptr<u8>, l: Ptr<u8>) usize {
+    r ::= load(l, L_RING);
+    (r == 0).then(() {
+        r = 1;
+        (load(g, G_REC_ON) != 0).then(() {
+            tag = aadd(g, G_REC_THREADS, 1) + 1;
+            (tag < MAX_THREADS).then(() {
+                ring = map(REC_EVENTS * REC_WORDS * 8);
+                (!ring.is_null()).then(() {
+                    store(l, L_TAG, tag << ID_SHIFT);
+                    astore(g.offset(G_RINGS), tag, addr(ring));
+                    r = addr(ring);
+                });
+            });
+        });
+        store(l, L_RING, r);
+    });
+    (r == 1).match({ true => 0, false => r })
+}
+
+ID_MASK: usize = 1099511627775
+
+// Record `m`, about to run on `a`, and return its id: the cause of every
+// message the turn sends. Plain stores; readers only look once it's old
+// or once the runtime is quiet.
+note = (l: Ptr<u8>, ring: usize, a: Ptr<u8>, m: Ptr<u8>) usize {
+    seq = load(l, L_SEQ) + 1;
+    id  = load(l, L_TAG) | (seq & ID_MASK);
+    e   = at(ring).offset((seq & REC_MASK) * REC_WORDS * 8);
+    store(e, 0, id);
+    store(e, 1, load(m, M_CAUSE));
+    store(e, 2, load(a, B_REF));
+    store(e, 3, load(a, B_NAME));
+    store(l, L_SEQ, seq);
+    store(l, L_MSG, id);
+    id
+}
+
+// The recorder's entry for message `id`; null once its ring moved on.
+find_event = (g: Ptr<u8>, id: usize) Ptr<u8> {
+    tag  = id >> ID_SHIFT;
+    ring = (tag > 0 && tag < MAX_THREADS).match({ true => aload(
+        g.offset(G_RINGS),
+        tag
+    ), false => 0 });
+    (ring == 0).match({
+        true  => null_ptr<u8>(),
+        false => {
+            e = at(ring).offset(((id & ID_MASK) & REC_MASK) * REC_WORDS * 8);
+            (load(e, 0) == id).match({ true => e, false => null_ptr<u8>() })
+        },
+    })
+}
+
+CHAIN_HOPS: usize = 16
+
+// Why message `id` was sent: one line per message whose turn sent the
+// next, from `cause` back to a send outside any turn (main, or a spawn's
+// started message) or to the end of the recorded history.
+explain = (g: Ptr<u8>, buf: Ptr<u8>, lead: str, id: usize, cause: usize) {
+    cur  ::= id;
+    why  ::= cause;
+    hops :: usize = 0;
+    loop(() { hops < CHAIN_HOPS }, (h) {
+        e = (why == 0).match({ true => null_ptr<u8>(), false => find_event(
+            g,
+            why
+        ) });
+        n ::= put_text(buf, 0, lead);
+        n = put_id(buf, n, cur);
+        (why == 0).then(
+            () { n = put_text(buf, n, " was sent outside any actor turn"); }
+        );
+        (why != 0 && e.is_null()).then(() {
+            n = put_text(buf, n, " was sent while handling ");
+            n = put_id(buf, n, why);
+            n = put_text(buf, n, " (older history is not kept)");
+        });
+        (!e.is_null()).then(() {
+            n = put_text(buf, n, " was sent by ");
+            n = put_actor(buf, n, ref_index(load(e, 2)), load(e, 3));
+            n = put_text(buf, n, " while handling ");
+            n = put_id(buf, n, why);
+        });
+        n = put_text(buf, n, "\n");
+        write_all(2, str(data: buf, len: n)).ignore();
+        e.is_null().then(() { h.break(); });
+        cur  = why;
+        why  = load(e, 1);
+        hops = hops + 1;
+    });
+    (hops == CHAIN_HOPS).then(() {
+        n ::= put_text(buf, 0, lead);
+        n = put_text(buf, n, "...\n");
+        write_all(2, str(data: buf, len: n)).ignore();
+    });
+}
+
+// A trap's report on stderr, after the trap's own line: the actor, the
+// message its turn ran, and the chain of turns that sent it.
+blame = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, m: Ptr<u8>) {
+    buf = new_block(g, l, 512);
+    (!buf.is_null()).then(() {
+        id = load(l, L_MSG);
+        n ::= put_text(buf, 0, "actor-runtime: ");
+        n = put_actor(buf, n, ref_index(load(a, B_REF)), load(a, B_NAME));
+        n = put_text(buf, n, " trapped");
+        (id != 0).then(
+            () { n = put_text(buf, n, " handling "); n = put_id(buf, n, id); }
+        );
+        n = put_text(buf, n, "\n");
+        write_all(2, str(data: buf, len: n)).ignore();
+        (id != 0).then(
+            () { explain(g, buf, "actor-runtime:   ", id, load(m, M_CAUSE)); }
+        );
+        free_block(g, l, buf);
+    });
 }
 
 // A checked trap ended one of `a`'s turns: the actor stops here. It runs
@@ -1499,6 +1653,15 @@ setup = (g: Ptr<u8>, entry: usize) bool {
     store(g, G_SYSMON_NS, env_number("ZEN_ACTOR_SYSMON_US", 1000) * 1000);
     // ZEN_ACTOR_CHECKED=1: one mapping per block, unmapped when freed.
     set_checked(central_of(g), env_number("ZEN_ACTOR_CHECKED", 0) != 0);
+    // ZEN_ACTOR_RECORDER=0: no flight recorder, so no causes in reports.
+    store(
+        g,
+        G_REC_ON,
+        (env_number(
+            "ZEN_ACTOR_RECORDER",
+            1
+        ) != 0).match({ true => 1, false => 0 })
+    );
     env_var("ZEN_ACTOR_TRACE").match({
         None  => (),
         Ok(_) => {
@@ -1597,7 +1760,8 @@ actor_start* = (
     cell    : Ptr<u8>,
     started : usize,
     stopped : usize,
-    receive : usize
+    receive : usize,
+    name    : str
 ) i32 {
     g     = globals();
     l     = local();
@@ -1610,6 +1774,7 @@ actor_start* = (
             store(cell, B_REF, as_ref(index, gen));
             store(cell, B_STOPPED, stopped);
             store(cell, B_RECEIVE, receive);
+            store(cell, B_NAME, name_word(name));
             mailbox_init(cell);
             arel(slot, S_WAITING, 0);
             arel(slot, S_BODY, addr(cell));
@@ -1623,6 +1788,7 @@ actor_start* = (
             // count this moment, so the started turn is added, not stored.
             (!m.is_null()).then(() {
                 store(m, M_TURN, started);
+                store(m, M_CAUSE, load(l, L_MSG));
                 mailbox_put(cell, addr(m));
                 aadd(slot, S_LIFE, SCHED + 1);
                 schedule(g, l, cell);
@@ -1746,6 +1912,7 @@ build = (
                 true  => null_ptr<u8>(),
                 false => {
                     store(m, M_TURN, turn);
+                    store(m, M_CAUSE, load(l, L_MSG));
                     payload = m.offset(M_PAYLOAD);
                     (size > 0).then(() { payload.copy_from(data, size); });
                     tail ::= payload.offset(size);
@@ -2174,12 +2341,17 @@ trace_dump = (g: Ptr<u8>) {
                     n       = put_text(
                         out,
                         0,
-                        "# zen actor trace: index ns kind from to message\n"
+                        "# zen actor trace: index ns kind from to message id cause\n"
                     );
                     n       = put_text(
                         out,
                         n,
                         "# kinds: 1 send 2 park 3 release 4 refuse 5 take 6 break 7 block 8 unblock 9 sleep 10 wake 11 closed 12 wait\n"
+                    );
+                    n       = put_text(
+                        out,
+                        n,
+                        "# a take's id is the message's flight-recorder id, its cause the id whose turn sent it (0: none)\n"
                     );
                     n       = put_text(out, n, "# workers ");
                     n       = put_number(out, n, load(g, G_WORKERS));
@@ -2202,6 +2374,10 @@ trace_dump = (g: Ptr<u8>) {
                         n    = put_number(out, n, load(e, 2));
                         n    = put_text(out, n, " ");
                         n    = put_number(out, n, load(e, 3));
+                        n    = put_text(out, n, " ");
+                        n    = put_number(out, n, load(e, 4));
+                        n    = put_text(out, n, " ");
+                        n    = put_number(out, n, load(e, 5));
                         n    = put_text(out, n, "\n");
                         (n > TRACE_OUT - 160).then(() {
                             write_all(f, str(data: out, len: n)).ignore();
@@ -2241,6 +2417,7 @@ blocked_actors = (g: Ptr<u8>) usize {
 // other threads run; a graph that is still changing may read inconsistently.
 REPORT_ACTORS: usize = 64
 REPORT_CYCLES: usize = 16
+REPORT_CHAINS: usize = 8
 
 stall_report = (g: Ptr<u8>, why: str) {
     buf = map(4096);
@@ -2262,13 +2439,17 @@ stall_report = (g: Ptr<u8>, why: str) {
             life = aload(slot, S_LIFE);
             (shown < REPORT_ACTORS && aload(slot, S_BODY) != 0 && (life & BLOCKED) != 0).then(() {
                 k :: usize = put_text(buf, 0, "actor-runtime:   actor ");
-                k = put_number(buf, k, i);
+                k = put_actor(buf, k, i, name_of(g, i));
                 k = put_text(buf, k, " mailbox ");
                 k = put_number(buf, k, count_of(life));
                 k = put_text(buf, k, " waits on ");
-                k = put_number(buf, k, ref_index(aload(slot, S_WAITING)));
+                j = ref_index(aload(slot, S_WAITING));
+                k = put_actor(buf, k, j, name_of(g, j));
                 k = put_text(buf, k, "\n");
                 write_all(2, str(data: buf, len: k)).ignore();
+                (shown < REPORT_CHAINS).then(
+                    () { blocked_turn(g, buf, at(aload(slot, S_BODY))); }
+                );
                 shown = shown + 1;
             });
         });
@@ -2282,24 +2463,55 @@ stall_report = (g: Ptr<u8>, why: str) {
         Range(1, aload(g, G_SLOT_FRESH)).loop((i) {
             (cycles < REPORT_CYCLES && cycle_from(g, i)).then(() {
                 k :: usize = put_text(buf, 0, "actor-runtime:   cycle ");
-                k = put_number(buf, k, i);
+                k = put_actor(buf, k, i, name_of(g, i));
                 j ::= ref_index(aload(slot_at(g, i), S_WAITING));
                 // A long cycle is cut short to fit the line.
-                loop(() { j != i && k < 4000 }, (c) {
+                loop(() { j != i && k < 3800 }, (c) {
                     k = put_text(buf, k, " -> ");
-                    k = put_number(buf, k, j);
+                    k = put_actor(buf, k, j, name_of(g, j));
                     j = ref_index(aload(slot_at(g, j), S_WAITING));
                 });
                 k = (j == i).match({ true => put_text(buf, k, " -> "), false => put_text(buf, k, " ...") });
-                k = (j == i).match({ true => put_number(
+                k = (j == i).match({ true => put_actor(
                     buf,
                     k,
-                    i
+                    i,
+                    name_of(g, i)
                 ), false => k });
                 k = put_text(buf, k, "\n");
                 write_all(2, str(data: buf, len: k)).ignore();
                 cycles = cycles + 1;
             });
+        });
+    });
+}
+
+// How a blocked actor got stuck: the turn whose send is waiting in its
+// outbox, and the chain of turns that led to it.
+blocked_turn = (g: Ptr<u8>, buf: Ptr<u8>, body: Ptr<u8>) {
+    side = at(load(body, B_SIDE));
+    held = side.is_null().match({ true => 0, false => load(side, D_OUT_N).min(load(side, D_OUT_CAP)) });
+    turn :: usize = 0;
+    Range(0, held).loop((j) {
+        e = at(load(side, D_OUTBOX)).offset(j * OUTBOX_ENTRY);
+        (turn == 0 && aload(e, 2) == PENDING).then(() { turn = load(at(load(e, 1)), M_CAUSE); });
+    });
+    (turn != 0).then(() {
+        n ::= put_text(
+            buf,
+            0,
+            "actor-runtime:     blocked sending in the turn handling "
+        );
+        n = put_id(buf, n, turn);
+        n = put_text(buf, n, "\n");
+        write_all(2, str(data: buf, len: n)).ignore();
+        e = find_event(g, turn);
+        e.is_null().match({
+            true  => write_all(
+                2,
+                "actor-runtime:       older history is not kept\n"
+            ).ignore(),
+            false => explain(g, buf, "actor-runtime:       ", turn, load(e, 1)),
         });
     });
 }
@@ -2371,6 +2583,41 @@ print_stats = (g: Ptr<u8>, l: Ptr<u8>) {
 put_text = (buf: Ptr<u8>, at: usize, text: str) usize {
     (text.len > 0).then(() { buf.offset(at).copy_from(text.ptr(), text.len); });
     at + text.len
+}
+
+NAME_SHIFT: usize = 48
+NAME_ADDR: usize = 281474976710655
+NAME_MAX: usize = 128
+
+// An actor type's name as one word: its static bytes' address | length.
+name_word = (name: str) usize {
+    addr(name.ptr()) | (name.len.min(NAME_MAX) << NAME_SHIFT)
+}
+
+// The name word of the actor in registry slot `i`; 0 when it has none.
+name_of = (g: Ptr<u8>, i: usize) usize {
+    body = aload(slot_at(g, i), S_BODY);
+    (i == 0 || body == 0).match({ true => 0, false => load(at(body), B_NAME) })
+}
+
+// An actor as Name#index: its type's name and its registry index.
+put_actor = (buf: Ptr<u8>, k: usize, index: usize, name: usize) usize {
+    len  = name >> NAME_SHIFT;
+    text = (len == 0).match({ true => "actor", false => str(
+        data: at(name & NAME_ADDR),
+        len: len
+    ) });
+    n ::= put_text(buf, k, text);
+    n = put_text(buf, n, "#");
+    put_number(buf, n, index)
+}
+
+// A recorder id as m<thread>.<sequence>.
+put_id = (buf: Ptr<u8>, k: usize, id: usize) usize {
+    n ::= put_text(buf, k, "m");
+    n = put_number(buf, n, id >> ID_SHIFT);
+    n = put_text(buf, n, ".");
+    put_number(buf, n, id & ID_MASK)
 }
 
 put_number = (buf: Ptr<u8>, at: usize, value: usize) usize {

@@ -60,8 +60,10 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
 - Watchdog: when every worker has been asleep for `ZEN_ACTOR_WATCHDOG_MS`
   (default 1000; 0 turns it off; needs sysmon) while actors are blocked, or
   when actors are still wedged at exit, the runtime prints the wait-for graph
-  on stderr: each blocked actor's registry index, mailbox depth and the actor
-  it waits on, then the cycles. Nothing can block or unblock while every
+  on stderr: each blocked actor (`Name#index`: its type's name and registry
+  index), its mailbox depth and the actor it waits on, then the cycles. For
+  the first few blocked actors it also prints the turn whose send is waiting
+  and that turn's chain of causes from the flight recorder. Nothing can block or unblock while every
   worker sleeps, so the registry is walked once per quiet spell, when it
   reaches the limit, not on every sysmon tick.
 - Message trace: `ZEN_ACTOR_TRACE=<file>` records each message's path, an
@@ -71,10 +73,28 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   waking, and loops broken. Events go into a fixed buffer
   (`ZEN_ACTOR_TRACE_EVENTS`, default 1000000; later events are counted, not
   kept) and are written at `actor_shutdown`, one line each:
-  `index ns kind from to message`. `from` and `to` are registry indices (0
-  for a thread that is no actor; the worker for take, sleep and wake), and
-  the message is its block's address, unique while it lives. With the
-  variable unset each trace point is one load and a branch.
+  `index ns kind from to message id cause`. `from` and `to` are registry
+  indices (0 for a thread that is no actor; the worker for take, sleep and
+  wake), and the message is its block's address, unique while it lives. On
+  a take, `id` is the message's flight-recorder id and `cause` the id of the
+  message whose turn sent it (0: none), so a viewer can draw causal arrows;
+  other events have 0 in both. With the variable unset each trace point is
+  one load and a branch.
+- Flight recorder, on unless `ZEN_ACTOR_RECORDER=0`: every message carries
+  `M_CAUSE`, the id of the message whose turn sent it (0 from main or any
+  other thread outside a turn). Each thread that runs turns keeps a ring of
+  its last 1024 takes (id, cause, actor Ref, the actor type's name), 32 KiB,
+  written with plain stores when a message is taken; that take gives the
+  message its id, `m<thread>.<n>` (the thread's ring tag and its count), so
+  no shared counter is touched. A checked trap then prints, after the trap's
+  line, the actor and message (`Fragile#1 trapped handling m1.3`) and one
+  line per hop back: which actor's turn sent each message while handling
+  which earlier one, until a send from outside any turn or until the cause
+  has left its ring (`older history is not kept`), at most 16 hops. The
+  rings are read without locks: a report about a message still being
+  recorded may read a stale entry, which shows as history not kept.
+  Spawn passes the actor type's name to `actor_start` (`B_NAME`: the static
+  name's address and length in one word).
 
 - Pages: everything the runtime keeps (globals, per-thread state, workers,
   the registry, 2 MiB spans of slabs, large messages, trace buffers) comes

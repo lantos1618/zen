@@ -242,8 +242,13 @@ spawn_actor* = (
     started = lo.hook_code(layout, "started", EntryKind.Started, span).try();
     stopped = lo.hook_code(layout, "stopped", EntryKind.Stopped, span).try();
     receive = lo.receive_code(layout, span).try();
+    // The type's name, for the runtime's reports.
+    type_name = lo.check.types.at(
+        actor_ty
+    ).match({ Named(n) => n.name, _ => "actor" });
+    name      = lo.string(type_name, lo.prim("str").try()).try();
     start_args ::= lo.one(Source.Computed(cell)).try();
-    [started, stopped, receive].loop((a) { start_args.more(a).try(); });
+    [started, stopped, receive, Source.Computed(name)].loop((a) { start_args.more(a).try(); });
     status = lo.actor_call("actor_start", start_args, span).try();
     zero   = lo.word_const(Scalar.I32, 0).try();
     ok     = lo.slot_of(Scalar.Bool).try();

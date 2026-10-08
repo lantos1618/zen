@@ -66,15 +66,28 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   reaches the limit, not on every sysmon tick.
 - Message trace: `ZEN_ACTOR_TRACE=<file>` records each message's path, an
   event every time it moves: sent into a mailbox, parked in the sender's
-  outbox, released into the mailbox, refused, taken by a worker, plus actors
-  blocking, unblocking and waiting on a receiver, workers sleeping and
-  waking, and loops broken. Events go into a fixed buffer
-  (`ZEN_ACTOR_TRACE_EVENTS`, default 1000000; later events are counted, not
-  kept) and are written at `actor_shutdown`, one line each:
-  `index ns kind from to message`. `from` and `to` are registry indices (0
-  for a thread that is no actor; the worker for take, sleep and wake), and
-  the message is its block's address, unique while it lives. With the
-  variable unset each trace point is one load and a branch.
+  outbox, released into the mailbox, refused, taken by a worker, run (with
+  the turn's code address, or failed), dropped by a failed actor, plus
+  actors spawned (with the spawner) and finalised, actors blocking,
+  unblocking and waiting on a receiver, workers sleeping and waking, and
+  loops broken. Events go into a ring of `ZEN_ACTOR_TRACE_EVENTS` (default
+  1000000) that a trace thread writes out every `ZEN_ACTOR_TRACE_FLUSH_MS`
+  (default 100), so the file grows while the program runs; an event that
+  finds the ring full of unwritten events is counted lost. The file is
+  text: `#` lines for the header, `# name <code> <Type.behaviour>` for each
+  turn the C backend generated (the asm backend lists none yet), then one
+  line per event, `index ns kind from to message`, and `# end events N
+  lost L` at `actor_shutdown`. `from` and `to` are registry indices (0 for
+  a thread that is no actor; the worker for take, done, fail, drop, sleep
+  and wake; the spawner for spawn), and the message is its block's
+  address, unique while it lives. A take and the next done or fail on the
+  same worker bracket one turn. With the variable unset each trace point
+  is one load and a branch.
+- Viewing it: `tools/zen-view` serves a dashboard over the file — actor
+  tree by spawner, topology with messages per second, mailbox fill, queue
+  and turn latency, timeline, worker lanes and failures — following it
+  live. `./zen build tools/zen-view --std src`, then
+  `tools/zen-view/build/zen-view <file>` and open http://127.0.0.1:7878/.
 
 - Pages: everything the runtime keeps (globals, per-thread state, workers,
   the registry, 2 MiB spans of slabs, large messages, trace buffers) comes
@@ -98,4 +111,5 @@ allocation checks. Stress scenarios and benchmarks are in `tests/bench/actors`.
 completed scalar spans without reading clocks, allocating, or performing I/O.
 Names are borrowed and must outlive the buffer; the owner must serialize access.
 `zen-otel` owns wire encoding and optional export, and copies names before they
-cross its actor boundary. Runtime-wide automatic tracing is not implemented.
+cross its actor boundary. Runtime-wide span tracing is not implemented; the
+actor message trace above is the runtime's own record.

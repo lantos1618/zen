@@ -189,6 +189,11 @@ spawn_actor* = (
     ))).try();
     new_args.more(worker).try();
     new_args.more(shutdown).try();
+    // No turn names on this path yet: the trace shows code addresses.
+    new_args.more(Source.Computed(Value(
+        slot: lo.word_const(Scalar.U64, 0).try(),
+        ty: lo.prim("usize").try()
+    ))).try();
     cell      = lo.actor_call("actor_new", new_args, span).try();
     no_cell   = lo.label().try();
     have_cell = lo.label().try();

@@ -908,6 +908,10 @@ context_helper = (be :: CBackend, context: TyId) Res<String, AllocError> {
             e.view(),
             shared.view()
         ).try();
+        me_field = be.actor_field("me").try();
+        id_field = be.actor_field("id").try();
+        mine     = be.runtime_symbol("actor_me").try();
+        body.fmt("    ctx.{}.{} = {}();\n", me_field, id_field, mine.view()).try();
         body.fmt(
             "    ctx.{} = {};\n    return &ctx;\n",
             alloc_field,

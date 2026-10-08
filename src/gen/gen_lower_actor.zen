@@ -617,6 +617,14 @@ send = (
     Ok(out)
 }
 
+// Context.me is the Ref of the actor whose turn this is.
+write_me = (lo :: Lowerer, context: Place, span: Span) Res<LowerError> {
+    me   = lo.field_place(context, "me", span).try();
+    id   = lo.field_place(me, "id", span).try();
+    word = lo.actor_call("actor_me", lo.alloc.Vec<Source>(), span).try();
+    lo.write(id, Value(slot: word.slot, ty: id.ty))
+}
+
 send_target = (found: bool, span: Span) Res<LowerError> {
     found.match({
         true  => Ok,
@@ -802,6 +810,7 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
         offset: layout.context,
         ty: layout.context_ty
     );
+    lo.write_me(context, nowhere()).try();
     entry.fields.loop((h, i, f) {
         entry.buffers.get(i).value_or(false).then(() {
             lo.own_buffer(

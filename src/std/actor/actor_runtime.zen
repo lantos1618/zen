@@ -1589,6 +1589,12 @@ actor_start* = (
     })
 }
 
+// The Ref of the actor whose turn runs on this thread, or 0 outside one.
+actor_me* = () u64 {
+    a = at(load(local(), L_ACTOR));
+    a.is_null().match({ true => 0, false => load(a, B_REF).to_u64() })
+}
+
 // The Ref of a started actor.
 actor_ref* = (cell: Ptr<u8>) u64 { load(cell, B_REF).to_u64() }
 

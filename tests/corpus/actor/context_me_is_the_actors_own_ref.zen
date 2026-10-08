@@ -1,0 +1,55 @@
+// `ctx.me` is the running actor's own Ref, typed by that actor, so it can
+// ride in a request as the reply address and stop its own actor.
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Reply = { Total: u64 | Busy }
+
+Ask = { Get: Ref<Reply> | Quit }
+
+Counter = { total :: u64 = 42 }
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Ask) {
+        m.match({
+            Get(back) => back.send(Reply.Total(self.total)).ignore(),
+            Quit      => (),
+        });
+    }
+})
+
+Asker = { counter: Ref<Ask>, left :: u64 = 3 }
+
+Asker.impl(Actor, {
+    started = (self :: @Self, ctx: Context) {
+        self.counter.send(Ask.Get(ctx.me)).ignore();
+    }
+    receive = (self :: @Self, ctx: Context, r: Reply) {
+        r.match({
+            Total(n) => {
+                println("reply {}", n);
+                self.left = self.left - 1;
+                (self.left == 0).match({
+                    true  => ctx.me.stop(),
+                    false => self.counter.send(Ask.Get(ctx.me)).ignore(),
+                });
+            },
+            Busy     => (),
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    counter         = env.spawn(Counter()).try();
+    inbox: Ref<Ask> = counter;
+    asker           = env.spawn(Asker(counter: inbox)).try();
+    asker.join();
+    counter.stop();
+    counter.join();
+    Ok(0)
+}

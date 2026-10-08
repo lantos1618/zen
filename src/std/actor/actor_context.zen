@@ -1,9 +1,12 @@
 { Env } = std.env
 { Alloc } = std.mem
+{ Ref, Actor } = std.actor.actor_core
 
 Context* = {
     env*: Env,
     alloc*: Alloc,
+    // the running actor's own Ref; in a behavior of A it is a Ref<A>
+    me*: Ref<Actor>,
 }
 
 Receive*<T> = {

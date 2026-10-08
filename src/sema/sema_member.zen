@@ -229,9 +229,34 @@ known_access = (
     found ::= c.alloc.Vec<Found>();
     c.members_of(ty, ac.name.text, found).try();
     visible ::= c.alloc.Vec<Found>();
-    found.filter_visible(ctx.module, visible).try().match({
+    got = found.filter_visible(ctx.module, visible).try().match({
         Ok(f) => c.hidden_member(ac, f),
         None  => c.pick(id, node, ac, ty, visible, ctx),
+    }).try();
+    c.own_ref(ac, ty, got, ctx)
+}
+
+// `ctx.me` in a behavior of actor A is A's own Ref<A>.
+own_ref = (c :: Checker, ac: Access, ty: TyId, got: TyId, ctx: Ctx)
+          Res<TyId, AllocError> {
+    (ac.name.text.eq("me") && ctx.has_self && c.is_context(ty)).match({
+        false => Ok(got),
+        true  => c.types.at(got).match({
+            Named(rn) => {
+                args ::= c.alloc.Vec<TyId>();
+                args.add(ctx.self_ty).try();
+                qname = c.owner_of(rn.decl.module.to_usize(), rn.name).try();
+                c.types.named(rn.decl, qname, rn.name, args)
+            },
+            _         => Ok(got),
+        }),
+    })
+}
+
+is_context = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Named(n) => c.named_as(n, "Context", "std.actor.actor_context"),
+        _        => false,
     })
 }
 

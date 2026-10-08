@@ -1,0 +1,15 @@
+{ Actor, Ref, Context } = std.actor
+{ Env } = std.env
+
+Msg = { Add: u64 | Reset }
+Other = { Ping | Pong }
+
+Counter = {}
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Msg) ()
+})
+
+bad = (counter: Ref<Counter>) Ref<Other> { counter }
+
+main = (env: Env) i32 { 0 }

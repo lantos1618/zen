@@ -1641,18 +1641,19 @@ post = (
     g.is_null().match({
         true  => SEND_CLOSED,
         false => {
-            total ::= (M_PAYLOAD + size < MESSAGE_MIN).match({ true => MESSAGE_MIN, false => M_PAYLOAD + size });
+            total ::= M_PAYLOAD + size;
             fits  ::= size <= MAX_MESSAGE_BYTES;
             Range(0, count).loop((i) {
                 n    = load(slices, i * SLICE_WORDS + 3);
                 fits = fits && n <= MAX_MESSAGE_BYTES - (total - M_PAYLOAD);
                 fits.then(() { total = total + n; });
             });
-            l = local();
-            m = fits.match({ true => new_block(
+            l     = local();
+            block = (total < MESSAGE_MIN).match({ true => MESSAGE_MIN, false => total });
+            m     = fits.match({ true => new_block(
                 g,
                 l,
-                total
+                block
             ), false => null_ptr<u8>() });
             m.is_null().match({
                 true  => SEND_FULL,

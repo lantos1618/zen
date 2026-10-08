@@ -341,18 +341,27 @@ Lowerer* = {
     // has the type of the local this instance bound it to, and a method
     // call on such a receiver has the result type of the method the
     // receiver's type resolves it to.
+    //
+    // Until every instance is published, sema's per-instance answer only
+    // fills in what this path leaves open; a settled answer here wins.
     type_of* = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
-        recorded: Res<TyId> = self.here().instance.match({
-            Ok(m) => m.expr_memo.get(id).match({
-                Ok(t) => self.settled(t).match({ true => Ok(t), false => None }),
-                None  => None,
+        self.solved_type(id).match({
+            Ok(t)  => self.settled(t).match({
+                true  => Ok(t),
+                false => Ok(self.recorded_type(id).value_or(t)),
             }),
-            None  => None,
-        });
-        recorded.match({
-            Ok(t) => Ok(t),
-            None  => self.solved_type(id),
+            Err(e) => self.recorded_type(id).match({
+                Ok(t) => Ok(t),
+                None  => Err(e),
+            }),
         })
+    }
+
+    // The settled type sema recorded for this expression at this instance.
+    recorded_type = (self :: @Self, id: ExprId) Res<TyId> {
+        m = self.here().instance.try();
+        t = m.expr_memo.get(id).try();
+        self.settled(t).match({ true => Ok(t), false => None })
     }
 
     // The type the lowering works out when sema recorded none for this
@@ -2927,9 +2936,24 @@ Lowerer* = {
                             ).try(LowerError.OutOfMemory);
                         });
                     });
+                    owner = self.check.owner_of(
+                        callee.module,
+                        callee.f.name.text
+                    ).try(LowerError.OutOfMemory);
+                    targs ::= self.alloc.Vec<TyId>();
+                    callee.f.tparams.loop((h, tp) {
+                        var = self.check.types.var(
+                            tp.name.text,
+                            owner
+                        ).try(LowerError.OutOfMemory);
+                        targs.add(callee.inst.arg_for(
+                            var
+                        )).try(LowerError.OutOfMemory);
+                    });
                     key = self.check.instance_key_of(
                         b,
                         callee.self_ty,
+                        targs,
                         params,
                         ret_ty
                     ).try(LowerError.OutOfMemory);

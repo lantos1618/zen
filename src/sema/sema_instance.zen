@@ -153,7 +153,7 @@ check_instance = (c :: Checker, f: Function, body: BlockId, e: InstEdge)
         c.instance_ctx(mi, ret_now, poison, false),
         settled
     ).try();
-    key = c.instance_key_of(body, None, settled, ret_now).try();
+    key = c.instance_key_of(body, None, e.args, settled, ret_now).try();
     c.close_scratch(scratch, key, inst)
 }
 
@@ -282,10 +282,12 @@ check_member_instance = (
         None  => Ok,
     }).try();
     owner = c.owner_of(mi, f.name.text).try();
+    targs ::= c.alloc.Vec<TyId>();
     f.tparams.loop((h, tp) {
         v = c.types.var(tp.name.text, owner).try();
         c.bind_tvar(tp.name.text, e.inst.arg_for(v)).try();
         inst.bind(v, e.inst.arg_for(v)).try();
+        targs.add(e.inst.arg_for(v)).try();
     });
     f.tparams.loop((h, tp) { c.push_bounds(tp, Ctx(mi, poison)).try() });
     key = c.types.at(e.sig).match({
@@ -296,7 +298,13 @@ check_member_instance = (
                 c.instance_ctx(mi, sig.ret, e.self_ty, true),
                 sig.params
             ).try();
-            c.instance_key_of(body, Ok(e.self_ty), sig.params, sig.ret).try()
+            c.instance_key_of(
+                body,
+                Ok(e.self_ty),
+                targs,
+                sig.params,
+                sig.ret
+            ).try()
         },
         _       => "",
     });
@@ -304,16 +312,20 @@ check_member_instance = (
 }
 
 // The identity an instance's answers are published under, shared with the
-// lowering: the body, Self, and the settled signature.
+// lowering: the body, Self, the function's own type arguments (a type
+// parameter used only inside the body changes nothing else), and the
+// settled signature.
 instance_key_of* = (
     c       :: Checker,
     body    : BlockId,
     self_ty : Res<TyId>,
+    targs   : Vec<TyId>,
     params  : Vec<TyId>,
     ret     : TyId
 ) Res<str, AllocError> {
     out ::= c.alloc.String("b{}", body.index).try();
     self_ty.when_ok((t) { out.fmt("@{}", c.types.key_at(t)).try() });
+    targs.loop((h, t) { out.fmt("<{}", c.types.key_at(t)).try() });
     params.loop((h, t) { out.fmt(",{}", c.types.key_at(t)).try() });
     out.fmt("->{}", c.types.key_at(ret)).try();
     Ok(out.view());

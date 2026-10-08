@@ -130,6 +130,19 @@ behavior_of* = (be :: CBackend, actor: TyId, name: str)
     Ok(found.get(0))
 }
 
+// The behavior a send through a Ref names: `send` without a behavior of
+// that name reaches the actor's `receive`.
+message_behavior = (be :: CBackend, actor: TyId, name: str)
+                   Res<Res<BehaviorHit>, AllocError> {
+    be.behavior_of(actor, name).try().match({
+        Ok(hit) => Ok(Ok(hit)),
+        None    => name.eq("send").match({
+            true  => be.behavior_of(actor, "receive"),
+            false => Ok(None),
+        }),
+    })
+}
+
 behavior_at = (
     be    :: CBackend,
     s     : Site,
@@ -526,7 +539,7 @@ lower_actor_send* = (
     ctx      : Ctx,
     out      :: String
 ) Res<AllocError> {
-    be.behavior_of(actor_ty, a.name.text).try().match({
+    be.message_behavior(actor_ty, a.name.text).try().match({
         None    => be.unsupported(id, "an unresolved actor behavior", out),
         Ok(hit) => ActorSend(
             id: id,

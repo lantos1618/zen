@@ -9,6 +9,7 @@ tests/corpus/actor/concurrent_joins_share_one_worker # UNSUPPORTED: error: unsup
 tests/corpus/actor/cycle_closing_after_a_wait_is_broken # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/defers_and_spawn_keep_distinct_c_names # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/dynamic_str_is_copied # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/enum_messages_through_send # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/full_mailbox_releases_waiting_sender # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/generic_spawn_settles_state # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `sp
 tests/corpus/actor/multiple_actor_types_keep_distinct_c_names # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma

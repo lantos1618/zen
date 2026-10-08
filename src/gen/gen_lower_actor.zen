@@ -468,8 +468,13 @@ send = (
     span     : Span
 )
        Res<Value, LowerError> {
-    hook   = lo.behavior(actor_ty, name, c.args.len + 2, span)
-        .ok_or(unsupported(span, "an unresolved actor behavior")).try();
+    hook   = lo.behavior(actor_ty, name, c.args.len + 2, span).match({
+        Ok(h) => Ok(h),
+        None  => name.eq("send").match({
+            true  => lo.behavior(actor_ty, "receive", c.args.len + 2, span),
+            false => None,
+        }),
+    }).ok_or(unsupported(span, "an unresolved actor behavior")).try();
     layout = lo.layout_of(actor_ty, span).try();
     fields  ::= lo.alloc.Vec<FieldAt>();
     buffers ::= lo.alloc.Vec<bool>();

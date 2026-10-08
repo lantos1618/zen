@@ -1,0 +1,16 @@
+{ Actor, Ref, Context } = std.actor
+{ Env } = std.env
+
+Msg = { Add: u64 | Reset }
+
+Counter = {}
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Msg) ()
+})
+
+bad = (counter: Ref<Counter>) {
+    counter.send("add one").ignore();
+}
+
+main = (env: Env) i32 { 0 }

@@ -470,7 +470,13 @@ behavior_members = (c :: Checker, ty: TyId, name: str, out :: Vec<Found>)
                    Res<AllocError> {
     c.ref_of_actor(ty).try().match({
         None  => Ok,
-        Ok(a) => c.behavior_set(a, name, out),
+        Ok(a) => {
+            c.behavior_set(a, name, out).try();
+            (out.len == 0 && name.eq("send")).match({
+                true  => c.behavior_set(a, "receive", out),
+                false => Ok,
+            })
+        },
     })
 }
 

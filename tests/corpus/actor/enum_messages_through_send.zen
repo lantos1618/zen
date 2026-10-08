@@ -1,0 +1,47 @@
+// An actor with one `receive` taking an enum is sent to with `send`; the
+// reply carries the asker's Ref inside the message.
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Printer = {}
+
+Printer.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, total: u64) {
+        println("total {}", total);
+    }
+})
+
+Msg = { Add: u64 | Reset | Report: Ref<Printer> }
+
+Counter = { total :: u64 = 0 }
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Msg) {
+        m.match({
+            Add(n)    => { self.total = self.total + n; },
+            Reset     => { self.total = 0; },
+            Report(p) => p.send(self.total).ignore(),
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    printer = env.spawn(Printer()).try();
+    counter = env.spawn(Counter()).try();
+    counter.send(Msg.Add(40)).try();
+    counter.send(Msg.Add(2)).try();
+    counter.send(Msg.Report(printer)).try();
+    counter.send(Msg.Reset).try();
+    counter.send(Msg.Add(7)).try();
+    counter.send(Msg.Report(printer)).try();
+    counter.stop();
+    counter.join();
+    printer.stop();
+    printer.join();
+    Ok(0)
+}

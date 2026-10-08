@@ -241,8 +241,9 @@ spawn_actor* = (
     lo.write(lo.field_place(context, "alloc", span).try(), handle).try();
     started = lo.hook_code(layout, "started", EntryKind.Started, span).try();
     stopped = lo.hook_code(layout, "stopped", EntryKind.Stopped, span).try();
+    receive = lo.receive_code(layout, span).try();
     start_args ::= lo.one(Source.Computed(cell)).try();
-    [started, stopped].loop((a) { start_args.more(a).try(); });
+    [started, stopped, receive].loop((a) { start_args.more(a).try(); });
     status = lo.actor_call("actor_start", start_args, span).try();
     zero   = lo.word_const(Scalar.I32, 0).try();
     ok     = lo.slot_of(Scalar.Bool).try();
@@ -324,6 +325,45 @@ hook_code = (
                     hook: hook,
                     fields: lo.alloc.Vec<FieldAt>(),
                     buffers: lo.alloc.Vec<bool>()
+                ))
+            ).try();
+            lo.code_of(index)
+        },
+    })
+}
+
+// The turn a message sent through a message-typed Ref runs: the actor's
+// `receive`, its one message at the payload's start; 0 without one.
+receive_code = (
+    lo     :: Lowerer,
+    layout : ActorLayout,
+    span   : Span
+) Res<Source, LowerError> {
+    lo.behavior(layout.actor_ty, "receive", 3, span).match({
+        None     => Ok(Source.Computed(Value(
+            slot: lo.word_const(Scalar.U64, 0).try(),
+            ty: lo.prim("usize").try()
+        ))),
+        Ok(hook) => {
+            formal = lo.param_type(hook, 2).try();
+            fields  ::= lo.alloc.Vec<FieldAt>();
+            buffers ::= lo.alloc.Vec<bool>();
+            fields.add(FieldAt(
+                name: "",
+                ty: formal,
+                offset: 0
+            )).try(LowerError.OutOfMemory);
+            buffers.add(lo.check.actor_byte_buffer(
+                formal
+            )).try(LowerError.OutOfMemory);
+            index = lo.enqueue_synth(
+                lo.stand_in(span).try(),
+                Synth.Actor(ActorEntry(
+                    kind: EntryKind.Turn,
+                    layout: layout,
+                    hook: Ok(hook),
+                    fields: fields,
+                    buffers: buffers
                 ))
             ).try();
             lo.code_of(index)

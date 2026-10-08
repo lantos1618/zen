@@ -73,6 +73,7 @@ ActorLifecycle = {
     record: str,
     started: str,
     stopped: str,
+    receive: str,
 }
 
 // Recognition uses declaration ownership as well as spelling. A user-defined
@@ -341,7 +342,13 @@ ActorSend = {
                     Res<AllocError> {
         n       = be.next_actor_site();
         payload = be.write_message_record(n, sig).try();
-        turn    = self.write_turn(be, n, payload.view(), sig).try();
+        turn    = be.write_turn(
+            self.actor_ty,
+            self.hit,
+            n,
+            payload.view(),
+            sig
+        ).try();
         ActorSendEmission(
             send: self,
             result_ty: ret,
@@ -350,82 +357,71 @@ ActorSend = {
             turn: turn.view(),
         ).write(be, out)
     }
+}
 
-    // The turn entry for this send site: find the state and Context in the
-    // record, move byte buffers into the actor's allocator, call the
-    // behaviour. The record's first two fields are the same at every spawn
-    // site of the actor type, so a view of them is enough here.
-    write_turn = (
-        self    : @Self,
-        be      :: CBackend,
-        n       : usize,
-        payload : str,
-        sig     : Vec<TyId>
-    ) Res<String, AllocError> {
-        name ::= be.alloc.String().try();
-        sym_gen(name, "actor_turn", n).try();
-        sym        = be.behavior_symbol(self.actor_ty, self.hit).try();
-        context_ty = sig.get(1).match({
-            Ok(t) => t,
-            None  => TyId(index: 0),
+// The turn entry for a send site, or for the receive turn an actor starts
+// with: find the state and Context in the
+// record, move byte buffers into the actor's allocator, call the
+// behaviour. The record's first two fields are the same at every spawn
+// site of the actor type, so a view of them is enough here.
+write_turn = (
+    be       :: CBackend,
+    actor_ty : TyId,
+    hit      : BehaviorHit,
+    n        : usize,
+    payload  : str,
+    sig      : Vec<TyId>
+) Res<String, AllocError> {
+    name ::= be.alloc.String().try();
+    sym_gen(name, "actor_turn", n).try();
+    sym        = be.behavior_symbol(actor_ty, hit).try();
+    context_ty = sig.get(1).match({
+        Ok(t) => t,
+        None  => TyId(index: 0),
+    });
+    view       = be.write_record_view(n, actor_ty).try();
+    context    = be.context_helper(context_ty).try();
+    proto ::= be.alloc.String().try();
+    proto.fmt(
+        "{}void {}(uint8_t *zg_rec, uint8_t *zg_raw)",
+        be.linkage(),
+        name.view()
+    ).try();
+    body ::= be.alloc.String().try();
+    body.fmt("    {} *zg_self = ({} *)zg_rec;\n", view.view(), view.view()).try();
+    body.fmt("    {payload} *zg_msg = ({payload} *)zg_raw;\n").try();
+    context_c ::= be.alloc.String().try();
+    be.ctype(context_ty, context_c).try();
+    body.fmt(
+        "    {} *zg_ctx = {}((uint8_t *)&zg_self->zg_arena);\n",
+        context_c.view(),
+        context.view()
+    ).try();
+    Range(2, sig.len).loop((h, i) {
+        be.check.actor_byte_buffer(sig.ty_at(i)).then(() {
+            be.write_buffer_move(i - 2, sig.ty_at(i), context_ty, body).try();
         });
-        view       = be.write_record_view(n, self.actor_ty).try();
-        context    = be.context_helper(context_ty).try();
-        proto ::= be.alloc.String().try();
-        proto.fmt(
-            "{}void {}(uint8_t *zg_rec, uint8_t *zg_raw)",
-            be.linkage(),
-            name.view()
-        ).try();
-        body ::= be.alloc.String().try();
-        body.fmt(
-            "    {} *zg_self = ({} *)zg_rec;\n",
-            view.view(),
-            view.view()
-        ).try();
-        body.fmt("    {payload} *zg_msg = ({payload} *)zg_raw;\n").try();
-        context_c ::= be.alloc.String().try();
-        be.ctype(context_ty, context_c).try();
-        body.fmt(
-            "    {} *zg_ctx = {}((uint8_t *)&zg_self->zg_arena);\n",
-            context_c.view(),
-            context.view()
-        ).try();
-        Range(2, sig.len).loop((h, i) {
-            be.check.actor_byte_buffer(sig.ty_at(i)).then(() {
-                be.write_buffer_move(
-                    i - 2,
-                    sig.ty_at(i),
-                    context_ty,
-                    body
-                ).try();
-            });
+    });
+    // The context and message live for the whole call, so a borrowed
+    // parameter (gen_c_borrow.zen) takes them by address exactly as a
+    // `::` one does.
+    context_by_address = be.passes_address(hit.f, 1, sig.ty_at(1)).try();
+    body.fmt("    (void)({}(&zg_self->zg_state, ", sym.view()).try();
+    context_by_address.match({
+        true  => body.add("zg_ctx"),
+        false => body.add("*zg_ctx"),
+    }).try();
+    Range(2, sig.len).loop((h, i) {
+        body.add(", ").try();
+        be.passes_address(hit.f, i, sig.ty_at(i)).try().then(() {
+            body.add("&").try()
         });
-        // The context and message live for the whole call, so a borrowed
-        // parameter (gen_c_borrow.zen) takes them by address exactly as a
-        // `::` one does.
-        context_by_address = be.passes_address(
-            self.hit.f,
-            1,
-            sig.ty_at(1)
-        ).try();
-        body.fmt("    (void)({}(&zg_self->zg_state, ", sym.view()).try();
-        context_by_address.match({
-            true  => body.add("zg_ctx"),
-            false => body.add("*zg_ctx"),
-        }).try();
-        Range(2, sig.len).loop((h, i) {
-            body.add(", ").try();
-            be.passes_address(self.hit.f, i, sig.ty_at(i)).try().then(() {
-                body.add("&").try()
-            });
-            body.add("zg_msg->zg_arg").try();
-            body.write_usize(i - 2).try();
-        });
-        body.add("));\n").try();
-        be.add_function(name, proto, body).try();
-        Ok(name)
-    }
+        body.add("zg_msg->zg_arg").try();
+        body.write_usize(i - 2).try();
+    });
+    body.add("));\n").try();
+    be.add_function(name, proto, body).try();
+    Ok(name)
 }
 
 ActorSendEmission = {
@@ -763,11 +759,13 @@ write_actor_spawn = (be :: CBackend, layout: ActorSpawnLayout)
         layout.spawn.actor_ty,
         layout.arena_ty
     ).try();
+    receive = be.write_receive_turn(n, layout.spawn.actor_ty).try();
     be.write_spawn_value(ActorLifecycle(
         layout: layout,
         record: rec.view(),
         started: started.view(),
         stopped: stopped.view(),
+        receive: receive.view(),
     ))
 }
 
@@ -934,6 +932,38 @@ write_buffer_move = (
         field.view(),
         field.view()
     )
+}
+
+// The turn a message sent through a message-typed Ref runs: the actor's
+// `receive` with its one message as the payload record, or 0.
+write_receive_turn = (be :: CBackend, n: usize, actor: TyId)
+                     Res<String, AllocError> {
+    name ::= be.alloc.String().try();
+    name.add("0").try();
+    hit: Res<BehaviorHit> = be.behavior_of(actor, "receive").try();
+    hit.match({
+        None    => (),
+        Ok(hit) => {
+            inst = be.recv_inst(actor).try();
+            sig ::= be.alloc.Vec<TyId>();
+            be.method_sig(actor, hit.site.decl, hit.f, hit.mi, inst, sig).try();
+            (sig.len == 3).then(() {
+                payload = be.write_message_record(n, sig).try();
+                turn    = be.write_turn(
+                    actor,
+                    hit,
+                    n,
+                    payload.view(),
+                    sig
+                ).try();
+                entry ::= be.alloc.String().try();
+                entry.fmt("(size_t)&{}", turn.view()).try();
+                name = entry;
+            });
+            ()
+        },
+    });
+    Ok(name)
 }
 
 write_started_callback = (be :: CBackend, n: usize, rec: str, actor: TyId)
@@ -1154,12 +1184,13 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
         actor.view()
     ).try();
     be.fmt(
-        "int {} = {}({}, {}, (size_t)&{});\n",
+        "int {} = {}({}, {}, (size_t)&{}, {});\n",
         status.view(),
         start.view(),
         cell.view(),
         lifecycle.started,
-        lifecycle.stopped
+        lifecycle.stopped,
+        lifecycle.receive
     ).try();
     be.fmt("if ({} != 0) {{\n", status.view()).try();
     be.indent();

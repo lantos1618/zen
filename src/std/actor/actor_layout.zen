@@ -172,7 +172,8 @@ B_RUN_NEXT*: usize = 4       // link in the injector
 B_STOPPED*: usize = 5        // code address of the stopped entry, or 0
 B_SIDE*: usize = 6           // send-or-park state, made on first need
 B_FAILED*: usize = 7          // 1 once a checked trap ended a turn
-B_RECORD*: usize = 64        // byte offset of the compiler's record
+B_RECEIVE*: usize = 8        // code address of the receive turn, or 0
+B_RECORD*: usize = 80        // byte offset of the compiler's record
 
 // The send-or-park side record: the outbox (sends waiting for room), the
 // senders waiting on this mailbox, and how many receivers still hold part

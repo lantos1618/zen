@@ -557,18 +557,106 @@ actor_member* = (
     ).try();
     cell_source = Source.Computed(id_value);
     name.match({
-        "stop" => { lo.actor_call(
+        "stop"  => { lo.actor_call(
             "actor_stop",
             lo.one(cell_source).try(),
             span
         ).try(); lo.unit() },
-        "join" => { lo.actor_call(
+        "join"  => { lo.actor_call(
             "actor_join",
             lo.one(cell_source).try(),
             span
         ).try(); lo.unit() },
-        _      => lo.send(id, c, cell_source, actor_ty, name, span),
+        "watch" => lo.watch(id, c, cell_source, span),
+        _       => lo.send(id, c, cell_source, actor_ty, name, span),
     })
+}
+
+// `reference.watch(to, done, failed)`: copy both messages into runtime
+// blocks now and hand them to actor_watch with the two Refs; Ok, or Full
+// when memory ran out.
+watch = (lo :: Lowerer, id: ExprId, c: Call, cell: Source, span: Span)
+        Res<Value, LowerError> {
+    to      = c.args.get(0).ok_or(unsupported(span, "a watch without its Ref")).try();
+    done    = c.args.get(1).ok_or(unsupported(span, "a watch without its messages")).try();
+    failed  = c.args.get(2).ok_or(unsupported(span, "a watch without its messages")).try();
+    message = lo.type_of(done.value).try();
+    lo.transferable(message, message, span).try();
+    target  = lo.expr(to.value).try();
+    watcher = lo.read(lo.field_place(lo.spill(target), "id", span).try()).try();
+    first   = lo.message_block(done.value, message, span).try();
+    second  = lo.message_block(failed.value, message, span).try();
+    args ::= lo.one(cell).try();
+    args.more(Source.Computed(watcher)).try();
+    args.more(Source.Computed(first)).try();
+    args.more(Source.Computed(second)).try();
+    status = lo.actor_call("actor_watch", args, span).try();
+    ty     = lo.type_of(id).try();
+    out    = lo.temp(ty).try();
+    end    = lo.label().try();
+    lo.outcome(status.slot, 0, out, ty, None, end, span).try();
+    lo.outcome(status.slot, 1, out, ty, Ok("Closed"), end, span).try();
+    lo.fail(out, ty, "Full", span).try();
+    lo.jump(end).try();
+    lo.start(end);
+    Ok(out)
+}
+
+// One message of type `ty`, laid out as a one-field payload record and
+// copied into a runtime block by actor_message; the block's address.
+message_block = (lo :: Lowerer, arg: ExprId, ty: TyId, span: Span)
+                Res<Value, LowerError> {
+    class   = lo.class_of(ty).try();
+    size    = size_of(class).larger(1);
+    payload = lo.slot_of(Scalar.Block(Layout(
+        size: round_up(size, 16),
+        align: 16
+    ))).try();
+    data    = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: data, slot: payload))).try();
+    slices      = lo.slot_of(Scalar.Block(Layout(
+        size: SLICE_BYTES.larger(16),
+        align: 16
+    ))).try();
+    descriptors = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(
+        out: descriptors,
+        slot: slices
+    ))).try();
+    value = lo.argument_value(Source.Given(arg), ty, span).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: data,
+        offset: 0,
+        value: value.slot
+    ))).try();
+    copied = lo.copied(ty);
+    copied.then(() { lo.describe(descriptors, 0, value, 0, span).try(); });
+    usize_ty   = lo.prim("usize").try();
+    pointer_ty = lo.byte_pointer().try();
+    args ::= lo.one(Source.Computed(Value(
+        slot: lo.word_const(Scalar.U64, 0).try(),
+        ty: usize_ty
+    ))).try();
+    args.more(Source.Computed(Value(slot: data, ty: pointer_ty))).try();
+    args.more(Source.Computed(Value(
+        slot: lo.word_const(Scalar.U64, size.to_i64_bits()).try(),
+        ty: usize_ty
+    ))).try();
+    args.more(Source.Computed(Value(
+        slot: copied.match({ true => descriptors, false => lo.word_const(
+            Scalar.Ptr,
+            0
+        ).try() }),
+        ty: pointer_ty
+    ))).try();
+    args.more(Source.Computed(Value(
+        slot: lo.word_const(
+            Scalar.U64,
+            copied.match({ true => 1, false => 0 })
+        ).try(),
+        ty: usize_ty
+    ))).try();
+    lo.actor_call("actor_message", args, span)
 }
 
 // `reference.behavior(args)`: evaluate the arguments into a payload record,
@@ -584,39 +672,48 @@ send = (
     span     : Span
 )
        Res<Value, LowerError> {
+    skip = leading_args(name);
     hook = lo.behavior(actor_ty, name, c.args.len + 2, span).match({
         Ok(h) => Ok(h),
-        None  => name.eq("send").match({
-            true  => lo.behavior(actor_ty, "receive", c.args.len + 2, span),
+        None  => send_verb(name).match({
+            true  => lo.behavior(
+                actor_ty,
+                "receive",
+                c.args.len - skip + 2,
+                span
+            ),
             false => None,
         }),
     });
     // `send` on a message-typed Ref names no behavior: its one message runs
     // the receive turn the actor started with.
-    message = name.eq("send") && c.args.len == 1;
+    message = send_verb(name) && c.args.len == skip + 1;
     send_target(hook.match({ Ok(_) => true, None => message }), span).try();
     fields  ::= lo.alloc.Vec<FieldAt>();
     buffers ::= lo.alloc.Vec<bool>();
     at      :: usize = 0;
     widest  :: usize = 1;
     strs    :: usize = 0;
-    c.args.loop((h, i, arg) {
-        formal = lo.send_formal(hook, actor_ty, i).try();
-        actual = lo.type_of(arg.value).try();
-        lo.transferable(formal, actual, span).try();
-        class  = lo.class_of(formal).try();
-        at     = round_up(at, align_of(class));
-        widest = widest.larger(align_of(class));
-        fields.add(FieldAt(
-            name: "",
-            ty: formal,
-            offset: at
-        )).try(LowerError.OutOfMemory);
-        buffers.add(lo.check.actor_byte_buffer(
-            formal
-        )).try(LowerError.OutOfMemory);
-        at = at + size_of(class);
-        lo.copied(formal).then(() { strs = strs + 1; });
+    c.args.loop((h, k, arg) {
+        (k >= skip).then(() {
+            i      = k - skip;
+            formal = lo.send_formal(hook, actor_ty, i).try();
+            actual = lo.type_of(arg.value).try();
+            lo.transferable(formal, actual, span).try();
+            class  = lo.class_of(formal).try();
+            at     = round_up(at, align_of(class));
+            widest = widest.larger(align_of(class));
+            fields.add(FieldAt(
+                name: "",
+                ty: formal,
+                offset: at
+            )).try(LowerError.OutOfMemory);
+            buffers.add(lo.check.actor_byte_buffer(
+                formal
+            )).try(LowerError.OutOfMemory);
+            at = at + size_of(class);
+            lo.copied(formal).then(() { strs = strs + 1; });
+        });
     });
     // As C lays out the payload struct (one byte when there are no fields).
     size    = (fields.len == 0).match({ true => 1, false => round_up(
@@ -639,27 +736,39 @@ send = (
         slot: slices
     ))).try();
     slice :: usize = 0;
-    c.args.loop((h, i, arg) {
-        field = fields.get(i).ok_or(unsupported(span, "a missing payload field")).try();
-        value = lo.argument_value(
-            Source.Given(arg.value),
-            field.ty,
-            span
-        ).try();
-        lo.add(Instruction.StoreValue(Store(
-            base: data,
-            offset: field.offset,
-            value: value.slot
-        ))).try();
-        lo.copied(field.ty).then(() {
-            lo.describe(
-                descriptors,
-                slice * SLICE_BYTES,
-                value,
-                field.offset,
+    delay ::= lo.alloc.Vec<Source>();
+    c.args.loop((h, k, arg) {
+        (k < skip).then(() {
+            ms = lo.argument_value(
+                Source.Given(arg.value),
+                lo.prim("u64").try(),
                 span
             ).try();
-            slice = slice + 1;
+            delay.add(Source.Computed(ms)).try(LowerError.OutOfMemory);
+        });
+        (k >= skip).then(() {
+            i     = k - skip;
+            field = fields.get(i).ok_or(unsupported(span, "a missing payload field")).try();
+            value = lo.argument_value(
+                Source.Given(arg.value),
+                field.ty,
+                span
+            ).try();
+            lo.add(Instruction.StoreValue(Store(
+                base: data,
+                offset: field.offset,
+                value: value.slot
+            ))).try();
+            lo.copied(field.ty).then(() {
+                lo.describe(
+                    descriptors,
+                    slice * SLICE_BYTES,
+                    value,
+                    field.offset,
+                    span
+                ).try();
+                slice = slice + 1;
+            });
         });
     });
     turn       = lo.send_turn(hook, actor_ty, fields, buffers, span).try();
@@ -667,6 +776,7 @@ send = (
     pointer_ty = lo.byte_pointer().try();
     no_slices  = lo.word_const(Scalar.Ptr, 0).try();
     send_args ::= lo.one(cell).try();
+    delay.loop((h, d) { send_args.more(d).try() });
     send_args.more(turn).try();
     send_args.more(Source.Computed(Value(slot: data, ty: pointer_ty))).try();
     send_args.more(Source.Computed(Value(
@@ -681,7 +791,7 @@ send = (
         slot: lo.word_const(Scalar.U64, strs.to_i64_bits()).try(),
         ty: usize_ty
     ))).try();
-    status = lo.actor_call("actor_send", send_args, span).try();
+    status = lo.actor_call(send_entry(name), send_args, span).try();
     ty     = lo.type_of(id).try();
     out    = lo.temp(ty).try();
     done   = lo.label().try();
@@ -692,6 +802,18 @@ send = (
     lo.start(done);
     Ok(out)
 }
+
+// The sends that reach `receive`, the runtime entry each calls, and how
+// many arguments come before the message (send_after's delay).
+send_verb = (name: str) bool { name.is_in(["send", "try_send", "send_after"]) }
+
+send_entry = (name: str) str {
+    name.match({ "try_send" => "actor_offer", "send_after" => "actor_after", _ => "actor_send" })
+}
+
+leading_args = (name: str) usize { name.eq(
+    "send_after"
+).match({ true => 1, false => 0 }) }
 
 // Context.me is the Ref of the actor whose turn this is.
 write_me = (lo :: Lowerer, context: Place, span: Span) Res<LowerError> {

@@ -70,6 +70,12 @@ G_TRACE*: usize = 40         // ZEN_ACTOR_TRACE: event buffer address (0 when of
 G_TRACE_N*: usize = 41       // events claimed, possibly past the capacity
 G_TRACE_CAP*: usize = 42     // events the buffer holds
 G_TRACE_T0*: usize = 43      // monotonic ns when tracing started
+G_WATCH_LOCK*: usize = 44    // u32: watch lists change under it
+G_TIMER_LOCK*: usize = 45    // u32: the timer list changes under it
+G_TIMERS*: usize = 46        // the earliest timer entry (0 when none)
+G_TIMER_LAST*: usize = 47    // the latest timer entry
+G_TIMER_N*: usize = 48       // timers not yet delivered
+G_TIMER_ON*: usize = 49      // timer thread: 0 none, 1 starting, 2 running
 // Regions, in bytes.
 G_CENTRAL*: usize = 512      // std.actor.actor_pool's central part
 G_CHUNKS*: usize = 1152      // the registry's chunk table, CHUNKS words
@@ -79,8 +85,9 @@ G_SPARE_LOCK*: usize = 5376  // spare threads (a lock and a condition)
 G_SPARE_COND*: usize = 5440
 G_EXIT_PARKER*: usize = 5504 // the exiting main thread waits here
 G_THREAD_LIST*: usize = 5632 // started threads' handles, MAX_THREADS words
+G_TIMER_PARKER*: usize = 7168 // the timer thread waits here
 MAX_THREADS*: usize = 192
-GLOBALS_BYTES*: usize = 7168
+GLOBALS_BYTES*: usize = 7296
 
 // Statistics, as word indices after G_STATS.
 S_QUEUED*: usize = 0         // sends that waited in an outbox
@@ -137,11 +144,12 @@ WORKER_BYTES*: usize = 2304
 
 // Slots never move and are never freed, so a stale Ref only ever reads a
 // live word. Four words: the life word, the body's address, the Ref this
-// actor waits on while blocked (for the cycle walk), and spare.
+// actor waits on while blocked (for the cycle walk), and its watch list.
 SLOT_WORDS*: usize = 4
 S_LIFE*: usize = 0
 S_BODY*: usize = 1
 S_WAITING*: usize = 2
+S_WATCH*: usize = 3          // watch entries, under G_WATCH_LOCK
 
 // The life word: every sender touches it once.
 //   bits  0..31  messages accepted and not yet taken (and short pins)
@@ -149,12 +157,14 @@ S_WAITING*: usize = 2
 //   bit   33     scheduled: queued or running; its holder owns the actor
 //   bit   34     blocked: senders wait in an outbox for room elsewhere
 //   bit   35     waited on: senders are queued on this mailbox
+//   bit   36     watched: S_WATCH holds entries for this generation
 //   bits 40..63  generation, bumped when the actor is finalised
 COUNT_MASK*: usize = 4294967295
 CLOSED*: usize = 4294967296
 SCHED*: usize = 8589934592
 BLOCKED*: usize = 17179869184
 WAITED*: usize = 34359738368
+WATCHED*: usize = 68719476736
 GEN_SHIFT*: usize = 40
 GEN_ONE*: usize = 1099511627776
 GEN_MASK*: usize = 16777215
@@ -200,3 +210,15 @@ WAITER_BYTES*: usize = 32
 M_NEXT*: usize = 0
 M_TURN*: usize = 1
 M_PAYLOAD*: usize = 16       // byte offset
+
+// A watch or timer entry: the next entry, the Ref it delivers to, then
+// a watch's generation and its two messages, or a timer's deadline and
+// its one message.
+E_NEXT*: usize = 0
+E_TO*: usize = 1
+E_GEN*: usize = 2
+E_AT*: usize = 2
+E_DONE*: usize = 3
+E_MSG*: usize = 3
+E_FAILED*: usize = 4
+ENTRY_BYTES*: usize = 64

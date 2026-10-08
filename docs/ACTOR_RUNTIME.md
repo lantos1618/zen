@@ -28,6 +28,26 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
 - `join()` waits until that has happened; from the actor itself it returns
   at once. A worker thread that joins hands its worker to another thread
   while it waits.
+- `r.try_send(m)` is `send` that never waits: a full mailbox answers
+  `Full` at once, through the runtime's `actor_offer`. A send to the sender
+  itself is never refused for room, so `ctx.me.try_send` answers `Full` only
+  for an oversized message.
+- `r.watch(to, done, failed)`: when `r` ends, `to` gets `done` after a
+  normal stop or `failed` after a checked trap ended its turn; when `r` has
+  already ended, `done` goes at once. Both messages are built and copied at
+  the call into a 64-byte entry on the actor slot's watch list (`S_WATCH`,
+  guarded by `G_WATCH_LOCK`), and the slot's `WATCHED` life bit tells
+  finalization to take the list before the slot is reused. Finalization
+  sends the chosen message and frees the other, so nothing is allocated
+  while an actor ends; an unwatched actor's end is unchanged.
+- `r.send_after(ms, m)` builds and copies `m` at the call and delivers it
+  `ms` milliseconds later. One timer thread, started by the first call,
+  keeps the pending entries ordered by deadline (equal deadlines in call
+  order) and sleeps on its parker with a timeout. A message whose receiver
+  has stopped by then is dropped. A pending timer counts as an accepted
+  message at exit, and a turn waiting for one is not blocked, so the
+  watchdog does not report it. There is no cancel: a receiver that no
+  longer wants a tick ignores it.
 - At process exit the runtime waits until every accepted message, and every
   message those sent, has run; then it stops every actor still alive.
 - A str argument is copied into the message; a consumed `Vec<u8>` is copied

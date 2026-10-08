@@ -1,0 +1,55 @@
+// Watching an actor while it stops, thousands of times, plus a timer each:
+// every watch gets exactly one notice whichever side wins the race.
+
+{ Res, Ok, Err, Range } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+News = { Done: u64 | Failed: u64 | Tick: u64 }
+
+Inbox = { done :: u64 = 0, failed :: u64 = 0, ticks :: u64 = 0, want: u64 }
+
+Inbox.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: News) {
+        m.match({
+            Done(_)   => { self.done = self.done + 1; },
+            Failed(_) => { self.failed = self.failed + 1; },
+            Tick(_)   => { self.ticks = self.ticks + 1; },
+        });
+        (self.done + self.failed + self.ticks == self.want).then(
+            () { ctx.me.stop(); }
+        );
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        println(
+            "done {} failed {} ticks {}",
+            self.done,
+            self.failed,
+            self.ticks
+        );
+    }
+})
+
+Worker = { n :: u64 = 0 }
+
+Worker.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, k: u64) { self.n = self.n + k; }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    n: u64 = 1000;
+    inbox  = env.spawn(Inbox(want: n * 2)).try();
+    Range(0, n).loop((i) {
+        w = env.spawn(Worker()).try();
+        w.send(i).try();
+        w.stop();
+        w.watch(inbox, News.Done(i), News.Failed(i)).try();
+        inbox.send_after(i % 7, News.Tick(i)).try();
+    });
+    inbox.join();
+    Ok(0)
+}

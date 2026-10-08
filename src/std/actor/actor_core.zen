@@ -1,4 +1,4 @@
-{ Error } = std.core
+{ Error, Res } = std.core
 ActorError* = { Closed | Full }
 ActorError.impl(Error, {})
 ActorStartError* = { OutOfMemory | Unavailable }
@@ -16,6 +16,16 @@ Ref*<A> = {
     // one native join. Calling from this actor returns immediately. External
     // callers must finish before process-wide runtime teardown.
     join* = (self: @Self) ()
+
+    // When this actor ends, send `done` to `to` if it stopped, or `failed`
+    // if a trap ended it; an actor already gone sends `done` at once. Both
+    // messages are copied now. Full only when memory runs out.
+    watch* = <M>(self: @Self, to: Ref<M>, done: M, failed: M) Res<ActorError>
+
+    // For the message M the actor receives, beside `send(m)`:
+    //   try_send(m)       never waits: a full mailbox answers Full
+    //   send_after(ms, m) delivers m after ms milliseconds; a timer whose
+    //                     actor has stopped by then is dropped
 }
 
 Actor* = {}

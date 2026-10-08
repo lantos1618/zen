@@ -132,13 +132,25 @@ behavior_of* = (be :: CBackend, actor: TyId, name: str)
     Ok(found.get(0))
 }
 
-// The behavior a send through a Ref names: `send` without a behavior of
-// that name reaches the actor's `receive`.
+// The sends that reach `receive`, the runtime entry each calls, and how
+// many arguments come before the message (send_after's delay).
+send_verb = (name: str) bool { name.is_in(["send", "try_send", "send_after"]) }
+
+send_entry = (name: str) str {
+    name.match({ "try_send" => "actor_offer", "send_after" => "actor_after", _ => "actor_send" })
+}
+
+leading_args = (name: str) usize { name.eq(
+    "send_after"
+).match({ true => 1, false => 0 }) }
+
+// The behavior a send through a Ref names: a send verb without a behavior
+// of that name reaches the actor's `receive`.
 message_behavior = (be :: CBackend, actor: TyId, name: str)
                    Res<Res<BehaviorHit>, AllocError> {
     be.behavior_of(actor, name).try().match({
         Ok(hit) => Ok(Ok(hit)),
-        None    => name.eq("send").match({
+        None    => send_verb(name).match({
             true  => be.behavior_of(actor, "receive"),
             false => Ok(None),
         }),
@@ -328,13 +340,16 @@ ActorSend = {
     transferable = (self: @Self, be :: CBackend, sig: Vec<TyId>)
                    Res<bool, AllocError> {
         safe ::= true;
+        skip = leading_args(self.access.name.text);
         self.call.args.loop((h, i, arg) {
-            formal = sig.get(i + 2).ok_or(AllocError.OutOfMemory).try();
-            actual = be.ty_of(arg.value, self.ctx, formal).try();
-            buffer = be.check.actor_byte_buffer(formal);
-            safe   = safe && (buffer == be.check.actor_byte_buffer(actual))
-                && (is_direct_str(be, formal) == is_direct_str(be, actual))
-                && (buffer || !be.check.actor_payload_unsafe(formal).try());
+            (i >= skip).then(() {
+                formal = sig.get(i - skip + 2).ok_or(AllocError.OutOfMemory).try();
+                actual = be.ty_of(arg.value, self.ctx, formal).try();
+                buffer = be.check.actor_byte_buffer(formal);
+                safe   = safe && (buffer == be.check.actor_byte_buffer(actual))
+                    && (is_direct_str(be, formal) == is_direct_str(be, actual))
+                    && (buffer || !be.check.actor_payload_unsafe(formal).try());
+            });
         });
         Ok(safe)
     }
@@ -467,27 +482,43 @@ ActorSendEmission = {
             ).try();
         });
         slice :: usize = 0;
+        skip = leading_args(self.access.name.text);
+        delay ::= be.alloc.String().try();
         self.call.args.loop((h, i, arg) {
-            ty = self.signature.get(i + 2).match({
-                Ok(t) => t,
-                None  => TyId(index: 0),
-            });
-            value ::= be.alloc.String().try();
-            expr(be, arg.value, self.ctx, ty, value).try();
-            line ::= be.alloc.String().try();
-            line.fmt("{}.zg_arg", message.view()).try();
-            line.write_usize(i).try();
-            line.fmt(" = {};\n", value.view()).try();
-            be.write(line.view()).try();
-            (is_direct_str(be, ty) || be.check.actor_byte_buffer(ty)).then(() {
-                be.write_slice_descriptor(
-                    slice_name.view(),
-                    slice,
-                    message.view(),
-                    i,
-                    be.check.actor_byte_buffer(ty)
+            (i < skip).then(() {
+                ms ::= be.alloc.String().try();
+                expr(
+                    be,
+                    arg.value,
+                    self.ctx,
+                    be.check.types.prim("u64").try(),
+                    ms
                 ).try();
-                slice = slice + 1;
+                delay.fmt("(uint64_t)({}), ", ms.view()).try();
+            });
+            (i >= skip).then(() {
+                j  = i - skip;
+                ty = self.signature.get(j + 2).match({
+                    Ok(t) => t,
+                    None  => TyId(index: 0),
+                });
+                value ::= be.alloc.String().try();
+                expr(be, arg.value, self.ctx, ty, value).try();
+                line ::= be.alloc.String().try();
+                line.fmt("{}.zg_arg", message.view()).try();
+                line.write_usize(j).try();
+                line.fmt(" = {};\n", value.view()).try();
+                be.write(line.view()).try();
+                (is_direct_str(be, ty) || be.check.actor_byte_buffer(ty)).then(() {
+                    be.write_slice_descriptor(
+                        slice_name.view(),
+                        slice,
+                        message.view(),
+                        j,
+                        be.check.actor_byte_buffer(ty)
+                    ).try();
+                    slice = slice + 1;
+                });
             });
         });
         id ::= be.alloc.String().try();
@@ -499,13 +530,14 @@ ActorSendEmission = {
         });
         count ::= be.alloc.String().try();
         count.write_usize(slices).try();
-        send = be.runtime_symbol("actor_send").try();
+        send = be.runtime_symbol(send_entry(self.access.name.text)).try();
         be.fmt(
-            "int {} = {}({}.{}, (size_t){}, (uint8_t *)&{}, sizeof({}), (uint8_t *){}, {});\n",
+            "int {} = {}({}.{}, {}(size_t){}, (uint8_t *)&{}, sizeof({}), (uint8_t *){}, {});\n",
             status.view(),
             send.view(),
             recv.view(),
             id.view(),
+            delay.view(),
             self.turn,
             message.view(),
             message.view(),
@@ -541,7 +573,7 @@ lower_actor_send* = (
     out      :: String
 ) Res<AllocError> {
     be.message_behavior(actor_ty, a.name.text).try().match({
-        None    => a.name.text.eq("send").match({
+        None    => send_verb(a.name.text).match({
             true  => be.lower_message_send(id, c, a, rty, actor_ty, ctx, out),
             false => be.unsupported(id, "an unresolved actor behavior", out),
         }),
@@ -596,6 +628,133 @@ lower_message_send = (
             ).write(be, out)
         },
     })
+}
+
+// `r.watch(to, done, failed)`: both messages are copied into runtime blocks
+// now, so nothing is built while r ends; actor_watch takes them with the
+// two Refs and answers Ok, or Full when memory ran out.
+lower_actor_watch* = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    a   : Access,
+    rty : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<AllocError> {
+    be.need_actor();
+    ret = be.sub(be.check.type_of(id, ctx).try()).try();
+    be.request_type(ret).try();
+    to      = c.args.get(0).ok_or(AllocError.OutOfMemory).try();
+    done    = c.args.get(1).ok_or(AllocError.OutOfMemory).try();
+    failed  = c.args.get(2).ok_or(AllocError.OutOfMemory).try();
+    message = be.sub(be.check.type_of(done.value, ctx).try()).try();
+    be.check.actor_payload_unsafe(message).try().match({
+        true  => be.unsupported(
+            id,
+            "an actor payload without a concrete mailbox transfer",
+            out
+        ),
+        false => {
+            recv_code ::= be.alloc.String().try();
+            expr(be, a.base, ctx, rty, recv_code).try();
+            recv = be.temp(rty, "actor_ref").try();
+            be.set_line(recv.view(), recv_code.view()).try();
+            to_ty = be.sub(be.check.type_of(to.value, ctx).try()).try();
+            to_code ::= be.alloc.String().try();
+            expr(be, to.value, ctx, to_ty, to_code).try();
+            watcher = be.temp(to_ty, "actor_ref").try();
+            be.set_line(watcher.view(), to_code.view()).try();
+            sig ::= be.alloc.Vec<TyId>();
+            [message, message, message].loop((h, ty) { sig.add(ty).try() });
+            n       = be.next_actor_site();
+            payload = be.write_message_record(n, sig).try();
+            first   = be.message_block(
+                payload.view(),
+                message,
+                done.value,
+                ctx
+            ).try();
+            second  = be.message_block(
+                payload.view(),
+                message,
+                failed.value,
+                ctx
+            ).try();
+            field ::= be.alloc.String().try();
+            field.sym_member("id").try();
+            status ::= be.fresh_name("actor_watch").try();
+            watch = be.runtime_symbol("actor_watch").try();
+            be.fmt(
+                "int {} = {}({}.{}, {}.{}, {}, {});\n",
+                status.view(),
+                watch.view(),
+                recv.view(),
+                field.view(),
+                watcher.view(),
+                field.view(),
+                first.view(),
+                second.view()
+            ).try();
+            dst = be.temp(ret, "actor_result").try();
+            be.fmt("if ({} == 0) {{\n", status.view()).try();
+            be.indent();
+            be.write_assign_ok_unit(ret, dst.view()).try();
+            be.dedent();
+            be.fmt("}} else if ({} == 1) {{\n", status.view()).try();
+            be.indent();
+            be.write_assign_err(ret, "Closed", dst.view()).try();
+            be.dedent();
+            be.writeln("} else {").try();
+            be.indent();
+            be.write_assign_err(ret, "Full", dst.view()).try();
+            be.dedent();
+            be.writeln("}").try();
+            out.add(dst.view())
+        },
+    })
+}
+
+// One message of type `ty` copied into a runtime block by actor_message;
+// the C name of the block's address.
+message_block = (
+    be      :: CBackend,
+    payload : str,
+    ty      : TyId,
+    value   : ExprId,
+    ctx     : Ctx
+)
+                Res<String, AllocError> {
+    record ::= be.fresh_name("actor_payload").try();
+    be.fmt("{} {} = ({}){{0}};\n", payload, record.view(), payload).try();
+    code ::= be.alloc.String().try();
+    expr(be, value, ctx, ty, code).try();
+    be.fmt("{}.zg_arg0 = {};\n", record.view(), code.view()).try();
+    buffer = be.check.actor_byte_buffer(ty);
+    copied = buffer || is_direct_str(be, ty);
+    slices ::= be.fresh_name("actor_slices").try();
+    copied.then(() {
+        be.fmt("zg_actor_slice {}[1];\n", slices.view()).try();
+        be.write_slice_descriptor(
+            slices.view(),
+            0,
+            record.view(),
+            0,
+            buffer
+        ).try();
+    });
+    block ::= be.fresh_name("actor_block").try();
+    make = be.runtime_symbol("actor_message").try();
+    be.fmt(
+        "size_t {} = {}((size_t)0, (uint8_t *)&{}, sizeof({}), (uint8_t *){}, {});\n",
+        block.view(),
+        make.view(),
+        record.view(),
+        record.view(),
+        copied.match({ true => slices.view(), false => "NULL" }),
+        copied.match({ true => "1", false => "0" })
+    ).try();
+    Ok(block)
 }
 
 write_message_record = (be :: CBackend, n: usize, sig: Vec<TyId>)

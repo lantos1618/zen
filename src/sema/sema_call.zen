@@ -26,7 +26,7 @@
 { is_type_def, opaque, first_found, named_as } = sema.sema_member
 { static_access } = sema.sema_static
 { filter_visible, hidden_member } = sema.sema_member
-{ inst_bounds_hold, satisfies_bound, note_bound_view } = sema.sema_bound
+{ inst_bounds_hold, satisfies_bound, note_bound_view, is_actor_type } = sema.sema_bound
 { check_literal } = sema.sema_trap
 { check_arms, check_arms_agree, hoist_at, one_value, tail_expr } = sema.sema_hoist
 { check_dropped_tail, note_lambda_tail } = sema.sema_effect
@@ -1080,18 +1080,29 @@ infer_member_inst = (
     off     : usize,
     inst    :: Inst
 ) Res<AllocError> {
-    c.types.at(ty).match({
-        Fn(f) => actuals.loop((h, i, a) {
-            (a.is_lambda == false).then(() {
-                f.params.get(i + off).match({
-                    None     => Ok,
-                    Ok(want) => c.unify(want, a.ty, inst),
-                }).try();
-            });
-        }),
-        _     => (),
+    // A Ref<A> to an actor converts to the Ref<M> of a message A receives,
+    // so it binds a parameter only when no other argument has.
+    [false, true].loop((pass) {
+        c.types.at(ty).match({
+            Fn(f) => actuals.loop((h, i, a) {
+                (a.is_lambda == false && (pass || !c.actor_ref(a.ty).try())).then(() {
+                    f.params.get(i + off).match({
+                        None     => Ok,
+                        Ok(want) => c.unify(want, a.ty, inst),
+                    }).try();
+                });
+            }),
+            _     => (),
+        });
     });
     Ok
+}
+
+actor_ref = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+    c.ref_of_actor(ty).try().match({
+        Ok(a) => c.is_actor_type(a),
+        None  => Ok(false),
+    })
 }
 
 BoundFit = { BoundSatisfied | BoundUnresolved | BoundDisjoint }

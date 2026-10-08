@@ -1,0 +1,58 @@
+// `r.watch(to, done, failed)` sends `done` to `to` when r stops and
+// `failed` when a trap ends it; watching an actor already gone sends
+// `done` at once. Both messages arrive before join returns.
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Job = { Work: u64 | Crash }
+
+Worker = { divisor: u64 }
+
+Worker.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, j: Job) {
+        j.match({
+            Work(n) => println("work {}", n / self.divisor),
+            Crash   => {
+                q = 1 / (self.divisor - self.divisor);
+                println("never {}", q);
+            },
+        });
+    }
+})
+
+News = { Done: u64 | Failed: u64 }
+
+Boss = {}
+
+Boss.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, n: News) {
+        n.match({
+            Done(id)   => println("worker {} done", id),
+            Failed(id) => println("worker {} failed", id),
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    boss             = env.spawn(Boss()).try();
+    inbox: Ref<News> = boss;
+    a                = env.spawn(Worker(divisor: 2)).try();
+    a.watch(inbox, News.Done(1), News.Failed(1)).try();
+    a.send(Job.Work(10)).try();
+    a.stop();
+    a.join();
+    b = env.spawn(Worker(divisor: 3)).try();
+    b.watch(boss, News.Done(2), News.Failed(2)).try();
+    b.send(Job.Work(9)).try();
+    b.send(Job.Crash).try();
+    b.join();
+    a.watch(boss, News.Done(3), News.Failed(3)).try();
+    boss.stop();
+    boss.join();
+    Ok(0)
+}

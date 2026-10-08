@@ -229,6 +229,44 @@ park_locked = (p: Ptr<u8>) {
     mutex_unlock(p);
 }
 
+// As `park`, but give up after about `ns` nanoseconds. On macOS it
+// sleeps at most a millisecond at a time; the caller's loop rechecks.
+park_for* = (p: Ptr<u8>, ns: u64) {
+    futex_parker().match({
+        true  => park_for_futex(p.to<u32>(), p.offset(PARKER_TIME), ns),
+        false => {
+            nanosleep_ns(
+                (ns > PARKER_SLICE_NS).match({ true => PARKER_SLICE_NS, false => ns })
+            ).ignore_status();
+            park_clear(p);
+        },
+    });
+}
+
+// The parker's spare bytes hold the futex wait's relative timespec.
+PARKER_TIME: usize = 16
+PARKER_SLICE_NS: u64 = 1000000
+
+park_for_futex = (word: Ptr<u32>, time: Ptr<u8>, ns: u64) {
+    (atomic_cas_u32(word, 1, 0) != 1).then(() {
+        (atomic_cas_u32(word, 0, 2) != 1 && atomic_load_u32(word) == 2).then(() {
+            spec = time.to<u64>();
+            spec.write(0, ns / 1000000000);
+            spec.write(1, ns % 1000000000);
+            futex(
+                word,
+                FUTEX_WAIT_PRIVATE,
+                2,
+                address_of(time),
+                0,
+                0
+            ).ignore_status();
+        });
+        atomic_cas_u32(word, 2, 0).ignore_word();
+        atomic_cas_u32(word, 1, 0).ignore_word();
+    });
+}
+
 // Wake the owner, or make its next `park` return at once.
 unpark* = (p: Ptr<u8>) {
     futex_parker().match({

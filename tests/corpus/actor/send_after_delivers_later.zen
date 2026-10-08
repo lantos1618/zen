@@ -1,0 +1,48 @@
+// `r.send_after(ms, m)` delivers m after ms milliseconds: a message sent
+// now overtakes it, an actor can tick itself through ctx.me, a pending
+// timer keeps the runtime alive, and one whose actor has stopped by then
+// is dropped. An actor already stopped answers Closed.
+
+{ Res, Ok, Err } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Msg = { Now | Later | Tick: u64 }
+
+Clock = {}
+
+Clock.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Msg) {
+        m.match({
+            Now     => println("now"),
+            Later   => println("later"),
+            Tick(n) => {
+                println("tick {}", n);
+                (n < 3).match({
+                    true  => ctx.me.send_after(5, Msg.Tick(n + 1)).ignore(),
+                    false => ctx.me.stop(),
+                });
+            },
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    c = env.spawn(Clock()).try();
+    c.send_after(40, Msg.Later).try();
+    c.send(Msg.Now).try();
+    c.send_after(80, Msg.Tick(1)).try();
+    c.join();
+    gone = env.spawn(Clock()).try();
+    gone.send_after(20, Msg.Later).try();
+    gone.stop();
+    gone.join();
+    gone.send_after(1, Msg.Now).match({
+        Err(Closed) => println("closed"),
+        _           => println("accepted"),
+    });
+    Ok(0)
+}

@@ -1,0 +1,17 @@
+{ Actor, Ref, Context } = std.actor
+{ Env } = std.env
+
+Msg = { Add: u64 | Reset }
+News = { Done | Failed }
+
+Counter = {}
+
+Counter.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Msg) ()
+})
+
+bad = (counter: Ref<Counter>, other: Ref<Counter>) {
+    counter.watch(other, News.Done, News.Failed).ignore();
+}
+
+main = (env: Env) i32 { 0 }

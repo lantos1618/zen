@@ -1637,6 +1637,11 @@ ActorError* = { Closed | Full }
 // a Ref are messages. every Ref also carries:
 //   stop* ::= (self: @Self) ()  // delivers stopped after the mailbox drains
 //   join* ::= (self: @Self) ()  // waits until draining and stopped complete
+// and, on an actor that receives Msg:
+//   send*       = (self: @Self, m: Msg) Res<ActorError>          // waits for room
+//   try_send*   = (self: @Self, m: Msg) Res<ActorError>          // Err(Full), never waits
+//   send_after* = (self: @Self, ms: u64, m: Msg) Res<ActorError> // delivered after ms
+//   watch*      = <M>(self: @Self, to: Ref<M>, done: M, failed: M) Res<ActorError>
 Ref*<A> = {
     id: u64,
 }
@@ -1995,6 +2000,10 @@ Collector.impl(Actor, {
 // enqueues m for it. a Ref<Msg> names only the protocol: a Ref<A>
 // converts to it wherever A receives Msg, and offers send, stop and
 // join, never A's own behaviors. ctx.me is the running actor's Ref<Self>
+// r.try_send(m) answers Err(Full) instead of waiting for room.
+// r.watch(to, done, failed) sends `to` done when r stops, failed when a
+// trap ends it (done at once if r has already ended); both are copied at
+// the call. r.send_after(ms, m) delivers a copy of m after ms milliseconds
 Reply = { Total: u64 }
 Msg   = { Add: u64 | Get: Ref<Reply> }
 

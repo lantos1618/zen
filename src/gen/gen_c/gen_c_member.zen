@@ -51,7 +51,7 @@
 { impl_member_at } = gen.gen_c.gen_c_impl
 { alias_of } = gen.gen_c.gen_c_impl
 { generic_enum } = gen.gen_c.gen_c_impl
-{ ref_of_actor, lower_actor_send } = gen.gen_c.gen_c_actor
+{ ref_of_actor, lower_actor_send, lower_actor_watch } = gen.gen_c.gen_c_actor
 { lower_discriminant_call } = gen.gen_c.gen_c_discriminant
 { lower_variant_name_call } = gen.gen_c.gen_c_variant_name
 { param_type } = sema.sema_denote
@@ -286,12 +286,25 @@ lower_receiver_call = (
                       Res<AllocError> {
     unknown = be.check.types.unknown().try();
     raw     = be.ty_of(d.a.base, ctx, unknown).try();
-    rty     = be.materialize_literal(sub(be, raw).try()).try();
+    rty     = be.own_ref(
+        d,
+        ctx,
+        be.materialize_literal(sub(be, raw).try()).try()
+    ).try();
     be.ref_of_actor(rty).try().match({
-        Ok(actor) => (d.a.name.text.eq("stop")
-            || d.a.name.text.eq("join")).match({
-            true  => be.lower_receiver_site(d, rty, ctx, want, out),
-            false => be.lower_actor_send(d.id, d.c, d.a, rty, actor, ctx, out),
+        Ok(actor) => d.a.name.text.match({
+            "stop"  => be.lower_receiver_site(d, rty, ctx, want, out),
+            "join"  => be.lower_receiver_site(d, rty, ctx, want, out),
+            "watch" => be.lower_actor_watch(d.id, d.c, d.a, rty, ctx, out),
+            _       => be.lower_actor_send(
+                d.id,
+                d.c,
+                d.a,
+                rty,
+                actor,
+                ctx,
+                out
+            ),
         }),
         None      => be.lower_receiver_site(d, rty, ctx, want, out),
     })
@@ -1099,4 +1112,20 @@ variadic_takes = (be: CBackend, f: TyFn, arity: usize) bool {
     (f.params.len > 0)
         && be.check.tail_swallows(ty_at(f.params, f.params.len - 1))
         && ((arity + 1) >= f.params.len)
+}
+
+// `ctx.me` is declared Ref<Actor>; checking typed it as the running actor's
+// own Ref<A>, which is what its sends must reach.
+own_ref = (be :: CBackend, d: Dot, ctx: Ctx, rty: TyId) Res<TyId, AllocError> {
+    bare = be.ref_of_actor(rty).try().match({
+        Ok(a) => be.check.types.at(a).match({
+            Named(n) => n.name.eq("Actor"),
+            _        => false,
+        }),
+        None  => false,
+    });
+    bare.match({
+        false => Ok(rty),
+        true  => sub(be, be.check.type_of(d.a.base, ctx).try()),
+    })
 }

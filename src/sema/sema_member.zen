@@ -498,21 +498,72 @@ behavior_members = (c :: Checker, ty: TyId, name: str, out :: Vec<Found>)
         None  => Ok,
         Ok(a) => {
             c.behavior_set(a, name, out).try();
-            (out.len == 0 && name.eq("send")).match({
-                true  => c.behavior_set(a, "receive", out),
+            verb = send_verb(name);
+            (out.len == 0 && verb).match({
+                true  => c.receive_send(a, name, out),
                 false => Ok,
             }).try();
-            (out.len == 0 && name.eq("send") && !c.is_actor_type(a).try()).match({
-                true  => c.message_send(ty, a, out),
+            (out.len == 0 && verb && !c.is_actor_type(a).try()).match({
+                true  => c.message_send(ty, a, name, out),
                 false => Ok,
             })
         },
     })
 }
 
-// `send` on a message-typed Ref<M>: one M, the same result as a behavior
-// send. It is declared with the Ref's own members.
-message_send = (c :: Checker, ref_ty: TyId, message: TyId, out :: Vec<Found>)
+// The sends a Ref offers for the message its actor receives: `send` waits
+// for room, `try_send` answers Full instead, and `send_after(ms, m)`
+// delivers m after ms milliseconds.
+send_verb = (name: str) bool { name.is_in(["send", "try_send", "send_after"]) }
+
+// A send verb on Ref<A> reaches A's `receive`; `send_after` takes the delay
+// first.
+receive_send = (c :: Checker, a: TyId, name: str, out :: Vec<Found>)
+               Res<AllocError> {
+    found ::= c.alloc.Vec<Found>();
+    c.behavior_set(a, "receive", found).try();
+    found.loop((h, f) {
+        out.add(Found(
+            name: f.name,
+            ty: c.delayed(name, f.ty).try(),
+            computed: f.computed,
+            constant: f.constant,
+            mutable: f.mutable,
+            exported: f.exported,
+            module: f.module,
+            bound: f.bound,
+            decl_owner: f.decl_owner,
+            decl_span: f.decl_span,
+            span: f.span,
+        )).try();
+    });
+    Ok
+}
+
+delayed = (c :: Checker, name: str, ty: TyId) Res<TyId, AllocError> {
+    (name.eq("send_after")).match({
+        false => Ok(ty),
+        true  => c.types.at(ty).match({
+            Fn(sig) => {
+                ps ::= c.alloc.Vec<TyId>();
+                ps.add(c.types.prim("u64").try()).try();
+                sig.params.loop((h, p) { ps.add(p).try() });
+                c.types.fn_ty(ps, sig.ret)
+            },
+            _       => Ok(ty),
+        }),
+    })
+}
+
+// A send verb on a message-typed Ref<M>: one M, the same result as a
+// behavior send. It is declared with the Ref's own members.
+message_send = (
+    c       :: Checker,
+    ref_ty  : TyId,
+    message : TyId,
+    name    : str,
+    out     :: Vec<Found>
+)
                Res<AllocError> {
     stop ::= c.alloc.Vec<Found>();
     c.members_of(ref_ty, "stop", stop).try();
@@ -520,6 +571,7 @@ message_send = (c :: Checker, ref_ty: TyId, message: TyId, out :: Vec<Found>)
         None  => Ok,
         Ok(s) => {
             ps ::= c.alloc.Vec<TyId>();
+            name.eq("send_after").then(() { ps.add(c.types.prim("u64").try()).try() });
             ps.add(message).try();
             unit  = c.types.prim("()").try();
             error = c.actor_named_type("ActorError").try().match({
@@ -528,7 +580,7 @@ message_send = (c :: Checker, ref_ty: TyId, message: TyId, out :: Vec<Found>)
             }).try();
             ret   = c.types.res_failure(unit, error).try();
             out.add(supplied_found(
-                "send",
+                name,
                 c.types.fn_ty(ps, ret).try(),
                 s.bound,
                 ref_ty,

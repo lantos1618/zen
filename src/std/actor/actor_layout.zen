@@ -106,7 +106,7 @@ L_SLOTS_N*: usize = 2
 L_YIELD*: usize = 3          // the running turn asked to yield (parked, H')
 L_SLOTS*: usize = 4          // word offset: SLOT_CACHE words
 L_HEAP*: usize = 2080        // byte offset: HEAP_BYTES
-LOCAL_BYTES*: usize = 3232
+LOCAL_BYTES*: usize = 40096
 
 // ---------------------------------------------------------------------
 // a worker

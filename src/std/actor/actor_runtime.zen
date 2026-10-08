@@ -546,6 +546,10 @@ SEND_FULL*: i32 = 2
 // Internal: the message waits in the sender's outbox (Ok to the program).
 SEND_QUEUED: i32 = 3
 
+// A message's smallest block: one cache line, so a producer writing the
+// next message never shares a line with the consumer reading this one.
+MESSAGE_MIN: usize = 64
+
 MODE_SEND: usize = 0
 MODE_OFFER: usize = 1
 MODE_RESERVED: usize = 2
@@ -1663,11 +1667,12 @@ post = (
                 fits = fits && n <= MAX_MESSAGE_BYTES - (total - M_PAYLOAD);
                 fits.then(() { total = total + n; });
             });
-            l = local();
-            m = fits.match({ true => new_block(
+            l     = local();
+            block = (total < MESSAGE_MIN).match({ true => MESSAGE_MIN, false => total });
+            m     = fits.match({ true => new_block(
                 g,
                 l,
-                total
+                block
             ), false => null_ptr<u8>() });
             m.is_null().match({
                 true  => SEND_FULL,

@@ -283,6 +283,36 @@ lower_fat_call* = (
     })
 }
 
+// A slot call on a receiver already in `recv`, for a caller that tested it.
+lower_fat_call_on* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    name : str,
+    rty  : TyId,
+    s    : Site,
+    ctx  : Ctx,
+    recv : str,
+    out  :: String
+) Res<AllocError> {
+    slots ::= be.alloc.Vec<Slot>();
+    be.slots_of(rty, slots).try();
+    pick_slot(slots, name, c.args.len).match({
+        None     => be.unsupported(
+            id,
+            "a call through a bound with no such member",
+            out
+        ),
+        Ok(slot) => BoundDispatch(
+            call: c,
+            receiver: rty,
+            site: s,
+            slot: slot,
+            ctx: ctx,
+        ).lower_on(be, id, recv, out),
+    })
+}
+
 // A default fills every record. A bodiless member is callable only when every
 // implementation fills it; "some implementation" permits a NULL call for all
 // the others.
@@ -297,7 +327,7 @@ member_answered = (be :: CBackend, f: Function, rty: TyId, name: str)
 // Orphan impls are forbidden, so the world tables contain every possible slot
 // provider. `seen` keeps a bound with no implementations from passing
 // vacuously.
-bound_answered = (be :: CBackend, rty: TyId, name: str)
+bound_answered* = (be :: CBackend, rty: TyId, name: str)
                  Res<bool, AllocError> {
     seen    ::= false;
     missing ::= false;
@@ -472,6 +502,20 @@ BoundDispatch = {
         })
     }
 
+    // The same call on a receiver already evaluated into `recv`.
+    lower_on = (self: @Self, be :: CBackend, id: ExprId, recv: str,
+                out :: String) Res<AllocError> {
+        call = self.settle(be).try();
+        call.settled(be).match({
+            false => be.unsupported(
+                id,
+                "a call through a bound whose type arguments nothing settles",
+                out
+            ),
+            true  => call.emit_on(be, recv, out),
+        })
+    }
+
     result_type = (self: @Self, be :: CBackend)
                   Res<Res<TyId>, AllocError> {
         call = self.settle(be).try();
@@ -504,7 +548,12 @@ BoundCall = {
            Res<AllocError> {
         recv ::= be.alloc.String().try();
         expr(be, a.base, self.dispatch.ctx, self.dispatch.receiver, recv).try();
-        r    ::= be.init_temp(self.dispatch.receiver, "t", recv.view()).try();
+        self.emit_on(be, recv.view(), out)
+    }
+
+    emit_on = (self: @Self, be :: CBackend, recv: str, out :: String)
+              Res<AllocError> {
+        r    ::= be.init_temp(self.dispatch.receiver, "t", recv).try();
         call ::= be.alloc.String().try();
         call.fmt(
             "{}.{}({}.zg_self",

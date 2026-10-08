@@ -12,7 +12,11 @@
 { unsupported } = gen.gen_c.gen_c_report
 { sub } = gen.gen_c.gen_c_mono
 { ctype, request_type, declared_ret, field_of, pointee } = gen.gen_c.gen_c_type
-{ expr } = gen.gen_c.gen_c_expr
+{ expr, ty_of } = gen.gen_c.gen_c_expr
+{ init_temp } = gen.gen_c.gen_c_flow
+{ is_unit } = gen.gen_c.gen_c_type
+{ site_of } = gen.gen_c.gen_c_member
+{ lower_fat_call_on, bound_answered } = gen.gen_c.gen_c_bound
 { arg_text } = gen.gen_c.gen_c_arg
 { temp, payload_type, declare_temp } = gen.gen_c.gen_c_flow
 { write_assign_ok, write_assign_err } = gen.gen_c.gen_c_flow
@@ -28,7 +32,7 @@
 { lower_clock_read } = gen.gen_c.gen_c_clock
 { lower_sleep, lower_spawn, lower_join } = gen.gen_c.gen_c_threads
 { lower_actor_spawn, lower_actor_stop, lower_actor_join } = gen.gen_c.gen_c_actor
-{ Res, Ok, loop } = std.core
+{ Res, Ok, None, loop } = std.core
 { param_type } = sema.sema_denote
 { self_ctx } = sema.sema_member
 
@@ -110,9 +114,9 @@ CapabilityCall* = {
         rty = self.receiver_ty;
         ctx = self.ctx;
         self.kind.match({
-            MemAlloc     => be.lower_alloc(id, a, rty, ret, ctx, out),
-            MemPage      => be.lower_page(id, c, ret, ctx, out),
-            MemRelease   => be.lower_release(c, ctx, out),
+            MemAlloc     => self.lower_mem(be, ret, out),
+            MemPage      => self.lower_mem(be, ret, out),
+            MemRelease   => self.lower_mem(be, ret, out),
             FsWrite      => be.lower_write(id, c, ret, ctx, out),
             FsRead       => {
                 aty = self.parameter_type(be).try();
@@ -158,6 +162,95 @@ CapabilityCall* = {
                 "an unlowerable capability kind",
                 out
             ),
+        })
+    }
+
+    // The zero `Mem` is the OS page source. Only a program with its own
+    // `impl(Mem, ..)` tests for it, and never on `env.mem` written out.
+    lower_mem = (self: @Self, be :: CBackend, ret: TyId, out :: String)
+                Res<AllocError> {
+        swappable = be.bound_answered(
+            self.receiver_ty,
+            self.access.name.text
+        ).try()
+            && !self.reads_env_mem(be).try();
+        swappable.match({
+            false => self.lower_os_mem(be, ret, out),
+            true  => self.lower_either_mem(be, ret, out),
+        })
+    }
+
+    lower_os_mem = (self: @Self, be :: CBackend, ret: TyId, out :: String)
+                   Res<AllocError> {
+        self.kind.match({
+            MemAlloc => be.lower_alloc(
+                self.id,
+                self.access,
+                self.receiver_ty,
+                ret,
+                self.ctx,
+                out
+            ),
+            MemPage  => be.lower_page(self.id, self.call, ret, self.ctx, out),
+            _        => be.lower_release(self.call, self.ctx, out),
+        })
+    }
+
+    lower_either_mem = (self: @Self, be :: CBackend, ret: TyId,
+                        out :: String) Res<AllocError> {
+        site_of(be, self.receiver_ty).try().match({
+            None  => be.unsupported(self.id, "a Mem without a site", out),
+            Ok(s) => {
+                recv ::= be.alloc.String().try();
+                expr(
+                    be,
+                    self.access.base,
+                    self.ctx,
+                    self.receiver_ty,
+                    recv
+                ).try();
+                r ::= be.init_temp(self.receiver_ty, "t", recv.view()).try();
+                unit = be.is_unit(ret);
+                dst ::= be.alloc.String().try();
+                unit.match({
+                    true  => dst.add("0").try(),
+                    false => dst.add(be.temp(ret, "t").try().view()).try(),
+                });
+                be.fmt("if ({}.zg_self) {\n", r.view()).try();
+                via ::= be.alloc.String().try();
+                be.lower_fat_call_on(
+                    self.id,
+                    self.call,
+                    self.access.name.text,
+                    self.receiver_ty,
+                    s,
+                    self.ctx,
+                    r.view(),
+                    via
+                ).try();
+                be.assign_mem(unit, dst.view(), via.view()).try();
+                be.fmt("} else {\n").try();
+                os ::= be.alloc.String().try();
+                self.lower_os_mem(be, ret, os).try();
+                be.assign_mem(unit, dst.view(), os.view()).try();
+                be.fmt("}\n").try();
+                out.add(dst.view())
+            },
+        })
+    }
+
+    // `env.mem` itself, which is always the zero `Mem`.
+    reads_env_mem = (self: @Self, be :: CBackend) Res<bool, AllocError> {
+        be.tree.expr_at(self.access.base).kind.match({
+            Access(m) => m.name.text.eq("mem").match({
+                false => Ok(false),
+                true  => {
+                    unknown = be.check.types.unknown().try();
+                    t       = be.ty_of(m.base, self.ctx, unknown).try();
+                    Ok(owner_of(be, t).eq("Env"))
+                },
+            }),
+            _         => Ok(false),
         })
     }
 
@@ -243,6 +336,14 @@ capability_owner = (be :: CBackend, n: TyNamed) str {
         || (n.name.is_in(["Fs", "Lock", "Env", "Clock", "Threads", "Thread", "Console", "Stdin"]) && module.eq("std.env.env"))
         || (n.name.eq("Ref") && module.eq("std.actor.actor_core")))
         .then(() { n.name }).value_or("")
+}
+
+assign_mem = (be :: CBackend, unit: bool, dst: str, value: str)
+             Res<AllocError> {
+    unit.match({
+        true  => be.fmt("(void)({});\n", value),
+        false => be.fmt("{} = {};\n", dst, value),
+    })
 }
 
 lower_capability* = (be :: CBackend, call: CapabilityCall, out :: String)

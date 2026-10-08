@@ -23,6 +23,7 @@
 { to_i64_bits } = gen.gen_lower_core
 { Shape, Form, shape, size_of } = gen.gen_lower_shape
 { Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call } = gen.gen_lower_call
+{ argument_value } = gen.gen_lower_call
 { settle_params } = gen.gen_lower_call
 { runtime_call } = gen.gen_lower_thread
 { actor_of_ref, actor_member } = gen.gen_lower_actor
@@ -822,7 +823,13 @@ dynamic_call = (
     method_inst : Inst,
     span        : Span
 ) Res<Value, LowerError> {
-    handle = lo.expr(receiver).try();
+    // With no implementor, or with `env.mem` written out, a `Mem` is the OS.
+    os     = lo.page_authority(bound)
+        && (bound.implementors.len == 0 || lo.reads_env_mem(receiver).try());
+    handle = os.match({
+        true  => lo.unit().try(),
+        false => lo.expr(receiver).try(),
+    });
     // Arguments evaluate once, before the dispatch; a place stays a place so
     // a mutable parameter writes through it.
     args ::= lo.alloc.Vec<Source>();
@@ -833,15 +840,27 @@ dynamic_call = (
         });
         args.add(source).try(LowerError.OutOfMemory);
     });
-    lo.dispatch(
-        bound,
-        handle,
-        name,
-        args,
-        method_inst,
-        lo.call_type(id, c, name).try(),
-        span
-    )
+    ty = lo.call_type(id, c, name).try();
+    os.match({
+        true  => lo.os_mem_call(name, args, ty, span),
+        false => lo.dispatch(bound, handle, name, args, method_inst, ty, span),
+    })
+}
+
+// `Mem`, whose zero value is the OS page source rather than an implementor.
+page_authority = (lo :: Lowerer, bound: Bound) bool {
+    lo.qualified(bound.ty).eq("std.mem.mem_arena.Mem")
+}
+
+// `env.mem` itself, which is always the zero `Mem`.
+reads_env_mem = (lo :: Lowerer, receiver: ExprId) Res<bool, LowerError> {
+    lo.tree.expr_at(receiver).kind.match({
+        Access(a) => a.name.text.eq("mem").match({
+            false => Ok(false),
+            true  => Ok(lo.qualified(lo.type_of(a.base).try()).eq("std.env.env.Env")),
+        }),
+        _         => Ok(false),
+    })
 }
 
 // Branch on a bound handle's implementor tag and call that implementor's
@@ -867,6 +886,25 @@ dispatch* = (
     ))).try();
     out  = lo.temp(ty).try();
     done = lo.label().try();
+    lo.page_authority(bound).then(() {
+        zero = lo.word_const(Scalar.Ptr, 0).try();
+        null = lo.slot_of(Scalar.Bool).try();
+        lo.add(Instruction.BinaryValue(Binary(
+            out: null,
+            left: pointer,
+            right: zero,
+            op: Op.Equal,
+            span: nowhere()
+        ))).try();
+        os   = lo.label().try();
+        next = lo.label().try();
+        lo.branch_to(null, os, next).try();
+        lo.start(os);
+        made = lo.os_mem_call(name, args, ty, span).try();
+        lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+        lo.jump(done).try();
+        lo.start(next);
+    });
     bound.implementors.loop((h, i, implementor) {
         yes      = lo.label().try();
         next     = lo.label().try();
@@ -1014,8 +1052,7 @@ call_values* = (
 // page authority
 // ---------------------------------------------------------------------
 
-// `Mem.alloc()` builds an Arena over fresh zeroed state; `Mem.page` maps a
-// run with its Page header in the first bytes; `Mem.release` unmaps.
+// A page-authority call reached by declaration; the receiver is source 0.
 mem_call* = (
     lo      :: Lowerer,
     id      : ExprId,
@@ -1024,7 +1061,24 @@ mem_call* = (
     span    : Span
 )
             Res<Value, LowerError> {
-    ty = lo.type_of(id).try();
+    args ::= lo.alloc.Vec<Source>();
+    sources.loop((h, i, s) {
+        (i > 0).then(() { args.add(s).try(LowerError.OutOfMemory); });
+    });
+    lo.os_mem_call(name, args, lo.type_of(id).try(), span)
+}
+
+// The OS page source, which the zero `Mem` names. `Mem.alloc()` builds an
+// Arena over fresh zeroed state, so its own `mem` is the OS too; `Mem.page`
+// maps a run with its Page header in the first bytes; `Mem.release` unmaps.
+os_mem_call = (
+    lo   :: Lowerer,
+    name : str,
+    args : Vec<Source>,
+    ty   : TyId,
+    span : Span
+)
+              Res<Value, LowerError> {
     name.match({
         "alloc"   => {
             s           = lo.shape(ty).try();
@@ -1054,9 +1108,10 @@ mem_call* = (
             Ok(out)
         },
         "page"    => {
-            size         = lo.expr_as(
-                sources.source_expr(1, span).try(),
-                lo.prim("usize").try()
+            size         = lo.argument_value(
+                args.get(0).value_or(Source.Absent),
+                lo.prim("usize").try(),
+                span
             ).try();
             ok_ty        = lo.payload_type(ty, "Ok").try();
             page_ty      = lo.pointee_of(ok_ty).try();
@@ -1101,10 +1156,7 @@ mem_call* = (
             lo.start(good);
             fields = lo.shape(page_ty).try().form.match({ Record(f) => Ok(f), _ => None })
                 .ok_or(unsupported(span, "a Page without fields")).try();
-            prev   = sources.get(2).value_or(Source.Absent).match({
-                Given(e) => lo.expr(e).try().slot,
-                _        => lo.word_const(Scalar.Ptr, 0).try(),
-            });
+            prev   = lo.source_slot(args.get(1).value_or(Source.Absent)).try();
             base   = lo.slot_of(Scalar.Ptr).try();
             lo.add(Instruction.BinaryValue(Binary(
                 out: base,
@@ -1142,11 +1194,21 @@ mem_call* = (
             Ok(out)
         },
         "release" => {
-            region = lo.expr(sources.source_expr(1, span).try()).try();
-            lo.add(Instruction.UnmapPages(region.slot)).try();
+            region = lo.source_slot(args.get(0).value_or(Source.Absent)).try();
+            lo.add(Instruction.UnmapPages(region)).try();
             lo.unit()
         },
         _         => Err(unsupported(span, "this page-authority operation")),
+    })
+}
+
+// A pointer argument's slot as given; an omitted one is null.
+source_slot = (lo :: Lowerer, source: Source) Res<usize, LowerError> {
+    source.match({
+        Given(e)    => Ok(lo.expr(e).try().slot),
+        Computed(v) => Ok(v.slot),
+        Located(p)  => Ok(lo.read(p).try().slot),
+        Absent      => lo.word_const(Scalar.Ptr, 0),
     })
 }
 

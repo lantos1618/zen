@@ -1323,6 +1323,13 @@ Alloc* = {
 // the concrete allocator behind it owns the memory and is what Drop
 // applies to. env.mem.alloc() hands back an Arena; the Arena impls
 // both, and passing it where an Alloc is wanted builds the handle
+//
+// Mem is an interface the same way: a type that impls Mem passes where a
+// Mem is wanted and its page/release/alloc are the ones called. The ZERO
+// Mem is the OS page source, so env.mem, and an arena that env.mem made,
+// stay what they were. A program with no impl of Mem pays nothing: every
+// call is the OS code inline. Once one exists, a call through a Mem
+// tests for the zero value first; `env.mem.page(..)` written out never does
 Arena* = {
     // pages, free lists, whatever the arena needs. owns them.
 }

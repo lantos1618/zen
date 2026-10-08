@@ -842,6 +842,32 @@ Lowerer* = {
         })
     }
 
+    zeroed = (self :: @Self, ty: TyId) Res<Value, LowerError> {
+        self.is_unit(ty).match({
+            true  => self.constant(ty, 0),
+            false => {
+                out = self.temp(ty).try();
+                at  = self.slot_of(Scalar.Ptr).try();
+                self.add(Instruction.AddressOf(Address(
+                    out: at,
+                    slot: out.slot
+                ))).try();
+                zero = self.word_const(Scalar.U64, 0).try();
+                self.add(Instruction.StoreValue(Store(
+                    base: at,
+                    offset: 0,
+                    value: zero
+                ))).try();
+                self.add(Instruction.StoreValue(Store(
+                    base: at,
+                    offset: 8,
+                    value: zero
+                ))).try();
+                Ok(out)
+            },
+        })
+    }
+
     constant_unit_of = (self :: @Self, ty: TyId) Res<Value, LowerError> {
         self.constant(ty, 0)
     }
@@ -1941,9 +1967,13 @@ Lowerer* = {
                 capability = self.capability_of(a.base).try();
                 capability.match({
                     Ok(_) => {
-                        ty = self.type_of(id).try();
-                        self.is_unit(ty).match({
-                            true  => self.constant(ty, 0),
+                        ty     = self.type_of(id).try();
+                        handle = self.shape(
+                            ty
+                        ).try().form.match({ Handle(_) => true, _ => false });
+                        (self.is_unit(ty) || handle).match({
+                            // `env.mem` is the zero `Mem`: the OS page source.
+                            true  => self.zeroed(ty),
                             // `env.argv`: the process arguments.
                             false => a.name.text.eq("argv").match({
                                 true  => self.sys_env_call(

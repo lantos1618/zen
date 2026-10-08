@@ -1,0 +1,54 @@
+// A Mem is an interface: an implementor's page and release are the ones
+// called, while env.mem and the zero Mem stay the OS page source.
+{ Mem, Page, Arena, Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Counting = {
+    inner: Mem,
+    calls: Ptr<usize>,
+
+    bump = (self: @Self) { self.calls.write(0, self.calls.read(0) + 1); }
+}
+
+Counting.impl(Mem, {
+    alloc = (self: @Self) Arena {
+        println("alloc");
+        self.inner.alloc()
+    }
+    page = (self: @Self, size: usize, prev: Ptr<Page>) Res<Ptr<Page>, AllocError> {
+        self.bump();
+        println("page {}", size);
+        self.inner.page(size, prev)
+    }
+    release = <T>(self: @Self, region: Ptr<T>) {
+        self.bump();
+        println("release");
+        self.inner.release(region)
+    }
+})
+
+Pages = { mem: Mem }
+
+cycle = (m: Mem) Res<AllocError> {
+    p = m.page(100, null_ptr<Page>()).try();
+    m.release(p);
+    Ok
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    arena = env.mem.alloc();
+    calls = arena.raw(8, 8).try().to<usize>();
+    calls.write(0, 0);
+    c = Counting(inner: env.mem, calls: calls);
+    cycle(c).try();
+    held = Pages(mem: c);
+    cycle(held.mem).try();
+    own = held.mem.alloc();
+    n   = own.raw(4096, 16).try().to<u8>();
+    n.write(0, 7);
+    cycle(env.mem).try();
+    println("calls {}", calls.read(0));
+    (calls.read(0) == 4).match({ true => Ok(0), false => Ok(1) })
+}

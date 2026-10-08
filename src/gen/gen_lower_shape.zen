@@ -102,7 +102,7 @@ capability* = (qualified: str) bool {
     qualified.is_in([
         "std.env.env.Env", "std.env.env.Console", "std.env.env.Stdin",
         "std.env.env.Fs", "std.env.env.Net", "std.env.env.Threads",
-        "std.env.env.Clock", "std.mem.mem_arena.Mem", "std.proc.proc.Process",
+        "std.env.env.Clock", "std.proc.proc.Process",
         "std.core.loop.loop_handle.LoopHandle"
     ])
 }

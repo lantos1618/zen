@@ -530,6 +530,12 @@ thunk_body = (
     out :: String
 )
              Res<AllocError> {
+    // An element size only a scaled count reads is still a parameter.
+    Range(0, s.elems).loop((h, i) {
+        nm ::= be.alloc.String().try();
+        sym_gen(nm, "e", i).try();
+        out.fmt("    (void){};\n", nm.view()).try();
+    });
     call ::= be.alloc.String().try();
     call.fmt("{sym}(").try();
     be.thunk_recv(cty, f, call).try();

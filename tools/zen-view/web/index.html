@@ -321,7 +321,7 @@ function renderTopo(rows){
     shown = rows.filter(r => keepSet.has(r[0].i));
     $("topoNote").textContent = `· busiest ${shown.length} of ${rows.length}`;
   } else $("topoNote").textContent = "";
-  nodes = []; const pos = new Map();
+  nodes = []; ringCenter = null; const pos = new Map();
   let nw = 112, nh = 30, route = null;
   const put = (a, x, y) => { pos.set(a.i, [x, y]); nodes.push({a, x, y, w:nw, h:nh}); };
   const rates = edgeRates(cursorNs, 1e9);
@@ -380,12 +380,15 @@ function renderTopo(rows){
     for (const a of list){ const q = fpos.get(a.i); put(a, q.x - nw / 2, q.y - nh / 2); }
     messageEdges(g, pos, nw, nh, rates, shown.length);
   } else {
-    // The roundtable: spawners in the middle, the rest on a ring.
-    const hubs = shown.filter(r => r[0].kids.length).map(r => r[0]), ring = shown.map(r => r[0]).filter(a => !a.kids.length);
-    const cx = W / 2 - nw / 2, cy = H / 2 - nh / 2;
-    hubs.forEach((a, j) => put(a, cx + (j - (hubs.length - 1) / 2) * (nw + 10), cy));
-    const rx = W / 2 - nw / 2 - 10, ry = H / 2 - nh / 2 - 8;
-    ring.forEach((a, j) => { const th = -Math.PI / 2 + 2 * Math.PI * j / ring.length; put(a, cx + rx * Math.cos(th), cy + ry * Math.sin(th)); });
+    // The roundtable: every actor evenly around one circle, in spawn-tree
+    // order so siblings sit together; messages bend through the middle.
+    const ring = shown.map(r => r[0]), n = Math.max(1, ring.length);
+    const R0 = Math.min(W, H) / 2 - 12, gap = 2 * Math.PI * R0 / n;
+    nw = Math.max(40, Math.min(112, gap - 8)); nh = gap < 40 ? 16 : 30;
+    const R = Math.max(20, Math.min(W / 2 - nw / 2 - 8, H / 2 - nh / 2 - 8));
+    ringCenter = [W / 2, H / 2];
+    ring.forEach((a, j) => { const th = -Math.PI / 2 + 2 * Math.PI * j / n;
+      put(a, W / 2 + R * Math.cos(th) - nw / 2, H / 2 + R * Math.sin(th) - nh / 2); });
     messageEdges(g, pos, nw, nh, rates, shown.length);
   }
   dots(g, pos, nw, nh, route);
@@ -417,7 +420,7 @@ function messageEdges(g, pos, nw, nh, rates, count){
       else { g.moveTo(c[0], c[1]); g.quadraticCurveTo(c[2], c[3], c[4], c[5]); }
       g.stroke();
       if (r > 0 && (hot || count < 25)){ g.fillStyle = "#8fd8ff"; g.font = "10px ui-monospace,monospace";
-        g.fillText(Math.round(r) + "/s", (c[0] + c[4]) / 2 - 12, (c[1] + c[5]) / 2 - 4); }
+        g.fillText(Math.round(r) + "/s", (c[0] + 2 * c[2] + c[4]) / 4 - 12, (c[1] + 2 * c[3] + c[5]) / 4 - 4); }
     }
 }
 
@@ -461,9 +464,13 @@ function settle(list, W, H, nw){
 }
 
 // Message edges bow to one side so a pair's two directions don't overlap.
+// On the ring, edges bow toward its centre; elsewhere to one side.
+let ringCenter = null;
 function curve(p, q, nw, nh){
-  const x1 = p[0] + nw / 2, y1 = p[1] + nh / 2, x2 = q[0] + nw / 2, y2 = q[1] + nh / 2;
-  return [x1, y1, (x1 + x2) / 2 + (y2 - y1) * .2, (y1 + y2) / 2 - (x2 - x1) * .2, x2, y2];
+  const x1 = p[0] + nw / 2, y1 = p[1] + nh / 2, x2 = q[0] + nw / 2, y2 = q[1] + nh / 2, mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  if (ringCenter){ const [cx, cy] = ringCenter, side = .06;
+    return [x1, y1, mx + (cx - mx) * .7 + (y2 - y1) * side, my + (cy - my) * .7 - (x2 - x1) * side, x2, y2]; }
+  return [x1, y1, mx + (y2 - y1) * .2, my - (x2 - x1) * .2, x2, y2];
 }
 // The point a fraction f of the way along a route.
 function along(r, f){

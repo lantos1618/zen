@@ -10,6 +10,7 @@
 { read_file, write_file, env_var, arg, argc, Pages } = std.sys
 { monotonic_ns, realtime_ns, c_path, openat, close, at_fdcwd, o_rdonly, o_cloexec } = std.sys
 { o_directory, o_rdwr, o_creat, flock, eagain } = std.sys
+{ mkdirat, unlinkat, getcwd, c_len } = std.sys
 { sleep_ns } = std.sys.sys_thread
 
 // A kernel -errno as the Fs error a caller can act on.
@@ -33,6 +34,48 @@ fs_read* = (a: Alloc, path: str) Res<String, FsError> {
 fs_write* = (path: str, bytes: str) Res<FsError> {
     scratch = Pages();
     write_file(scratch, path, bytes).map_err((e) { fs_error(e) })
+}
+
+// `fs.cwd(a)`: the process directory, copied into `a`.
+fs_cwd* = (a: Alloc) Res<String, FsError> {
+    scratch = Pages();
+    buf     = scratch.raw(4096, 1).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
+    n       = getcwd(buf, 4096);
+    (n < 0).match({ true => Err(fs_error(n)), false => Ok }).try();
+    (n == 0).match({ true => Err(FsError.Failed), false => Ok }).try();
+    out ::= a.String().match({ Ok(s) => Ok(s), Err(_) => Err(FsError.OutOfMemory) }).try();
+    out.add(str(data: buf, len: c_len(buf))).match({ Ok(_) => Ok, Err(_) => Err(FsError.OutOfMemory) }).try();
+    scratch.free(buf);
+    Ok(out)
+}
+
+// `fs.remove(path)`: true when a file was removed, false when none was
+// there. A directory is IsDir and is left alone.
+fs_remove* = (path: str) Res<bool, FsError> {
+    fs_is_dir(path).match({ true => Err(FsError.IsDir), false => Ok }).try();
+    scratch = Pages();
+    name    = c_path(scratch, path).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
+    rc      = unlinkat(at_fdcwd(), name, 0);
+    scratch.free(name);
+    gone    = rc == 0;
+    missing = rc == 0 - 2 || rc == 0 - 20;
+    (gone || missing).match({ true => Ok(gone), false => Err(fs_error(rc)) })
+}
+
+// `fs.mkdir(path)`: true when this call made the directory, false when it
+// already was one. A non-directory in the way is Exists.
+fs_mkdir* = (path: str) Res<bool, FsError> {
+    scratch = Pages();
+    name    = c_path(scratch, path).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
+    rc      = mkdirat(at_fdcwd(), name, 511);
+    scratch.free(name);
+    (rc == 0).match({
+        true  => Ok(true),
+        false => (rc == 0 - 17).match({
+            true  => fs_is_dir(path).match({ true => Ok(false), false => Err(FsError.Exists) }),
+            false => Err(fs_error(rc)),
+        }),
+    })
 }
 
 // Whether a path names anything, and whether it names a directory.

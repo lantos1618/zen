@@ -91,14 +91,7 @@ flock* = (fd: i32, op: i32) i64
 getcwd* = (buf: Ptr<u8>, len: usize) i64
 mkdirat* = (dir: i32, path: Ptr<u8>, mode: u32) i64
 unlinkat* = (dir: i32, path: Ptr<u8>, flags: i32) i64
-// Linux renameat2; macOS renameatx_np. Zero flags is a plain renameat.
-renameat2* = (
-    from_dir : i32,
-    from     : Ptr<u8>,
-    to_dir   : i32,
-    to       : Ptr<u8>,
-    flags    : u32
-) i64
+renameat* = (from_dir: i32, from: Ptr<u8>, to_dir: i32, to: Ptr<u8>) i64
 pipe2* = (fds: Ptr<i32>, flags: i32) i64
 fork* = (
     flags  : usize,

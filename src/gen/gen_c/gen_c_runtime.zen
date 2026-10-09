@@ -386,7 +386,6 @@ write_fs = (out :: Emit) Res<AllocError> {
     write_fs_write(out).try();
     write_fs_remove(out).try();
     write_fs_mkdir(out).try();
-    write_fs_rename(out).try();
     write_fs_read(out).try();
     write_fs_lock(out).try();
     write_fs_unlock(out).try();
@@ -522,22 +521,6 @@ write_fs_remove = (out :: Emit) Res<AllocError> {
     out.say("if (remove(buf) == 0) { *gone = true; return ZG_FS_OK; }").try();
     out.say("if (errno == ENOENT || errno == ENOTDIR) return ZG_FS_OK;").try();
     out.say("if (errno == EISDIR) return ZG_FS_IS_DIR;").try();
-    out.say("return zg_fs_error(errno);").try();
-    out.dedent();
-    out.say("}").try();
-    out.line().try();
-}
-
-write_fs_rename = (out :: Emit) Res<AllocError> {
-    out.say("static int zg_fs_rename(const unsigned char *p, size_t n,").try();
-    out.say("                        const unsigned char *q, size_t m) {").try();
-    out.indent();
-    out.say("char from[ZG_PATH_MAX];").try();
-    out.say("char to[ZG_PATH_MAX];").try();
-    out.say(
-        "if (!zg_fs_path(from, p, n) || !zg_fs_path(to, q, m)) return ZG_FS_FAILED;"
-    ).try();
-    out.say("if (rename(from, to) == 0) return ZG_FS_OK;").try();
     out.say("return zg_fs_error(errno);").try();
     out.dedent();
     out.say("}").try();

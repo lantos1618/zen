@@ -22,7 +22,7 @@
 { write_assign_ok, write_assign_err } = gen.gen_c.gen_c_flow
 { close_else, close_brace, open_null_test } = gen.gen_c.gen_c_flow
 { lower_probe, lower_write, lower_read, lower_remove, lower_lock, lower_unlock } = gen.gen_c.gen_c_fs
-{ lower_mkdir, lower_rename, lower_cwd } = gen.gen_c.gen_c_fs
+{ lower_mkdir, lower_cwd } = gen.gen_c.gen_c_fs
 { lower_stdin_read } = gen.gen_c.gen_c_stdin
 { lower_env_var } = gen.gen_c.gen_c_env
 { lower_env_args } = gen.gen_c.gen_c_args
@@ -50,7 +50,6 @@ CapabilityKind* = { NotCapability
     | FsLock
     | FsRemove
     | FsMkdir
-    | FsRename
     | FsProbe
     | LockUnlock
     | EnvVar
@@ -121,7 +120,7 @@ CapabilityCall* = {
             MemAlloc     => self.lower_mem(be, ret, out),
             MemPage      => self.lower_mem(be, ret, out),
             MemRelease   => self.lower_mem(be, ret, out),
-            FsWrite      => be.lower_write(c, ret, ctx, out),
+            FsWrite      => be.lower_write(id, c, ret, ctx, out),
             FsRead       => {
                 aty = self.parameter_type(be).try();
                 be.lower_read(id, c, ret, aty, ctx, out)
@@ -131,9 +130,8 @@ CapabilityCall* = {
                 be.lower_cwd(id, c, ret, aty, ctx, out)
             },
             FsLock       => be.lower_lock(id, c, ret, ctx, out),
-            FsRemove     => be.lower_remove(c, ret, ctx, out),
-            FsMkdir      => be.lower_mkdir(c, ret, ctx, out),
-            FsRename     => be.lower_rename(c, ret, ctx, out),
+            FsRemove     => be.lower_remove(id, c, ret, ctx, out),
+            FsMkdir      => be.lower_mkdir(id, c, ret, ctx, out),
             FsProbe      => be.lower_probe(c, a.name.text, ctx, out),
             LockUnlock   => be.lower_unlock(id, c, a, rty, ret, ctx, out),
             EnvVar       => be.lower_env_var(c, ret, ctx, out),
@@ -288,7 +286,6 @@ capability_kind* = (be :: CBackend, rty: TyId, name: str) CapabilityKind {
         (owner.eq("Fs") && name.eq("lock")).then(() { h.break(FsLock) });
         (owner.eq("Fs") && name.eq("remove")).then(() { h.break(FsRemove) });
         (owner.eq("Fs") && name.eq("mkdir")).then(() { h.break(FsMkdir) });
-        (owner.eq("Fs") && name.eq("rename")).then(() { h.break(FsRename) });
         (owner.eq("Fs") && name.is_in(["exists", "is_dir"])).then(() {
             h.break(FsProbe)
         });

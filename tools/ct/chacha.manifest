@@ -1,0 +1,14 @@
+# Module, function, and secret inputs for the bundled Zen AEAD implementation.
+chacha20poly1305 chacha20poly1305_seal *key *message *scratch
+chacha20poly1305 chacha20poly1305_open *key *scratch branches=1
+chacha20poly1305 initialize *scratch *key
+chacha20poly1305 block *scratch
+chacha20poly1305 quarter *v
+chacha20poly1305 poly_block *p *input
+chacha20poly1305 stream_xor *scratch *input *output
+chacha20poly1305 poly_finish *p *output
+chacha20poly1305 poly_padded *p *buffer *input
+chacha20poly1305 authenticate *scratch *aad *ciphertext
+chacha20poly1305 byte value
+chacha20poly1305 store *output value
+chacha20poly1305 load32 *input

@@ -146,9 +146,10 @@ decl_is_named = (c :: Checker, decl: DeclId, name: str) bool {
 
 decl_kind_names = (d: Decl, name: str) bool {
     d.kind.match({
-        Enum(e)  => e.name.text.eq(name),
-        Alias(x) => x.name.text.eq(name),
-        _        => false,
+        Enum(e)   => e.name.text.eq(name),
+        Struct(s) => s.name.text.eq(name),
+        Alias(x)  => x.name.text.eq(name),
+        _         => false,
     })
 }
 

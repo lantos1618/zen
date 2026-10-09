@@ -1613,7 +1613,7 @@ Lowerer* = {
                             }),
                         None  => self.expr(e.expr),
                     }),
-                    false => { self.expr(e.expr).try(); self.unit() },
+                    false => { self.discarded(e.expr).try(); self.unit() },
                 }),
                 Bind(b)     => { self.bind(b, s.span).try(); self.unit() },
                 Deferred(d) => { self.deferred(d, s.span).try(); self.unit() },
@@ -2333,7 +2333,20 @@ Lowerer* = {
     // decision, and the lowering only follows it. A case the reading names
     // that the lowered layout lacks is a compiler error, never a binder.
     match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
-        ty         = self.narrowed(id).try();
+        self.match_at(m, span, self.narrowed(id).try())
+    }
+
+    // A match whose value a statement drops joins nothing: its arms are
+    // lowered for their effects, whatever type sema joined them at.
+    discarded = (self :: @Self, id: ExprId) Res<Value, LowerError> {
+        e = self.tree.expr_at(self.unwrapped(id));
+        e.kind.match({
+            Match(m) => self.match_at(m, e.span, self.unit_ty),
+            _        => self.expr(id),
+        })
+    }
+
+    match_at = (self :: @Self, m: Match, span: Span, ty: TyId) Res<Value, LowerError> {
         subject_ty = self.type_of(m.scrutinee).try();
         subject    = self.expr_as(m.scrutinee, subject_ty).try();
         out        = self.temp(ty).try();

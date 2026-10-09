@@ -183,7 +183,7 @@ member_instance = (
 instance_member_fn = (c :: Checker, n: TyNamed, e: MemberEdge)
                      Res<Res<Function>, AllocError> {
     c.is_unknown(e.bound).match({
-        true  => Ok(c.member_fn(e.self_ty, e.name, e.decl_span)),
+        true  => c.member_fn(e.self_ty, e.name, e.decl_span),
         false => {
             impls ::= c.alloc.Vec<LocalImpl>();
             c.local_impls(n, impls).try();

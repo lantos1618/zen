@@ -1,0 +1,24 @@
+// Under ZEN_ACTOR_SEED a wait that nothing can end is found at once: main
+// joins an actor nobody stops, with nothing ready and no timer pending.
+// The runtime reports it with the seed to rerun and exits with status 3.
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Idle = {}
+
+Idle.impl(Actor, {
+    poke = (self :: @Self, ctx: Context) { println("poked"); }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    i = env.spawn(Idle()).try();
+    i.poke().try();
+    i.join();
+    println("unreachable");
+    Ok(0)
+}

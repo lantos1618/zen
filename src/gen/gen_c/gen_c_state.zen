@@ -116,6 +116,9 @@ CBackend* = {
     actor_used :: bool,
     actor_defs :: Vec<String>,
     actor_sites :: usize,
+    // One C call per turn for the trace's name lister.
+    actor_names :: Vec<String>,
+    actor_spawned :: bool,
 
     // Reachable free functions and methods waiting to be lowered.
     fn_queue* :: Vec<QueuedFunction>,
@@ -378,6 +381,20 @@ CBackend* = {
     }
 
     actor_def_count* = (self: @Self) usize { self.actor_defs.len }
+
+    add_actor_name* = (self :: @Self, line: String) Res<AllocError> {
+        self.actor_names.add(line)
+    }
+
+    actor_name_count* = (self: @Self) usize { self.actor_names.len }
+
+    need_actor_names* = (self :: @Self) { self.actor_spawned = true; }
+
+    uses_actor_names* = (self: @Self) bool { self.actor_spawned }
+
+    actor_name_at* = (self: @Self, i: usize) Res<String> {
+        self.actor_names.get(i)
+    }
 
     actor_def_at* = (self: @Self, i: usize) Res<String> {
         self.actor_defs.get(i)
@@ -1060,6 +1077,8 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         actor_used: false,
         actor_defs: a.Vec<String>(),
         actor_sites: 0,
+        actor_names: a.Vec<String>(),
+        actor_spawned: false,
         scope_used: false,
         defer_envs: a.Vec<String>(),
         defer_env_ids: a.Vec<usize>(),

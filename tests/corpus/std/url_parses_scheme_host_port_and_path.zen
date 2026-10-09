@@ -11,11 +11,24 @@ show = (url: str) {
     });
 }
 
+show_rejection = (label: str, url: str) {
+    parse_url(url).match({
+        Ok(_)  => println("accepted {}", label),
+        Err(_) => println("rejected {}", label),
+    });
+}
+
 main = () i32 {
     show("http://example.com:8080/x");
     show("https://example.com/");
     show("http://example.com");
     show("http://example.com:70000/");
     show("ftp://example.com/");
+    show("https://example.com/a%20b");
+    show_rejection("empty-host", "https://");
+    show_rejection("empty-host-port", "http://:80/x");
+    show_rejection("space-in-host", "http://exa mple.com/x");
+    show_rejection("newline-in-path", "http://example.com/x\r\nInjected: yes");
+    show_rejection("space-in-path", "http://example.com/x y");
     0
 }

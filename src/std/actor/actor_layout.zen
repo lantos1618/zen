@@ -67,7 +67,7 @@ G_ENV*: usize = 23           // the compilers' shared copy of the process Env
 G_STATS*: usize = 24         // counters, STATS words
 STATS*: usize = 16
 G_TRACE*: usize = 40         // ZEN_ACTOR_TRACE: event buffer address (0 when off)
-G_TRACE_N*: usize = 41       // events claimed, possibly past the capacity
+G_TRACE_N*: usize = 41       // events claimed; the ring holds the last CAP
 G_TRACE_CAP*: usize = 42     // events the buffer holds
 G_TRACE_T0*: usize = 43      // monotonic ns when tracing started
 G_WATCH_LOCK*: usize = 44    // u32: watch lists change under it
@@ -76,6 +76,20 @@ G_TIMERS*: usize = 46        // the earliest timer entry (0 when none)
 G_TIMER_LAST*: usize = 47    // the latest timer entry
 G_TIMER_N*: usize = 48       // timers not yet delivered
 G_TIMER_ON*: usize = 49      // timer thread: 0 none, 1 starting, 2 running
+G_REC_THREADS*: usize = 50   // threads given a flight-recorder ring
+G_REC_ON*: usize = 51        // 1 unless ZEN_ACTOR_RECORDER=0
+G_SIM*: usize = 52           // ZEN_ACTOR_SEED: the schedule's random state (0 when off)
+G_SIM_SEED*: usize = 53      // the seed, as given
+G_SIM_NOW*: usize = 54       // virtual time in ns, moved only by timers
+G_READY*: usize = 55         // address of the ready actors' array
+G_READY_N*: usize = 56       // actors ready to run
+G_READY_CAP*: usize = 57     // words the ready array holds
+G_SIM_LOCK*: usize = 58      // u32: the ready array and timer taking, for plain threads
+G_SIM_MAIN*: usize = 59      // local block of the first thread to use the seeded schedule
+G_SIM_SHARED*: usize = 60    // 1 once a second thread has used it
+G_TRACE_DONE*: usize = 61    // events written out; slots below it are free
+G_TRACE_LOST*: usize = 62    // events refused because the ring was full
+G_NAMES*: usize = 63         // the program's turn-name lister (0 when none)
 // Regions, in bytes.
 G_CENTRAL*: usize = 512      // std.actor.actor_pool's central part
 G_CHUNKS*: usize = 1152      // the registry's chunk table, CHUNKS words
@@ -86,8 +100,16 @@ G_SPARE_COND*: usize = 5440
 G_EXIT_PARKER*: usize = 5504 // the exiting main thread waits here
 G_THREAD_LIST*: usize = 5632 // started threads' handles, MAX_THREADS words
 G_TIMER_PARKER*: usize = 7168 // the timer thread waits here
+G_RINGS*: usize = 7296       // each thread's recorder ring, by tag, MAX_THREADS words
+G_TRACE_IO*: usize = 8832    // the trace writer's words, below
 MAX_THREADS*: usize = 192
-GLOBALS_BYTES*: usize = 7296
+GLOBALS_BYTES*: usize = 8896
+// The trace writer's words, as word indices into G_TRACE_IO.
+G_TRACE_FD*: usize = 1104    // trace file descriptor + 1 (0 when not open)
+G_TRACE_OUT*: usize = 1105   // the trace writer's text buffer
+G_TRACE_OUT_N*: usize = 1106 // bytes pending in it
+G_FAULTS*: usize = 1107      // ZEN_ACTOR_FAULTS: 1 in n chances fail (0 when off)
+G_FAULT_RNG*: usize = 1108   // the faults' own xorshift state, from the seed
 
 // Statistics, as word indices after G_STATS.
 S_QUEUED*: usize = 0         // sends that waited in an outbox
@@ -115,7 +137,23 @@ L_SLOTS_N*: usize = 2
 L_YIELD*: usize = 3          // the running turn asked to yield (parked, H')
 L_SLOTS*: usize = 4          // word offset: SLOT_CACHE words
 L_HEAP*: usize = 2080        // byte offset: HEAP_BYTES
-LOCAL_BYTES*: usize = 40096
+L_MSG*: usize = 5012         // the id of the message this thread's turn runs (0: none)
+L_SEQ*: usize = 5013         // messages this thread has taken
+L_RING*: usize = 5014        // its recorder ring (0 not made yet, 1 none)
+L_TAG*: usize = 5015         // its tag in G_RINGS, shifted to an id's top bits
+LOCAL_BYTES*: usize = 40128
+
+// ---------------------------------------------------------------------
+// the flight recorder
+// ---------------------------------------------------------------------
+
+// Each thread that runs turns keeps its last REC_EVENTS takes in a ring:
+// the message's id, the id of the message whose turn sent it (its cause),
+// the actor's Ref and its name word. An id is (tag << ID_SHIFT | seq).
+REC_EVENTS*: usize = 256
+REC_MASK*: usize = 255
+REC_WORDS*: usize = 4
+ID_SHIFT*: usize = 40
 
 // ---------------------------------------------------------------------
 // a worker
@@ -185,6 +223,7 @@ B_STOPPED*: usize = 5        // code address of the stopped entry, or 0
 B_SIDE*: usize = 6           // send-or-park state, made on first need
 B_FAILED*: usize = 7          // 1 once a checked trap ended a turn
 B_RECEIVE*: usize = 8        // code address of the receive turn, or 0
+B_NAME*: usize = 9           // the type's name: its address | length << 48
 B_RECORD*: usize = 80        // byte offset of the compiler's record
 
 // The send-or-park side record: the outbox (sends waiting for room), the
@@ -206,10 +245,12 @@ REFUSED*: usize = 2
 // A waiter node: next, the sender's body, the Ref it waits on.
 WAITER_BYTES*: usize = 32
 
-// A message: the mailbox link, the turn's code address, the payload.
+// A message: the mailbox link, the turn's code address, the id of the
+// message whose turn sent it (0: none), the payload.
 M_NEXT*: usize = 0
 M_TURN*: usize = 1
-M_PAYLOAD*: usize = 16       // byte offset
+M_CAUSE*: usize = 2
+M_PAYLOAD*: usize = 24       // byte offset
 
 // A watch or timer entry: the next entry, the Ref it delivers to, then
 // a watch's generation and its two messages, or a timer's deadline and

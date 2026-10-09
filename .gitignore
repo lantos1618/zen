@@ -30,6 +30,7 @@ zen-new.c
 # The native corpus runner project builds beside its source.
 /tests/native/build/
 /tools/ct/build/
+/tools/zen-view/build/
 # zen-mutate build output.
 /tools/mutate/build/
 # zen-imports build output.

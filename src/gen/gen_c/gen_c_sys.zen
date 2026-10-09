@@ -159,7 +159,9 @@ sys_body = (name: str) Res<str> {
         "madvise"                    => Ok(
             "return zg_sys_result((int64_t)madvise((void *)(uintptr_t)a0, (size_t)a1, (int)a2));"
         ),
-        "exit_group"                 => Ok("_exit((int)a0); return 0;"),
+        "exit_group"                 => Ok(
+            "fflush(stdout); _exit((int)a0); return 0;"
+        ),
         "clock_gettime"              => Ok(
             "struct timespec t; if (clock_gettime((clockid_t)a0, &t) != 0) return -(int64_t)errno; int64_t w[2] = { (int64_t)t.tv_sec, (int64_t)t.tv_nsec }; memcpy(a1, w, sizeof w); return 0;"
         ),

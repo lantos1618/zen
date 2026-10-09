@@ -1,16 +1,16 @@
 // Written variant type arguments settle the payload slot before a value is
-// checked. A nonliteral str cannot be stored in Some<i32>.
+// checked. A nonliteral str cannot be stored in Full<i32>.
 
 { Res, Ok } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
-Opt<T> = { Some: T | None }
+Box<T> = { Full: T | Empty }
 
 main = (env: Env) Res<i32, AllocError> {
     text: str = "one";
-    value = Opt.Some<i32>(text);
+    value     = Box.Full<i32>(text);
     println("{}", value);
     Ok(0);
 }

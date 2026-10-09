@@ -337,7 +337,7 @@ Resolved on this branch: unsettled types in generic corners (35 to 1; a name
 sema left open takes its instance local's type, and a method call on it the
 result type of the method its type resolves to, including UFCS free functions
 such as `bool.then`), folding loops, loop handles passed into closures,
-`create<T>()` typed from its type argument, generic enum payloads (`Opt<T>`
+`create<T>()` typed from its type argument, generic enum payloads (`Box<T>`
 substituted per instance), and the error-set match failures.
 
 Not yet lowered, from branches that have not merged here: module-qualified

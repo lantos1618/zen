@@ -79,7 +79,22 @@ expr_kind = (c :: Checker, id: ExprId, node: Expr, ctx: Ctx)
         Index(x)      => c.index_element_type(node, x, ctx),
         Meta(_)       => c.meta_type(node, ctx),
         Record(r)     => c.record_literal_type(r, ctx),
+        Scope         => c.scope_type(),
         _             => c.types.unknown(),
+    })
+}
+
+// `@scope` is the enclosing block's `std.core.Scope`, so a call on it such as
+// `@scope.defer(() { .. })` checks its closure body like any other argument.
+scope_type = (c :: Checker) Res<TyId, AllocError> {
+    defs ::= c.alloc.Vec<Def>();
+    c.world.core_of("Scope", defs).try();
+    defs.get(0).match({
+        Ok(d) => {
+            args ::= c.alloc.Vec<TyId>();
+            c.types.named(d.id, d.qname, d.name, args)
+        },
+        None  => c.types.unknown(),
     })
 }
 

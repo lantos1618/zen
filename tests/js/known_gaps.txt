@@ -58,13 +58,8 @@ tests/corpus/cli/project_backend_recipes/main # UNSUPPORTED: main.zen:1:19: noth
 tests/corpus/cli/project_commands_start_at_build_zen # UNSUPPORTED: project_commands_start_at_build_zen.zen:3:12: nothing is at that path: tried `zen.zen` and `zen/zen.
 tests/corpus/cli/project_test_targets/main # UNSUPPORTED: main.zen:1:19: nothing is at that path: tried `zen/zen_project.zen` and `zen/zen_project/zen_project
 tests/corpus/cli/value_flags_do_not_swallow_options # UNSUPPORTED: value_flags_do_not_swallow_options.zen:5:12: nothing is at that path: tried `zen.zen` and `zen/zen.z
-tests/corpus/closures-capture/a_mutation_before_defer_is_invisible/main # UNSUPPORTED: main.zen:17:46: error: unsupported by this backend: an expression without a checked type
-tests/corpus/closures-capture/b_two_writers_one_snapshot_each/main # UNSUPPORTED: main.zen:22:13: error: unsupported by this backend: an expression without a checked type
 tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main # UNSUPPORTED: main.zen:30:13: error: unsupported by this backend: this expression in a native executable
 tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main # UNSUPPORTED: main.zen:24:9: error: unsupported by this backend: alternatives of a value without them (`i64`)
-tests/corpus/closures-capture/e_shadowing_bind_is_not_a_capture/main # UNSUPPORTED: main.zen:9:34: error: unsupported by this backend: an expression without a checked type
-tests/corpus/closures-capture/g_inner_block_snapshot_outer_frame/main # UNSUPPORTED: main.zen:23:53: error: unsupported by this backend: an expression without a checked type
-tests/corpus/closures-capture/h_lambda_argument_reads_the_live_binding/main # UNSUPPORTED: main.zen:24:46: error: unsupported by this backend: an expression without a checked type
 tests/corpus/closures-capture/i_local_function_reads_the_live_frame/main # UNSUPPORTED: main.zen:16:5: error: unsupported by this backend: nested declarations
 tests/corpus/closures-capture/j_local_function_try_returns_from_its_writer/main # UNSUPPORTED: main.zen:31:5: error: unsupported by this backend: nested declarations
 tests/corpus/codegen/a_recorded_call_never_falls_back_to_another_declaration # UNSUPPORTED: a_recorded_call_never_falls_back_to_another_declaration.zen:4:45: nothing is at that path: tried `se
@@ -107,7 +102,6 @@ tests/corpus/env/threads_spawn_joins_two_bodies # UNSUPPORTED: error: unsupporte
 tests/corpus/env/threads_spawn_many_and_join_in_order # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/errors-res/a_union_of_errors_is_an_error # UNSUPPORTED: a_union_of_errors_is_an_error.zen:24:14: error: unsupported by this backend: a value conversion this backend does not model (`
 tests/corpus/errors-try/fallible_inline_helper_in_thread/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
-tests/corpus/errors-try/inlined_helpers_keep_lexical_returns/main # UNSUPPORTED: main.zen:96:9: error: unsupported by this backend: an expression without a checked type
 tests/corpus/errors-try/try_on_an_all_ok_match_never_widens/ # UNSUPPORTED: main.zen:20:5: error: unsupported by this backend: an unknown variant (`Res!i32,main.Fail|main.Kind|
 tests/corpus/file-io/posix_stream/main # UNSUPPORTED: main.zen:29:23: error: unsupported by this backend: a call without successful semantic checking
 tests/corpus/fmt/a_comment_between_items_stays_put # UNSUPPORTED: a_comment_between_items_stays_put.zen:15:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/f

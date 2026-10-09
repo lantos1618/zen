@@ -647,6 +647,9 @@ checked = (program: Program, alloc: Alloc) Res<VerifyError> {
         state: alloc.Vec<usize>(),
         yes: alloc.Vec<usize>(),
         no: alloc.Vec<usize>(),
+        defs: alloc.Vec<usize>(),
+        def_block: alloc.Vec<usize>(),
+        def_index: alloc.Vec<usize>(),
         block: 0
     );
     program.functions.loop((h, index, function) {
@@ -686,6 +689,9 @@ Payloads = {
     state :: Vec<usize>,
     yes :: Vec<usize>,
     no :: Vec<usize>,
+    defs :: Vec<usize>,
+    def_block :: Vec<usize>,
+    def_index :: Vec<usize>,
     block :: usize,
 
     reset = (self :: @Self, function: Func, index: usize, guards: Guards) Res<VerifyError> {
@@ -710,6 +716,24 @@ Payloads = {
                 (at == 0).match({ true => KNOWN_NONE, false => UNREACHED })
             ).try();
             self.entry.set(at, row);
+        });
+        refill_words(self.defs, slots, 0).try();
+        refill_words(self.def_block, slots, NO_SLOT).try();
+        refill_words(self.def_index, slots, NO_SLOT).try();
+        function.blocks.loop((h, at, block) {
+            block.code.loop((ih, i, instruction) {
+                written(instruction).match({
+                    Ok(slot) => {
+                        self.defs.set(
+                            slot,
+                            self.defs.get(slot).value_or(0) + 1
+                        );
+                        self.def_block.set(slot, at);
+                        self.def_index.set(slot, i);
+                    },
+                    None     => (),
+                });
+            });
         });
         Ok
     }
@@ -741,17 +765,10 @@ Payloads = {
 
     // The only instruction writing `slot`, when exactly one does.
     only_def = (self: @Self, slot: usize) Res<Instruction> {
-        found :: Res<Instruction> = None;
-        count ::= 0;
-        self.function.blocks.loop((block) {
-            block.code.loop((instruction) {
-                (written(instruction).value_or(NO_SLOT) == slot).then(() {
-                    count = count + 1;
-                    found = Ok(instruction);
-                });
-            });
-        });
-        (count == 1).match({ true => found, false => None })
+        (self.defs.get(slot).value_or(0) == 1).match({
+            false => None,
+            true  => self.function.blocks.get(self.def_block.get(slot).value_or(NO_SLOT)).try().code.get(self.def_index.get(slot).value_or(NO_SLOT)),
+        })
     }
 
     genuine = (self: @Self, g: TagGuard) bool {

@@ -34,7 +34,7 @@
 { word, integer, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
-{ to_bound, resolve } = gen.gen_lower_member
+{ to_bound, bound_of, handle_for_place, resolve } = gen.gen_lower_member
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { real_call } = gen.gen_lower_call
 { capability } = gen.gen_lower_shape
@@ -1034,12 +1034,32 @@ Lowerer* = {
                         value = self.block_as(b, true, Ok(ty)).try();
                         self.coerce(value, ty)
                     },
-                    _        => {
-                        value = self.expr(id).try();
-                        self.coerce(value, ty)
-                    },
+                    _        => self.place_handle(id, ty).try().match({
+                        Ok(handle) => Ok(handle),
+                        None       => {
+                            value = self.expr(id).try();
+                            self.coerce(value, ty)
+                        },
+                    }),
                 })
             },
+        })
+    }
+
+    // An implementor with a place enters a bound pointing at that place, so
+    // a handle stored past this invocation (an Alloc kept in a Vec) stays
+    // valid as long as the implementor does; only temporaries are copied.
+    place_handle = (self :: @Self, id: ExprId, ty: TyId)
+                   Res<Res<Value>, LowerError> {
+        (self.settled(ty) && self.type_of(id).try() != ty).match({
+            false => Ok(None),
+            true  => self.bound_of(ty).try().match({
+                None  => Ok(None),
+                Ok(_) => self.place_of(id).try().match({
+                    None      => Ok(None),
+                    Ok(place) => self.handle_for_place(place, ty),
+                }),
+            }),
         })
     }
 

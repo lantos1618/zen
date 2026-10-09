@@ -1,0 +1,170 @@
+// zen-view: a live dashboard over a ZEN_ACTOR_TRACE file.
+//
+//   zen-view TRACE [--port N] [--host H] [--web DIR]
+//
+// `/` is DIR/index.html. `/trace?from=N` is the trace's whole lines from
+// byte N, at most CHUNK_MAX bytes of them; the page polls it to follow a program that is still running. Its
+// `X-Trace-Start` header is the byte the lines start at: 0 instead of N
+// when the file was rewritten by a new run. One request at a time; each
+// gets its own arena.
+{ Res, Ok, Err, None, loop } = std.core
+{ Alloc, AllocError } = std.mem
+{ str, str_at } = std.text
+{ Env } = std.env
+{ println } = std.io
+{ TcpListener, TcpStream } = std.net.tcp
+
+Cli = {
+    trace: str,
+    port :: u64 = 7878,
+    host :: str = "127.0.0.1",
+    web  :: str = "tools/zen-view/web",
+}
+
+USAGE: str = "usage: zen-view TRACE [--port N] [--host H] [--web DIR]"
+REQUEST_MAX: usize = 8192
+// A long trace reaches the page over several polls.
+CHUNK_MAX: usize = 4194304
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    env.args<Cli>().match({
+        Ok(cli) => serve(env, a, cli),
+        Err(_)  => {
+            println("{}", USAGE);
+            Ok(2)
+        },
+    })
+}
+
+serve = (env: Env, a: Alloc, cli: Cli) Res<i32, AllocError> {
+    TcpListener.listen(a, cli.host, cli.port.to_u16().value_or(0)).match({
+        Err(_)       => {
+            println("zen-view: cannot listen on {}:{}", cli.host, cli.port);
+            Ok(1)
+        },
+        Ok(listener) => {
+            println(
+                "zen-view: http://{}:{}/ shows {}",
+                cli.host,
+                cli.port,
+                cli.trace
+            );
+            loop((h) {
+                r ::= env.mem.alloc();
+                listener.accept(r).match({
+                    Ok(stream) => answer(env, r, cli, stream).ignore(),
+                    Err(_)     => (),
+                });
+            });
+            Ok(0)
+        },
+    })
+}
+
+answer = (env: Env, a: Alloc, cli: Cli, stream: TcpStream) Res<AllocError> {
+    buf ::= a.Vec<u8>();
+    got  = stream.read(buf, REQUEST_MAX).match({ Ok(n) => n, Err(_) => 0 });
+    path = target(str_at(buf.ptr(), got));
+    path.starts_with("/trace").match({
+        true  => tail(env, a, cli, path, stream),
+        false => (path.eq("/") || path.eq("/index.html")).match({
+            true  => page(env, a, cli, stream),
+            false => reply(
+                a,
+                stream,
+                "404 Not Found",
+                "text/plain",
+                "not found\n",
+                0
+            ),
+        }),
+    })
+}
+
+// `GET /x HTTP/1.1` targets `/x`; anything else targets "".
+target = (request: str) str {
+    request.starts_with("GET ").match({
+        false => "",
+        true  => {
+            rest = request.slice(4, request.len);
+            rest.find(" ").match({ Ok(end) => rest.slice(0, end), None => "" })
+        },
+    })
+}
+
+page = (env: Env, a: Alloc, cli: Cli, stream: TcpStream) Res<AllocError> {
+    path = a.String("{}/index.html", cli.web).try();
+    env.fs.read(a, path.view()).match({
+        Ok(html) => reply(
+            a,
+            stream,
+            "200 OK",
+            "text/html; charset=utf-8",
+            html.view(),
+            0
+        ),
+        Err(_)   => reply(
+            a,
+            stream,
+            "500 Internal Server Error",
+            "text/plain",
+            "zen-view: no index.html in --web\n",
+            0
+        ),
+    })
+}
+
+tail = (env: Env, a: Alloc, cli: Cli, path: str, stream: TcpStream)
+       Res<AllocError> {
+    from = path.find("from=").match({
+        Ok(at) => path.slice(at + 5, path.len).parse_u64().value_or(0).to_usize().value_or(0),
+        None   => 0,
+    });
+    env.fs.read(a, cli.trace).match({
+        // Not written yet: nothing new.
+        Err(_)   => reply(a, stream, "200 OK", "text/plain", "", from),
+        Ok(text) => {
+            all   = text.view();
+            start = (from <= all.len).match({ true => from, false => 0 });
+            stop  = (all.len - start > CHUNK_MAX).match({ true => start + CHUNK_MAX, false => all.len });
+            rest  = all.slice(start, stop);
+            reply(
+                a,
+                stream,
+                "200 OK",
+                "text/plain",
+                rest.slice(0, whole_lines(rest)),
+                start
+            )
+        },
+    })
+}
+
+// Bytes up to and including the last newline: a line still being written
+// waits for the next poll.
+whole_lines = (text: str) usize {
+    n ::= text.len;
+    loop(() { n > 0 && text.index(n - 1) != '\n' }, (h) { n = n - 1; });
+    n
+}
+
+reply = (
+    a      : Alloc,
+    stream : TcpStream,
+    status : str,
+    kind   : str,
+    body   : str,
+    start  : usize
+) Res<AllocError> {
+    head = a.String(
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nX-Trace-Start: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        status,
+        kind,
+        body.len,
+        start
+    ).try();
+    stream.write(head.view()).ignore();
+    stream.write(body).ignore();
+    Ok
+}

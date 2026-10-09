@@ -24,7 +24,7 @@
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at } = sema.sema
 { subst, type_from_ast, is_prim, const_int, fits } = sema.sema
 { Memos, instance_key_of } = sema.sema
-{ Pat, PatReading, read_pattern } = sema.sema
+{ Pat, PatReading, read_pattern, value_agrees } = sema.sema
 { is_drop_type } = sema.sema_drop
 { Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
@@ -39,7 +39,7 @@
 { capability } = gen.gen_lower_shape
 { variant_index, size_of, TAG_BYTES } = gen.gen_lower_shape
 { call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
-{ SynthAt, lower_pending } = gen.gen_lower_thread
+{ SynthAt, TurnName, lower_pending } = gen.gen_lower_thread
 { owner_of } = sema.sema_inst
 
 // A value computed into a slot, with its concrete (substituted) type.
@@ -167,6 +167,10 @@ Lowerer* = {
     // Pending instances the lowering synthesizes (thread bodies, actor
     // entry points), by function index; see gen_lower_thread.
     synths* :: Vec<SynthAt>,
+    // Each turn's `Type.behaviour`, and the index of the function that
+    // hands them to the runtime (gen_lower_actor.names_function).
+    turn_names* :: Vec<TurnName>,
+    names_at* :: Res<usize> = None,
 
     // -------------------------------------------------------------------
     // blocks and slots
@@ -894,6 +898,33 @@ Lowerer* = {
                 Ok(out)
             },
         })
+    }
+
+    // Zero the first `bytes` bytes of `value`'s storage, a word at a time.
+    zero_fill = (self :: @Self, value: Value, bytes: usize) Res<LowerError> {
+        at = self.slot_of(Scalar.Ptr).try();
+        self.add(Instruction.AddressOf(Address(
+            out: at,
+            slot: value.slot
+        ))).try();
+        word  = self.word_const(Scalar.U64, 0).try();
+        byte  = self.word_const(Scalar.U8, 0).try();
+        words = bytes / 8;
+        Range(0, words).loop((i) {
+            self.add(Instruction.StoreValue(Store(
+                base: at,
+                offset: i * 8,
+                value: word
+            ))).try();
+        });
+        Range(words * 8, bytes).loop((offset) {
+            self.add(Instruction.StoreValue(Store(
+                base: at,
+                offset: offset,
+                value: byte
+            ))).try();
+        });
+        Ok
     }
 
     constant_unit_of = (self :: @Self, ty: TyId) Res<Value, LowerError> {
@@ -2230,7 +2261,15 @@ Lowerer* = {
                 "an array literal without a fixed array type"
             )).try();
         out      = self.temp(ty).try();
-        base     = self.slot_of(Scalar.Ptr).try();
+        // `[T, N]()` and short literals start zeroed, as on the C path.
+        (elems.len < elements.count).match({
+            true  => self.zero_fill(
+                out,
+                elements.count * elements.stride
+            ).try(),
+            false => (),
+        });
+        base = self.slot_of(Scalar.Ptr).try();
         elems.loop((h, i, elem) {
             value = self.expr_as(elem, elements.elem).try();
             self.add(Instruction.AddressOf(Address(
@@ -2361,7 +2400,13 @@ Lowerer* = {
     // decision, and the lowering only follows it. A case the reading names
     // that the lowered layout lacks is a compiler error, never a binder.
     match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
-        ty         = self.narrowed(id).try();
+        // Arms that disagree (`Named(n) => n.args.loop(..), Other => ()`)
+        // give no value: sema types the match by its first arm only, and the
+        // arms run for their effects.
+        ty         = self.check.value_agrees(id).match({
+            true  => self.narrowed(id).try(),
+            false => self.unit_ty,
+        });
         subject_ty = self.type_of(m.scrutinee).try();
         subject    = self.expr_as(m.scrutinee, subject_ty).try();
         out        = self.temp(ty).try();
@@ -2964,6 +3009,9 @@ Lowerer* = {
     }
 
     // A real function instance for (callee, substitution, Self).
+    // The function index of the program's turn name table.
+    name_table_at* = (self :: @Self, at: usize) { self.names_at = Ok(at); }
+
     enqueue* = (self :: @Self, callee: Callee) Res<usize, LowerError> {
         key = self.instance_key(callee).try();
         self.known.get(key.view()).match({
@@ -3419,7 +3467,8 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         case_tests: alloc.Vec<CaseTest>(),
         tag_guards: alloc.Vec<TagGuard>(),
         payload_reads: alloc.Vec<PayloadRead>(),
-        synths: alloc.Vec<SynthAt>()
+        synths: alloc.Vec<SynthAt>(),
+        turn_names: alloc.Vec<TurnName>()
     );
     main_decl   = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
     main_fn     = main_decl.kind.match({ Function(f) => Ok(f), _ => None })
@@ -3455,6 +3504,19 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         });
         functions.add(f).try(LowerError.OutOfMemory);
         i = i + 1;
+    });
+    // The name table was lowered when reached; lower it again now that
+    // every turn is known. It calls only what it called the first time.
+    state.names_at.when_ok((at) {
+        callee = state.pending.get(at).ok_or(unsupported(module.span, "a missing name table")).try();
+        f      = state.lower_pending(at, callee, false).try();
+        (state.pending.len != functions.len).then(
+            () { Err(unsupported(
+                module.span,
+                "a name table that reaches a new function"
+            )).try(); }
+        );
+        functions.set(at, f).ok_or(unsupported(module.span, "a missing name table slot")).try();
     });
     // A broken implementor refuses the program only when a value of it
     // can reach its bound.

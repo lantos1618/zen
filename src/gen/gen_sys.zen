@@ -35,16 +35,21 @@ Sys* = { Read
     | Mprotect
     | Madvise
     | Flock
+    | Getcwd
+    | Mkdirat
+    | Unlinkat
+    // Processes: `fork` is clone(SIGCHLD) on Linux and libSystem's fork on
+    // Darwin, whose `pipe` and `dup2` stand in for pipe2 and dup3.
     | Pipe2
+    | Fork
+    | Execve
     | Dup3
     | Chdir
-    | Execve
     | Wait4
     | Kill
     | Ppoll
-    | Fcntl
-    // Darwin's fork; Linux forks through `Clone`.
-    | Fork
+    | Poll
+    | Ioctl
     // Threads. `ThreadSelf` reads the calling thread's pointer: the thread
     // control block the runtime installed as TLS on Linux, `pthread_self()`
     // on Darwin. `CloneThread` starts a Linux thread on a caller-built stack
@@ -105,15 +110,19 @@ arity* = (call: Sys) usize {
         Mprotect         => 3,
         Madvise          => 3,
         Flock            => 2,
+        Getcwd           => 2,
+        Mkdirat          => 3,
+        Unlinkat         => 3,
         Pipe2            => 2,
+        Fork             => 5,
+        Execve           => 3,
         Dup3             => 3,
         Chdir            => 1,
-        Execve           => 3,
         Wait4            => 4,
         Kill             => 2,
         Ppoll            => 5,
-        Fcntl            => 3,
-        Fork             => 0,
+        Poll             => 3,
+        Ioctl            => 2,
         ThreadSelf       => 0,
         CloneThread      => 3,
         PthreadStart     => 1,
@@ -163,14 +172,19 @@ linux_x86_64* = (call: Sys) Res<usize> {
         Mprotect         => Ok(10),
         Madvise          => Ok(28),
         Flock            => Ok(73),
+        Getcwd           => Ok(79),
+        Mkdirat          => Ok(258),
+        Unlinkat         => Ok(263),
         Pipe2            => Ok(293),
+        Fork             => Ok(56),
+        Execve           => Ok(59),
         Dup3             => Ok(292),
         Chdir            => Ok(80),
-        Execve           => Ok(59),
         Wait4            => Ok(61),
         Kill             => Ok(62),
         Ppoll            => Ok(271),
-        Fcntl            => Ok(72),
+        Poll             => Ok(7),
+        Ioctl            => Ok(16),
         SchedGetaffinity => Ok(204),
         _                => None,
     })
@@ -204,14 +218,19 @@ linux_arm64* = (call: Sys) Res<usize> {
         Mprotect         => Ok(226),
         Madvise          => Ok(233),
         Flock            => Ok(32),
+        Getcwd           => Ok(17),
+        Mkdirat          => Ok(34),
+        Unlinkat         => Ok(35),
         Pipe2            => Ok(59),
+        Fork             => Ok(220),
+        Execve           => Ok(221),
         Dup3             => Ok(24),
         Chdir            => Ok(49),
-        Execve           => Ok(221),
         Wait4            => Ok(260),
         Kill             => Ok(129),
         Ppoll            => Ok(73),
-        Fcntl            => Ok(25),
+        Poll             => None,
+        Ioctl            => Ok(29),
         SchedGetaffinity => Ok(123),
         _                => None,
     })
@@ -252,15 +271,19 @@ darwin_symbol* = (call: Sys) Res<str> {
         Mprotect         => Ok("mprotect"),
         Madvise          => Ok("madvise"),
         Flock            => Ok("flock"),
+        Getcwd           => Ok("getcwd"),
+        Mkdirat          => Ok("mkdirat"),
+        Unlinkat         => Ok("unlinkat"),
         Pipe2            => Ok("pipe"),
+        Fork             => Ok("fork"),
+        Execve           => Ok("execve"),
         Dup3             => Ok("dup2"),
         Chdir            => Ok("chdir"),
-        Execve           => Ok("execve"),
         Wait4            => Ok("wait4"),
         Kill             => Ok("kill"),
-        Ppoll            => Ok("poll"),
-        Fcntl            => Ok("fcntl"),
-        Fork             => Ok("fork"),
+        Ppoll            => None,
+        Poll             => Ok("poll"),
+        Ioctl            => Ok("ioctl"),
         ThreadSelf       => Ok("pthread_self"),
         CloneThread      => None,
         PthreadStart     => Ok("pthread_create"),
@@ -381,15 +404,19 @@ sys_named* = (name: str) Res<Sys> {
         "mprotect"               => Ok(Sys.Mprotect),
         "madvise"                => Ok(Sys.Madvise),
         "flock"                  => Ok(Sys.Flock),
+        "getcwd"                 => Ok(Sys.Getcwd),
+        "mkdirat"                => Ok(Sys.Mkdirat),
+        "unlinkat"               => Ok(Sys.Unlinkat),
         "pipe2"                  => Ok(Sys.Pipe2),
+        "fork"                   => Ok(Sys.Fork),
+        "execve"                 => Ok(Sys.Execve),
         "dup3"                   => Ok(Sys.Dup3),
         "chdir"                  => Ok(Sys.Chdir),
-        "execve"                 => Ok(Sys.Execve),
         "wait4"                  => Ok(Sys.Wait4),
         "kill"                   => Ok(Sys.Kill),
         "ppoll"                  => Ok(Sys.Ppoll),
-        "fcntl"                  => Ok(Sys.Fcntl),
-        "fork"                   => Ok(Sys.Fork),
+        "poll"                   => Ok(Sys.Poll),
+        "ioctl"                  => Ok(Sys.Ioctl),
         "thread_self"            => Ok(Sys.ThreadSelf),
         "clone_thread"           => Ok(Sys.CloneThread),
         "pthread_start"          => Ok(Sys.PthreadStart),

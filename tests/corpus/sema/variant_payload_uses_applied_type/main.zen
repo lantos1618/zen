@@ -3,13 +3,13 @@
 { Env } = std.env
 { println } = std.io
 
-Opt<T> = { Some: T | None }
+Box<T> = { Full: T | Empty }
 
-value = (o: Opt<i64>) i64 { o.match({ Some(v) => v, None => 0 }) }
+value = (o: Box<i64>) i64 { o.match({ Full(v) => v, Empty => 0 }) }
 
 main = (env: Env) Res<i32, AllocError> {
-    contextual: Opt<i64> = Opt.Some(5000000000);
-    explicit             = Opt.Some<i64>(5000000000);
+    contextual: Box<i64> = Box.Full(5000000000);
+    explicit             = Box.Full<i64>(5000000000);
     println("{} {}", value(contextual), value(explicit));
     Ok(0);
 }

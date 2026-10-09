@@ -42,7 +42,7 @@
 { emit_clock } = gen.gen_c.gen_c_clock
 { emit_native_features, emit_proc } = gen.gen_c.gen_c_proc
 { emit_threads, emit_spawn_envs } = gen.gen_c.gen_c_threads
-{ emit_actor_floor, emit_actor_defs } = gen.gen_c.gen_c_actor
+{ emit_actor_floor, emit_actor_defs, write_actor_names } = gen.gen_c.gen_c_actor
 { emit_sys, uses_sys } = gen.gen_c.gen_c_sys
 { borrows, passes_address } = gen.gen_c.gen_c_borrow
 { emit_machine, function_attributes } = gen.gen_c.gen_c_machine
@@ -67,7 +67,9 @@ emit_program* = (be :: CBackend, mi: usize, out :: Emit)
 // the one result — the walk is over the whole program either way.
 lower_program* = (be :: CBackend, mi: usize) Res<AllocError> {
     be.seed(mi).try();
-    drain(be)
+    drain(be).try();
+    // After the drain every turn is known; naming one queued actor_name.
+    be.write_actor_names()
 }
 
 // Everything a translation unit needs above its first prototype. The

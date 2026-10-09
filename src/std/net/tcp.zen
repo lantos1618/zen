@@ -16,6 +16,9 @@ tcp_error = (fault: SocketFault) TcpError {
         WriteFault   => TcpError.WriteFailed,
         ReadFault    => TcpError.ReadFailed,
         PeerClosed   => TcpError.Closed,
+        // A stream never listens or accepts; TcpListener reports these.
+        ListenFault  => TcpError.ConnectFailed,
+        AcceptFault  => TcpError.ConnectFailed,
     })
 }
 
@@ -41,5 +44,33 @@ TcpStream* = {
 }
 
 TcpStream.impl(Drop, {
+    drop = (self :: @Self) { self.close() }
+})
+
+TcpListenError* = { ListenFailed | AcceptFailed }
+TcpListenError.impl(Error, {})
+
+TcpListener* = {
+    socket :: Socket,
+
+    listen* = (a: Alloc, host: str, port: u16) Res<TcpListener, TcpListenError> {
+        Socket.tcp_listen(a, host, port, 64).match({
+            Ok(socket) => Ok(TcpListener(socket: consume socket)),
+            Err(_)     => Err(TcpListenError.ListenFailed),
+        })
+    }
+
+    // Waits for the next connection; `a` holds only scratch for the call.
+    accept* = (self: @Self, a: Alloc) Res<TcpStream, TcpListenError> {
+        self.socket.accept(a).match({
+            Ok(socket) => Ok(TcpStream(socket: consume socket)),
+            Err(_)     => Err(TcpListenError.AcceptFailed),
+        })
+    }
+
+    close* = (self :: @Self) { self.socket.close() }
+}
+
+TcpListener.impl(Drop, {
     drop = (self :: @Self) { self.close() }
 })

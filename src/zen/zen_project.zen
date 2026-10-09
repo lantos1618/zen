@@ -12,7 +12,6 @@
 { asm_native, assemble_and_link } = zen.zen_native
 { entry_of, holds_build_zen, make_dirs, program_path } = zen.zen_path
 { Inputs, inputs, digest } = zen.zen_inputs
-{ rename } = std.fs.posix
 { BuildPlan, ExeNode, LibNode, plan, PlanFault } = zen.zen_build_plan
 { resolve, PackageFault } = zen.zen_packages
 { Env } = std.env
@@ -572,7 +571,7 @@ Project = {
     }
 
     replace = (self: @Self, from: str, to: str) Res<bool, AllocError> {
-        rename(self.a, from, to).match({
+        self.env.fs.rename(from, to).match({
             Ok(_)            => Ok(true),
             Err(OutOfMemory) => Err(AllocError.OutOfMemory),
             Err(_)           => { println("zen: cannot replace `{}`", to); Ok(false) },

@@ -901,7 +901,7 @@ Lowerer* = {
     }
 
     // Zero the first `bytes` bytes of `value`'s storage, a word at a time.
-    zero_fill = (self :: @Self, value: Value, bytes: usize) Res<LowerError> {
+    zero_fill* = (self :: @Self, value: Value, bytes: usize) Res<LowerError> {
         at = self.slot_of(Scalar.Ptr).try();
         self.add(Instruction.AddressOf(Address(
             out: at,

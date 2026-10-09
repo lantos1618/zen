@@ -19,7 +19,7 @@
 { Source, real_call } = gen.gen_lower_call
 { succeeded, ok_payload } = gen.gen_lower_thread
 { payload_type } = gen.gen_lower_member
-{ variant_index, shape, VariantAt } = gen.gen_lower_shape
+{ variant_index, shape, size_of, class_of, VariantAt } = gen.gen_lower_shape
 
 JSON_MODULE: str = "std.json.json_meta"
 
@@ -317,7 +317,7 @@ cli_fields = (
     args.value(help).try();
     scanned = lo.cli_checked(cli, "scan_fields", args.list).try();
     matches = lo.ok_payload(scanned).try();
-    out     = lo.temp(ty).try();
+    out     = lo.blank(ty).try();
     whole   = lo.spill(out);
     slots.loop((slot) { lo.cli_fill(cli, ty, whole, matches, slot).try(); });
     Ok(out)
@@ -602,7 +602,7 @@ choose = (
     position : Value,
     span     : Span
 ) Res<Value, LowerError> {
-    out = lo.temp(e).try();
+    out = lo.blank(e).try();
     lo.variants_of(e).try().loop((h, i, v) {
         lo.when_equal(position, i, () {
             value = lo.variant_value(e, v.name, None, span).try();
@@ -666,7 +666,7 @@ cli_variants = (
     variant = lo.read(lo.field_place(pick, "variant", cli.span).try()).try();
     next    = lo.read(lo.field_place(pick, "next", cli.span).try()).try();
     asked   = lo.read(lo.field_place(pick, "help", cli.span).try()).try();
-    out     = lo.temp(ty).try();
+    out     = lo.blank(ty).try();
     laid.loop((h, i, v) {
         lo.when_equal(variant, i, () {
             value = lo.cli_chosen(cli, ty, v, table, path, next, asked).try();
@@ -1102,6 +1102,14 @@ cli_checked = (
     got = lo.cli_call(cli, name, args).try();
     lo.fail_unless_ok(got, cli.exit, cli.span).try();
     Ok(got)
+}
+
+// A value filled field by field or branch by branch starts zeroed, so a
+// path that writes nothing (one the engine refuses) reads defined bytes.
+blank = (lo :: Lowerer, ty: TyId) Res<Value, LowerError> {
+    out = lo.temp(ty).try();
+    lo.zero_fill(out, size_of(lo.class_of(ty).try())).try();
+    Ok(out)
 }
 
 cli_usize = (lo :: Lowerer, n: usize) Res<Value, LowerError> {

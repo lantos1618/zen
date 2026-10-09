@@ -88,6 +88,10 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   and turn latency, timeline, worker lanes and failures — following it
   live. `./zen build tools/zen-view --std src`, then
   `tools/zen-view/build/zen-view <file>` and open http://127.0.0.1:7878/.
+  The page plays the recorded trace back at a chosen speed. Messages in
+  flight are dots on their edges, and the flame tab stacks each turn on the
+  turn whose send caused it. `tools/zen-view/demo/market.zen` is a nested
+  pipeline, one strategy of which fails, to try it on.
 
 - Pages: everything the runtime keeps (globals, per-thread state, workers,
   the registry, 2 MiB spans of slabs, large messages, trace buffers) comes

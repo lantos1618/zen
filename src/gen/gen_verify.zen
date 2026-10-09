@@ -348,11 +348,11 @@ Check = {
         Ok
     }
 
-    initialized = (self: @Self, flags: Vec<bool>, slot: usize) Res<VerifyError> {
-        flags.get(slot).value_or(false).ensure(self.fault(IrReason.Uninitialized)).try();
+    initialized = (self: @Self, flags :: Init, slot: usize) Res<VerifyError> {
+        flags.has(slot).ensure(self.fault(IrReason.Uninitialized)).try();
     }
 
-    reads = (self: @Self, flags: Vec<bool>, instruction: Instruction) Res<VerifyError> {
+    reads = (self: @Self, flags :: Init, instruction: Instruction) Res<VerifyError> {
         instruction.match({
             Constant(_)         => Ok,
             Copy(value)         => self.initialized(flags, value.source),
@@ -425,7 +425,7 @@ Check = {
         })
     }
 
-    exit_reads = (self: @Self, flags: Vec<bool>, exit: Terminator) Res<VerifyError> {
+    exit_reads = (self: @Self, flags :: Init, exit: Terminator) Res<VerifyError> {
         exit.match({
             Return(slot)   => self.initialized(flags, slot),
             Branch(branch) => self.initialized(flags, branch.value),
@@ -442,43 +442,86 @@ refill = (flags :: Vec<bool>, count: usize, value: bool) Res<VerifyError> {
 }
 
 // Structural validation has established the bounds of every slot and edge.
-write = (flags :: Vec<bool>, instruction: Instruction) {
+write = (flags :: Init, instruction: Instruction) {
     instruction.match({
-        Constant(value)     => { flags.set(value.out, true); },
-        Copy(value)         => { flags.set(value.out, true); },
-        UnaryValue(value)   => { flags.set(value.out, true); },
-        BinaryValue(value)  => { flags.set(value.out, true); },
-        Invoke(value)       => { flags.set(value.out, true); },
-        Cast(value)         => { flags.set(value.out, true); },
+        Constant(value)     => { flags.note(value.out); },
+        Copy(value)         => { flags.note(value.out); },
+        UnaryValue(value)   => { flags.note(value.out); },
+        BinaryValue(value)  => { flags.note(value.out); },
+        Invoke(value)       => { flags.note(value.out); },
+        Cast(value)         => { flags.note(value.out); },
         // Stores through the pointer may initialize the slot.
         AddressOf(value)    => {
-            flags.set(value.out, true);
-            flags.set(value.slot, true);
+            flags.note(value.out);
+            flags.note(value.slot);
         },
-        LoadValue(value)    => { flags.set(value.out, true); },
-        Bytes(value)        => { flags.set(value.out, true); },
-        System(value)       => { flags.set(value.out, true); },
-        Startup(value)      => { flags.set(value.out, true); },
-        MapPages(value)     => { flags.set(value.out, true); },
-        SysConst(value)     => { flags.set(value.out, true); },
-        Host(value)         => { flags.set(value.out, true); },
-        Wait(slot)          => { flags.set(slot, true); },
-        AtomicLoad(value)   => { flags.set(value.out, true); },
-        AtomicUpdate(value) => { flags.set(value.out, true); },
-        CompareSwap(value)  => { flags.set(value.out, true); },
-        CodeAddress(value)  => { flags.set(value.out, true); },
-        InvokeAt(value)     => { flags.set(value.out, true); },
+        LoadValue(value)    => { flags.note(value.out); },
+        Bytes(value)        => { flags.note(value.out); },
+        System(value)       => { flags.note(value.out); },
+        Startup(value)      => { flags.note(value.out); },
+        MapPages(value)     => { flags.note(value.out); },
+        SysConst(value)     => { flags.note(value.out); },
+        Host(value)         => { flags.note(value.out); },
+        Wait(slot)          => { flags.note(slot); },
+        AtomicLoad(value)   => { flags.note(value.out); },
+        AtomicUpdate(value) => { flags.note(value.out); },
+        CompareSwap(value)  => { flags.note(value.out); },
+        CodeAddress(value)  => { flags.note(value.out); },
+        InvokeAt(value)     => { flags.note(value.out); },
         _                   => (),
     });
 }
 
+// The initialization facts at one point of one block. A slot is initialized
+// when the block wrote it earlier (its `stamp` is this walk's `mark`) or
+// when it is initialized on entry. Only `cross` slots, those some block
+// reads before writing, carry entry facts; while `probing`, a read before a
+// write marks the slot as one of them instead.
+Init = {
+    stamp :: Vec<usize>,
+    mark :: usize,
+    probing :: bool,
+    exposed :: Vec<bool>,
+    cross :: Vec<usize>,
+    entry :: Vec<bool>,
+    made :: Vec<bool>,
+
+    begin = (self :: @Self) { self.mark = self.mark + 1; }
+
+    has = (self :: @Self, slot: usize) bool {
+        (self.stamp.get(slot).value_or(0) == self.mark).match({
+            true  => true,
+            false => self.probing.match({
+                true  => {
+                    self.exposed.set(slot, true);
+                    true
+                },
+                false => self.entry.get(self.cross.get(slot).value_or(NO_SLOT)).value_or(false),
+            }),
+        })
+    }
+
+    note = (self :: @Self, slot: usize) {
+        self.stamp.set(slot, self.mark);
+        at = self.cross.get(slot).value_or(NO_SLOT);
+        (at != NO_SLOT).then(() { self.made.set(at, true); });
+    }
+}
+
+// Facts flow only for `cross` slots, indexed by their position in `members`;
+// a slot written and read within one block is checked by that block alone.
 Flow = {
     alloc: Alloc,
     check :: Check,
     reachable :: Vec<bool>,
     predecessors :: Vec<Vec<usize>>,
     outgoing :: Vec<Vec<bool>>,
+    made :: Vec<Vec<bool>>,
     scratch :: Vec<bool>,
+    stamp :: Vec<usize>,
+    exposed :: Vec<bool>,
+    cross :: Vec<usize>,
+    members :: Vec<usize>,
 
     connect = (self :: @Self, from: usize, to: usize) Res<VerifyError> {
         pred ::= self.predecessors.get(to).ok_or(self.check.fault(IrReason.Target)).try();
@@ -493,7 +536,10 @@ Flow = {
         self.check = check;
         slots      = check.function.slots.len;
         refill(self.reachable, check.function.blocks.len, false).try();
-        refill(self.scratch, slots, false).try();
+        refill_words(self.stamp, slots, 0).try();
+        refill(self.exposed, slots, false).try();
+        refill_words(self.cross, slots, NO_SLOT).try();
+        self.members.clear();
         check.function.blocks.loop((h, index, _) {
             (index >= self.predecessors.len).then(() {
                 self.predecessors.add(
@@ -502,13 +548,13 @@ Flow = {
                 self.outgoing.add(
                     self.alloc.Vec<bool>()
                 ).try(VerifyError.OutOfMemory);
+                self.made.add(
+                    self.alloc.Vec<bool>()
+                ).try(VerifyError.OutOfMemory);
             });
             pred ::= self.predecessors.get(index).ok_or(self.check.fault(IrReason.Target)).try();
             pred.clear();
             self.predecessors.set(index, pred);
-            row ::= self.outgoing.get(index).ok_or(self.check.fault(IrReason.Target)).try();
-            refill(row, slots, true).try();
-            self.outgoing.set(index, row);
         });
         Ok
     }
@@ -551,23 +597,72 @@ Flow = {
     }
 
     incoming = (self: @Self, block: usize, incoming :: Vec<bool>) Res<VerifyError> {
-        Range(0, incoming.len).loop((slot) { incoming.set(slot, true); });
-        (block == 0).then(() {
-            Range(self.check.function.parameters, incoming.len).loop((slot) { incoming.set(slot, false); });
+        parameters = self.check.function.parameters;
+        self.members.loop((h, at, slot) {
+            incoming.set(at, block != 0 || slot < parameters);
         });
         predecessors = self.predecessors.get(block).ok_or(self.check.fault(IrReason.Target)).try();
         predecessors.loop((predecessor) {
             self.reachable.get(predecessor).value_or(false).then(() {
                 previous = self.outgoing.get(predecessor).ok_or(self.check.fault(IrReason.Target)).try();
-                Range(0, incoming.len).loop((slot) {
-                    (!previous.get(slot).value_or(false)).then(() { incoming.set(slot, false); });
+                Range(0, incoming.len).loop((at) {
+                    (!previous.get(at).value_or(false)).then(() { incoming.set(at, false); });
                 });
             });
         });
         Ok
     }
 
+    // Walk every reachable block once with `init`, checking its reads.
+    walk = (self :: @Self, init :: Init) Res<VerifyError> {
+        self.check.function.blocks.loop((h, index, block) {
+            self.reachable.get(index).value_or(false).then(() {
+                self.check.block = index;
+                (!init.probing).then(() {
+                    self.incoming(index, self.scratch).try();
+                });
+                init.begin();
+                block.code.loop((instruction) {
+                    self.check.reads(init, instruction).try();
+                    init.write(instruction);
+                });
+                self.check.exit_reads(init, block.exit).try();
+            });
+        });
+        Ok
+    }
+
     solve = (self :: @Self) Res<VerifyError> {
+        init ::= Init(
+            stamp: self.stamp,
+            mark: 0,
+            probing: true,
+            exposed: self.exposed,
+            cross: self.cross,
+            entry: self.scratch,
+            made: self.scratch
+        );
+        self.walk(init).try();
+        Range(0, self.exposed.len).loop((slot) {
+            self.exposed.get(slot).value_or(false).then(() {
+                self.cross.set(slot, self.members.len);
+                self.members.add(slot).try(VerifyError.OutOfMemory);
+            });
+        });
+        count = self.members.len;
+        refill(self.scratch, count, false).try();
+        init.entry = self.scratch;
+        self.check.function.blocks.loop((h, index, block) {
+            row ::= self.outgoing.get(index).ok_or(self.check.fault(IrReason.Target)).try();
+            refill(row, count, true).try();
+            self.outgoing.set(index, row);
+            made ::= self.made.get(index).ok_or(self.check.fault(IrReason.Target)).try();
+            refill(made, count, false).try();
+            self.made.set(index, made);
+            init.made = made;
+            init.begin();
+            block.code.loop((instruction) { init.write(instruction); });
+        });
         changed ::= true;
         loop(() { changed }, (h) {
             changed = false;
@@ -575,29 +670,21 @@ Flow = {
                 self.reachable.get(index).value_or(false).then(() {
                     next ::= self.scratch;
                     self.incoming(index, next).try();
-                    block.code.loop((instruction) { next.write(instruction); });
+                    made = self.made.get(index).ok_or(self.check.fault(IrReason.Target)).try();
                     old ::= self.outgoing.get(index).ok_or(self.check.fault(IrReason.Target)).try();
-                    Range(0, next.len).loop((slot) {
-                        (old.get(slot).value_or(false) != next.get(slot).value_or(false))
-                            .then(() { changed = true; });
-                        old.set(slot, next.get(slot).value_or(false));
+                    Range(0, count).loop((at) {
+                        bit = next.get(at).value_or(false) || made.get(at).value_or(false);
+                        (old.get(at).value_or(false) != bit).then(() {
+                            changed = true;
+                            old.set(at, bit);
+                        });
                     });
                 });
             });
         });
-        self.check.function.blocks.loop((h, index, block) {
-            self.reachable.get(index).value_or(false).then(() {
-                self.check.block = index;
-                state ::= self.scratch;
-                self.incoming(index, state).try();
-                block.code.loop((instruction) {
-                    self.check.reads(state, instruction).try();
-                    state.write(instruction);
-                });
-                self.check.exit_reads(state, block.exit).try();
-            });
-        });
-        Ok
+        init.probing = false;
+        init.made    = self.alloc.Vec<bool>();
+        self.walk(init)
     }
 }
 
@@ -624,7 +711,12 @@ checked = (program: Program, alloc: Alloc) Res<VerifyError> {
         reachable: alloc.Vec<bool>(),
         predecessors: alloc.Vec<Vec<usize>>(),
         outgoing: alloc.Vec<Vec<bool>>(),
-        scratch: alloc.Vec<bool>()
+        made: alloc.Vec<Vec<bool>>(),
+        scratch: alloc.Vec<bool>(),
+        stamp: alloc.Vec<usize>(),
+        exposed: alloc.Vec<bool>(),
+        cross: alloc.Vec<usize>(),
+        members: alloc.Vec<usize>()
     );
     program.functions.loop((h, index, function) {
         flow.reset(Check(
@@ -650,6 +742,7 @@ checked = (program: Program, alloc: Alloc) Res<VerifyError> {
         defs: alloc.Vec<usize>(),
         def_block: alloc.Vec<usize>(),
         def_index: alloc.Vec<usize>(),
+        member: alloc.Vec<usize>(),
         block: 0
     );
     program.functions.loop((h, index, function) {
@@ -692,6 +785,7 @@ Payloads = {
     defs :: Vec<usize>,
     def_block :: Vec<usize>,
     def_index :: Vec<usize>,
+    member :: Vec<usize>,
     block :: usize,
 
     reset = (self :: @Self, function: Func, index: usize, guards: Guards) Res<VerifyError> {
@@ -699,7 +793,21 @@ Payloads = {
         self.index    = index;
         self.guards   = guards;
         self.block    = 0;
-        slots         = function.slots.len;
+        refill_words(self.member, function.slots.len, NO_SLOT).try();
+        facts :: usize = 0;
+        guards.tests.loop((g) {
+            (self.fact(g.subject) == NO_SLOT).then(() {
+                self.member.set(g.subject, facts);
+                facts = facts + 1;
+            });
+        });
+        guards.reads.loop((r) {
+            (self.fact(r.subject) == NO_SLOT).then(() {
+                self.member.set(r.subject, facts);
+                facts = facts + 1;
+            });
+        });
+        slots = facts;
         refill_words(self.state, slots, KNOWN_NONE).try();
         refill_words(self.yes, slots, KNOWN_NONE).try();
         refill_words(self.no, slots, KNOWN_NONE).try();
@@ -717,9 +825,9 @@ Payloads = {
             ).try();
             self.entry.set(at, row);
         });
-        refill_words(self.defs, slots, 0).try();
-        refill_words(self.def_block, slots, NO_SLOT).try();
-        refill_words(self.def_index, slots, NO_SLOT).try();
+        refill_words(self.defs, function.slots.len, 0).try();
+        refill_words(self.def_block, function.slots.len, NO_SLOT).try();
+        refill_words(self.def_index, function.slots.len, NO_SLOT).try();
         function.blocks.loop((h, at, block) {
             block.code.loop((ih, i, instruction) {
                 written(instruction).match({
@@ -751,14 +859,18 @@ Payloads = {
             self.block = g.block;
             self.genuine(g).ensure(self.fault(IrReason.Guard)).try();
         });
-        self.solve().try();
-        self.guards.reads.loop((r) {
-            self.block = r.block;
-            state ::= self.state;
-            self.state_at(r.block, r.at, state).try();
-            known = state.get(r.subject).value_or(KNOWN_NONE);
-            (known == UNREACHED || known == r.variant)
-                .ensure(self.fault(IrReason.UnguardedPayload)).try();
+        // Facts are kept only for the slots guards test; a function without
+        // payload reads has nothing to prove.
+        (self.guards.reads.len > 0).then(() {
+            self.solve().try();
+            self.guards.reads.loop((r) {
+                self.block = r.block;
+                state ::= self.state;
+                self.state_at(r.block, r.at, state).try();
+                known = state.get(self.fact(r.subject)).value_or(KNOWN_NONE);
+                (known == UNREACHED || known == r.variant)
+                    .ensure(self.fault(IrReason.UnguardedPayload)).try();
+            });
         });
         Ok
     }
@@ -851,9 +963,9 @@ Payloads = {
                             assign(yes, out);
                             assign(no, out);
                             guard.when_ok((g) {
-                                yes.set(g.subject, g.variant);
+                                yes.set(self.fact(g.subject), g.variant);
                                 g.otherwise.when_ok(
-                                    (o) { no.set(g.subject, o); }
+                                    (o) { no.set(self.fact(g.subject), o); }
                                 );
                             });
                             changed = self.merge(br.yes, yes).try() || changed;
@@ -897,7 +1009,7 @@ Payloads = {
     }
 
     forget = (self: @Self, state :: Vec<usize>, instruction: Instruction) {
-        written(instruction).when_ok((slot) { state.set(slot, KNOWN_NONE); });
+        written(instruction).when_ok((slot) { self.forget_slot(state, slot); });
         // Writes through a pointer, listed without a fallback for the same
         // reason as `written`.
         instruction.match({
@@ -921,7 +1033,7 @@ Payloads = {
             AtomicLoad(_)   => (),
             CodeAddress(_)  => (),
             Machine(c)      => {
-                c.outs.loop((slot) { state.set(slot, KNOWN_NONE); });
+                c.outs.loop((slot) { self.forget_slot(state, slot); });
                 c.args.loop((a) { self.forget_argument(state, a); });
             },
             Wait(_)         => (),
@@ -944,6 +1056,16 @@ Payloads = {
         });
     }
 
+    // The fact row index of `slot`, NO_SLOT when no guard tests it.
+    fact = (self: @Self, slot: usize) usize {
+        self.member.get(slot).value_or(NO_SLOT)
+    }
+
+    forget_slot = (self: @Self, state :: Vec<usize>, slot: usize) {
+        at = self.fact(slot);
+        (at != NO_SLOT).then(() { state.set(at, KNOWN_NONE); });
+    }
+
     forget_argument = (self: @Self, state :: Vec<usize>, slot: usize) {
         self.function.slots.get(slot).match({
             Ok(ty) => ty.match({ Ptr => self.forget_through(
@@ -956,7 +1078,7 @@ Payloads = {
 
     forget_through = (self: @Self, state :: Vec<usize>, pointer: usize) {
         self.pointee(pointer).match({
-            Ok(slot) => { state.set(slot, KNOWN_NONE); },
+            Ok(slot) => self.forget_slot(state, slot),
             None     => Range(0, state.len).loop((slot) {
                 (state.get(slot).value_or(KNOWN_NONE) != UNREACHED).then(() { state.set(slot, KNOWN_NONE); });
             }),

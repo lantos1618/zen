@@ -29,7 +29,15 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         labels: a.Vec<bool>(),
         operands: a.Vec<usize>(),
         layouts: a.Vec<Layout>(),
-        symbols: a.Vec<str>()
+        symbols: a.Vec<str>(),
+        first: a.Vec<usize>(),
+        borrowed: a.Vec<bool>(),
+        taken: a.Vec<bool>(),
+        origin: a.Vec<usize>(),
+        escaped: a.Vec<bool>(),
+        stored: a.Vec<bool>(),
+        direct: a.Vec<bool>(),
+        copies: 0
     );
     writer.program(program).try();
     text ::= a.String().try();
@@ -49,8 +57,25 @@ C = {
     operands :: Vec<usize>,
     layouts :: Vec<Layout>,
     symbols :: Vec<str>,
+    // From `plan`: each function's first parameter in `borrowed`, where a
+    // borrowed parameter is an aggregate the callee only reads, passed by
+    // pointer instead of copied.
+    first :: Vec<usize>,
+    borrowed :: Vec<bool>,
+    taken :: Vec<bool>,
+    // From `survey`, per slot of one function: the slot an address slot
+    // points at (plus one; zero for none), whether that slot's address
+    // leaves loads (`escaped`), is stored through (`stored`), and whether an
+    // instruction writes the slot itself (`direct`).
+    origin :: Vec<usize>,
+    escaped :: Vec<bool>,
+    stored :: Vec<bool>,
+    direct :: Vec<bool>,
+    // `zc` copies made for borrowed arguments in the current function.
+    copies :: usize,
 
     program = (self :: @Self, program: Program) Res<(), AllocError> {
+        self.plan(program).try();
         program.functions.loop((h, index, function) {
             self.signature(index, function).try();
             self.out.add(";\n").try();
@@ -89,10 +114,195 @@ C = {
             (i > 0).then(() { self.out.add(", ").try(); });
             self.out.add("ZR_U ").try();
             self.out.ctype(ty).try();
-            self.out.fmt(" v{}", i).try();
+            self.by_pointer(index, i).match({
+                true  => self.out.fmt(" *zp{}", i),
+                false => self.out.fmt(" v{}", i),
+            }).try();
         });
         self.out.add(')')
     }
+
+    // Which aggregate parameters travel by pointer. A function whose address
+    // is taken keeps by-value parameters, since its indirect callers cannot
+    // tell.
+    plan = (self :: @Self, program: Program) Res<(), AllocError> {
+        program.functions.loop((_) { self.taken.add(false).try(); });
+        program.functions.loop((function) {
+            function.blocks.loop((block) {
+                block.code.loop((instruction) {
+                    instruction.match({
+                        CodeAddress(v) => { self.taken.set(v.function, true); },
+                        _              => (),
+                    });
+                });
+            });
+        });
+        self.taken.set(program.entry, true);
+        program.functions.loop((h, index, function) {
+            self.first.add(self.borrowed.len).try();
+            self.survey(function).try();
+            Range(0, function.parameters).loop((i) {
+                self.borrowed.add(
+                    !self.taken.get(index).value_or(true)
+                        && large(slot_ty(function, i))
+                        && !self.escaped.get(i).value_or(true)
+                        && !self.stored.get(i).value_or(true)
+                        && !self.direct.get(i).value_or(true)
+                ).try();
+            });
+        });
+        Ok
+    }
+
+    by_pointer = (self: @Self, function: usize, param: usize) bool {
+        self.borrowed.get(self.first.get(function).value_or(0) + param).value_or(false)
+    }
+
+    survey = (self :: @Self, function: Func) Res<(), AllocError> {
+        count = function.slots.len;
+        self.origin.clear();
+        self.escaped.clear();
+        self.stored.clear();
+        self.direct.clear();
+        Range(0, count).loop((_) {
+            self.origin.add(0).try();
+            self.escaped.add(false).try();
+            self.stored.add(false).try();
+            self.direct.add(false).try();
+        });
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    AddressOf(v) => self.points(v.out, v.slot),
+                    _            => (),
+                });
+            });
+        });
+        function.blocks.loop((block) {
+            block.code.loop((instruction) { self.uses(instruction); });
+            block.exit.match({
+                Return(slot)   => self.escape(slot),
+                Branch(branch) => self.escape(branch.value),
+                _              => (),
+            });
+        });
+        Ok
+    }
+
+    // An address slot naming two slots leaves both unproven.
+    points = (self :: @Self, out: usize, slot: usize) {
+        previous = self.origin.get(out).value_or(0);
+        (previous != 0 && previous != slot + 1).then(() {
+            self.escaped.set(previous - 1, true);
+            self.escaped.set(slot, true);
+        });
+        self.origin.set(out, slot + 1);
+    }
+
+    // A load base or copy source only reads through an address; any other
+    // read of an address slot lets the address go anywhere.
+    uses = (self :: @Self, instruction: Instruction) {
+        instruction.match({
+            Constant(v)     => self.wrote(v.out),
+            Copy(v)         => {
+                self.wrote(v.out);
+                self.escape(v.source);
+            },
+            UnaryValue(v)   => {
+                self.wrote(v.out);
+                self.escape(v.input);
+            },
+            BinaryValue(v)  => {
+                self.wrote(v.out);
+                self.escape(v.left);
+                self.escape(v.right);
+            },
+            Invoke(v)       => {
+                self.wrote(v.out);
+                self.escapes(v.args);
+            },
+            PrintValue(v)   => self.escape(v.value),
+            Text(_)         => (),
+            Cast(v)         => {
+                self.wrote(v.out);
+                self.escape(v.input);
+            },
+            AddressOf(v)    => self.wrote(v.out),
+            LoadValue(v)    => self.wrote(v.out),
+            StoreValue(v)   => {
+                self.through(v.base);
+                self.escape(v.value);
+            },
+            CopyBytes(v)    => {
+                self.through(v.dest);
+                self.escape(v.bytes);
+            },
+            Bytes(v)        => self.wrote(v.out),
+            WriteOut(v)     => {
+                self.escape(v.data);
+                self.escape(v.len);
+            },
+            System(v)       => {
+                self.wrote(v.out);
+                self.escapes(v.args);
+            },
+            Startup(v)      => self.wrote(v.out),
+            MapPages(v)     => {
+                self.wrote(v.out);
+                self.escape(v.bytes);
+            },
+            UnmapPages(s)   => self.escape(s),
+            SysConst(v)     => self.wrote(v.out),
+            Flush           => (),
+            Machine(v)      => {
+                v.outs.loop((s) { self.wrote(s); });
+                self.escapes(v.args);
+            },
+            Host(v)         => {
+                self.wrote(v.out);
+                self.escapes(v.args);
+            },
+            Wait(s)         => self.wrote(s),
+            AtomicLoad(v)   => self.wrote(v.out),
+            AtomicStore(v)  => {
+                self.through(v.base);
+                self.escape(v.value);
+            },
+            AtomicUpdate(v) => {
+                self.wrote(v.out);
+                self.through(v.base);
+                self.escape(v.value);
+            },
+            CompareSwap(v)  => {
+                self.wrote(v.out);
+                self.through(v.base);
+                self.escape(v.expected);
+                self.escape(v.desired);
+            },
+            CodeAddress(v)  => self.wrote(v.out),
+            InvokeAt(v)     => {
+                self.wrote(v.out);
+                self.escape(v.target);
+                self.escapes(v.args);
+            },
+        })
+    }
+
+    escape = (self :: @Self, slot: usize) {
+        at = self.origin.get(slot).value_or(0);
+        (at != 0).then(() { self.escaped.set(at - 1, true); });
+    }
+
+    escapes = (self :: @Self, slots: Vec<usize>) {
+        slots.loop((slot) { self.escape(slot); });
+    }
+
+    through = (self :: @Self, slot: usize) {
+        at = self.origin.get(slot).value_or(0);
+        (at != 0).then(() { self.stored.set(at - 1, true); });
+    }
+
+    wrote = (self :: @Self, slot: usize) { self.direct.set(slot, true); }
 
     // The typedef for an aggregate class, once per layout.
     need = (self :: @Self, ty: Scalar) Res<(), AllocError> {
@@ -124,6 +334,14 @@ C = {
     function = (self :: @Self, index: usize, function: Func) Res<(), AllocError> {
         self.signature(index, function).try();
         self.out.add(" {\n").try();
+        // A borrowed parameter's reads go through its pointer.
+        Range(0, function.parameters).loop((i) {
+            self.by_pointer(index, i).then(() {
+                self.out.fmt("#define v{} (*zp{})\n", i, i).try();
+            });
+        });
+        self.survey(function).try();
+        self.copies = 0;
         // The verifier has proved every read follows a write. Zeroed scalars
         // keep C's flow analysis quiet at no cost; zeroing every aggregate
         // would clear the whole frame on each call.
@@ -165,7 +383,13 @@ C = {
             );
             self.terminator(block.exit, block_id + 1).try();
         });
-        self.out.add("}\n")
+        self.out.add("}\n").try();
+        Range(0, function.parameters).loop((i) {
+            self.by_pointer(index, i).then(() {
+                self.out.fmt("#undef v{}\n", i).try();
+            });
+        });
+        Ok
     }
 
     // `next` is the block rendered after this one; a jump to it falls through.
@@ -230,11 +454,7 @@ C = {
             ),
             UnaryValue(value)   => self.unary(f, value),
             BinaryValue(value)  => self.binary(f, value),
-            Invoke(value)       => {
-                self.out.fmt("  v{} = zf{}(", value.out, value.function).try();
-                self.args(value.args).try();
-                self.out.add(");\n")
-            },
+            Invoke(value)       => self.invoke(f, value),
             PrintValue(value)   => self.print(f, value),
             Text(text)          => {
                 self.out.add("  zr_text(1, ").try();
@@ -346,6 +566,42 @@ C = {
             // Outside `supports`; the driver refuses it before rendering.
             _                   => self.out.add(OUTSIDE),
         })
+    }
+
+    // A borrowed argument travels as its slot's address. A slot whose
+    // address has left the frame, or that the call also writes, is copied
+    // first, so the callee still reads the value it had at the call.
+    invoke = (self :: @Self, f: Func, call: Invocation) Res<(), AllocError> {
+        first = self.copies;
+        call.args.loop((h, i, slot) {
+            self.copied(call, i, slot).then(() {
+                self.out.add("  ZR_U ").try();
+                self.out.ctype(slot_ty(f, slot)).try();
+                self.out.fmt(" zc{} = v{};\n", self.copies, slot).try();
+                self.copies = self.copies + 1;
+            });
+        });
+        copy ::= first;
+        self.out.fmt("  v{} = zf{}(", call.out, call.function).try();
+        call.args.loop((h, i, slot) {
+            (i > 0).then(() { self.out.add(", ").try(); });
+            self.copied(call, i, slot).match({
+                true  => {
+                    self.out.fmt("&zc{}", copy).try();
+                    copy = copy + 1;
+                },
+                false => self.by_pointer(call.function, i).match({
+                    true  => self.out.fmt("&v{}", slot),
+                    false => self.out.fmt("v{}", slot),
+                }).try(),
+            });
+        });
+        self.out.add(");\n")
+    }
+
+    copied = (self: @Self, call: Invocation, i: usize, slot: usize) bool {
+        self.by_pointer(call.function, i)
+            && (self.escaped.get(slot).value_or(true) || slot == call.out)
     }
 
     args = (self :: @Self, args: Vec<usize>) Res<(), AllocError> {
@@ -766,6 +1022,9 @@ slot_ty = (f: Func, slot: usize) Scalar {
 }
 
 is_block = (ty: Scalar) bool { ty.match({ Block(_) => true, _ => false }) }
+
+// Larger than the two words a C ABI passes in registers.
+large = (ty: Scalar) bool { ty.match({ Block(l) => l.size > 16, _ => false }) }
 
 at_least_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }
 

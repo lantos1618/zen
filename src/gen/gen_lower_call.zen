@@ -1047,6 +1047,24 @@ result_type* = (lo :: Lowerer, callee: Callee) Res<TyId, LowerError> {
     })
 }
 
+// A by-value argument naming a local of the parameter's type is passed as
+// the local's own slot: a call reads its arguments and cannot write them.
+named_slot = (lo :: Lowerer, source: Source, ty: TyId) Res<usize> {
+    source.match({
+        Given(e) => lo.tree.expr_at(e).kind.match({
+            Name(n) => lo.lookup(n.text).match({
+                Ok(Direct(v)) => (v.ty == ty).match({
+                    true  => Ok(v.slot),
+                    false => None,
+                }),
+                _             => None,
+            }),
+            _       => None,
+        }),
+        _        => None,
+    })
+}
+
 // Evaluate one argument for a by-value parameter.
 argument_value* = (
     lo     :: Lowerer,
@@ -1175,7 +1193,10 @@ real_call* = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
             true  => lo.address(
                 lo.argument_place(source, ty, span).try()
             ).try(),
-            false => lo.argument_value(source, ty, span).try().slot,
+            false => lo.named_slot(source, ty).match({
+                Ok(named) => named,
+                None      => lo.argument_value(source, ty, span).try().slot,
+            }),
         });
         args.add(slot).try(LowerError.OutOfMemory);
     });

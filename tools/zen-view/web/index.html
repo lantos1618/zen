@@ -398,7 +398,7 @@ function renderTopo(rows){
     g.lineWidth = a.i === selected ? 2 : 1;
     g.beginPath(); g.roundRect(n.x, n.y, n.w, n.h, 5); g.fill(); g.stroke();
     g.fillStyle = s === "stopped" ? "#666" : "#e6edf3"; g.font = "11px ui-monospace,monospace";
-    g.fillText(label(a.i).slice(0, Math.max(3, Math.floor((n.w - 10) / 6.6))), n.x + 5, n.y + Math.min(13, n.h - 2));
+    g.fillText(fit(label(a.i), Math.max(3, Math.floor((n.w - 10) / 6.6))), n.x + 5, n.y + Math.min(13, n.h - 2));
     if (n.h < 24) continue;
     const fill = Math.min(1, (a.mail + a.parked) / meta.bound);
     g.fillStyle = "#1f2633"; g.fillRect(n.x + 7, n.y + 20, n.w - 14, 4);
@@ -464,6 +464,13 @@ function settle(list, W, H, nw){
 }
 
 // Message edges bow to one side so a pair's two directions don't overlap.
+// A label cut to k characters keeps its `#index`, so small nodes stay
+// distinguishable: `Strategy#513` becomes `Str#513`.
+function fit(text, k){
+  if (text.length <= k) return text;
+  const h = text.lastIndexOf("#");
+  return h < 0 ? text.slice(0, k) : text.slice(0, Math.max(1, k - (text.length - h))) + text.slice(h);
+}
 // On the ring, edges bow toward its centre; elsewhere to one side.
 let ringCenter = null;
 function curve(p, q, nw, nh){

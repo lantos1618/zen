@@ -21,6 +21,7 @@ header h1 b{color:var(--accent)}
 .dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
 button{background:#1a2130;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 9px;font:inherit;cursor:pointer}
 button:hover{border-color:var(--accent)}
+select{background:#1a2130;color:var(--text);border:1px solid var(--line);border-radius:4px;font:inherit;padding:2px 4px}
 button.sel{background:#173149;border-color:var(--accent);color:#fff}
 .panel{background:var(--panel);overflow:auto;position:relative}
 .panel h2{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin:0;padding:8px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:1}
@@ -77,6 +78,12 @@ td.r,th.r{text-align:right}
     <button data-v="vSched">scheduler</button>
     <button data-v="vFail">failures</button>
     <span class="sp"></span>
+    <button id="btnStart" title="back to the first event">&#9198;</button>
+    <button id="btnPlay" title="play the recorded trace (space)">&#9654; play</button>
+    <select id="speed" title="trace time per wall-clock second">
+      <option value="0.001">0.001x</option><option value="0.01">0.01x</option><option value="0.05" selected>0.05x</option>
+      <option value="0.25">0.25x</option><option value="1">1x</option><option value="4">4x</option>
+    </select>
     <span class="dim" id="tCursor">t = 0 ms</span>
     <input type="range" id="scrub" min="0" max="1000" value="1000">
   </div>
@@ -217,8 +224,9 @@ function ms(ns){ return ns >= 1e9 ? (ns / 1e9).toFixed(2) + " s" : ns >= 1e6 ? (
 
 // ---------------------------------------------------------------- cursor
 // Live follows the end; scrubbing replays up to the chosen time.
-let live = true, cursorNs = 0, selected = 0, view = "vTl";
+let live = true, cursorNs = 0, selected = 0, view = "vTl", playing = false, speed = 0.05, lastWall = 0;
 function endNs(){ return T.n ? T.ns[T.n - 1] : 0; }
+function startNs(){ return T.n ? T.ns[0] : 0; }
 function indexAt(ns){ let lo = 0, hi = T.n; while (lo < hi){ const mid = (lo + hi) >> 1; if (T.ns[mid] <= ns) lo = mid + 1; else hi = mid; } return lo; }
 function sync(){
   const upto = live ? T.n : indexAt(cursorNs);
@@ -376,10 +384,13 @@ function oldestFor(i){
   return best;
 }
 
+// While playing, the lanes show the last few wall-clock seconds of trace time.
+function windowNs(){ return Math.max(1e6, Math.min(endNs(), playing ? speed * 4e9 : 200e6)); }
+
 function renderTimeline(rows){
   const [g, W, H] = fit($("tl")); g.clearRect(0, 0, W, H);
   const lanes = rows.map(r => r[0]).slice(0, Math.floor((H - 20) / 16));
-  const span = Math.max(1e6, Math.min(endNs(), 200e6)), t1 = cursorNs, t0 = t1 - span, lx = 150;
+  const span = windowNs(), t1 = cursorNs, t0 = t1 - span, lx = 150;
   const x = t => lx + (t - t0) / span * (W - lx - 10), lane = new Map(lanes.map((a, j) => [a.i, j]));
   g.font = "10px ui-monospace,monospace";
   lanes.forEach((a, j) => { const y = 16 + j * 16; g.fillStyle = a.i === selected ? "#173149" : j % 2 ? "#121721" : "#0f141c";
@@ -396,7 +407,7 @@ function renderTimeline(rows){
 
 function renderSched(){
   const [g, W, H] = fit($("sched")); g.clearRect(0, 0, W, H);
-  const span = Math.max(1e6, Math.min(endNs(), 200e6)), t1 = cursorNs, t0 = t1 - span, lx = 90;
+  const span = windowNs(), t1 = cursorNs, t0 = t1 - span, lx = 90;
   const x = t => lx + (t - t0) / span * (W - lx - 10), lh = Math.min(28, (H - 20) / Math.max(1, M.workers.length));
   g.font = "10px ui-monospace,monospace";
   M.workers.forEach((w, j) => {
@@ -427,7 +438,8 @@ function render(){
   renderHeader(); renderTree(rows); renderTopo(rows); renderInspector();
   if (view === "vTl") renderTimeline(rows); else if (view === "vSched") renderSched(); else renderTables();
   $("tCursor").textContent = "t = " + (cursorNs / 1e6).toFixed(2) + " ms";
-  if (live) $("scrub").value = 1000;
+  const span = endNs() - startNs();
+  $("scrub").value = live ? 1000 : span > 0 ? Math.round(1000 * (cursorNs - startNs()) / span) : 0;
 }
 
 // ---------------------------------------------------------------- input
@@ -438,8 +450,19 @@ document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("sel", x === b));
   document.querySelectorAll("#views>div").forEach(v => v.classList.toggle("on", v.id === b.dataset.v));
   view = b.dataset.v; dirty = true; });
-$("scrub").oninput = e => { live = false; $("btnLive").classList.remove("sel"); cursorNs = endNs() * e.target.value / 1000; dirty = true; };
-$("btnLive").onclick = () => { live = true; $("btnLive").classList.add("sel"); dirty = true; };
+function goLive(on){ live = on; $("btnLive").classList.toggle("sel", on); }
+function setPlaying(on){
+  playing = on; lastWall = performance.now();
+  $("btnPlay").innerHTML = on ? "&#10074;&#10074; pause" : "&#9654; play"; $("btnPlay").classList.toggle("sel", on);
+  if (on){ goLive(false); if (cursorNs >= endNs() || cursorNs <= startNs()) cursorNs = startNs(); }
+  dirty = true;
+}
+$("scrub").oninput = e => { goLive(false); cursorNs = startNs() + (endNs() - startNs()) * e.target.value / 1000; dirty = true; };
+$("btnLive").onclick = () => { setPlaying(false); goLive(true); dirty = true; };
+$("btnPlay").onclick = () => setPlaying(!playing);
+$("btnStart").onclick = () => { goLive(false); cursorNs = startNs(); lastWall = performance.now(); dirty = true; };
+$("speed").onchange = e => { speed = +e.target.value; dirty = true; };
+addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT"){ e.preventDefault(); setPlaying(!playing); } });
 addEventListener("resize", () => dirty = true);
 
 // ---------------------------------------------------------------- polling
@@ -457,7 +480,15 @@ async function poll(){
   polling = false;
 }
 setInterval(poll, 400); poll();
-(function frame(){ if (dirty){ dirty = false; render(); } setTimeout(() => requestAnimationFrame(frame), 120); })();
+(function frame(){
+  if (playing){
+    const now = performance.now(); cursorNs += (now - lastWall) * 1e6 * speed; lastWall = now;
+    if (cursorNs >= endNs()){ cursorNs = endNs(); if (meta.ended) setPlaying(false); }
+    dirty = true;
+  }
+  if (dirty){ dirty = false; render(); }
+  setTimeout(() => requestAnimationFrame(frame), playing ? 33 : 120);
+})();
 </script>
 </body>
 </html>

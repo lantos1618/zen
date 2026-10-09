@@ -204,7 +204,7 @@ outcome_door* = (lo :: Lowerer, id: ExprId, sources: Vec<Source>, span: Span)
     top  = lo.payload_type(ret, "Ok").try();
     argv = lo.source_value(sources.get(2).value_or(Source.Absent), span).try();
     exit = Exit(out: lo.temp(ret).try(), done: lo.label().try());
-    name = lo.cli_table_str(top, "name", span).try();
+    name = lo.cli_table_str(top, "name").try();
     args ::= Args(list: lo.alloc.Vec<Source>());
     args.value(argv).try();
     args.value(name).try();
@@ -248,20 +248,12 @@ cli_command = (
                 Struct(record) => lo.cli_fields(
                     cli,
                     ty,
-                    n,
                     record,
                     path,
                     start,
                     help
                 ),
-                Enum(_)        => lo.cli_variants(
-                    cli,
-                    ty,
-                    n,
-                    path,
-                    start,
-                    help
-                ),
+                Enum(_)        => lo.cli_variants(cli, ty, path, start, help),
                 _              => Err(refused),
             }),
             None     => Err(refused),
@@ -275,7 +267,6 @@ cli_fields = (
     lo     :: Lowerer,
     cli    : Cli,
     ty     : TyId,
-    n      : TyNamed,
     record : Struct,
     path   : Value,
     start  : Value,
@@ -333,8 +324,8 @@ cli_model = (
     args ::= Args(list: lo.alloc.Vec<Source>());
     args.source(cli.alloc).try();
     args.value(path).try();
-    args.value(lo.cli_table_str(ty, "about", cli.span).try()).try();
-    args.value(lo.cli_table_str(ty, "note", cli.span).try()).try();
+    args.value(lo.cli_table_str(ty, "about").try()).try();
+    args.value(lo.cli_table_str(ty, "note").try()).try();
     lo.cli_call(cli, "derived", args.list)
 }
 
@@ -621,7 +612,6 @@ cli_variants = (
     lo    :: Lowerer,
     cli   : Cli,
     ty    : TyId,
-    n     : TyNamed,
     path  : Value,
     start : Value,
     help  : Value
@@ -644,7 +634,7 @@ cli_variants = (
     helped.value(lo.cli_usize(count).try()).try();
     helped.value(cli.program).try();
     lo.cli_checked(cli, "help_field", helped.list).try();
-    version = lo.cli_table_str(ty, "version", cli.span).try();
+    version = lo.cli_table_str(ty, "version").try();
     lo.cli_entry(table, "version", false).when_ok((_) {
         args ::= Args(list: lo.alloc.Vec<Source>());
         args.source(Source.Located(cmd)).try();
@@ -765,7 +755,7 @@ variant_about = (
     lo.entry_help(cli, ty, v.name, table).try().match({
         Ok(about) => Ok(about),
         None      => v.payload.match({
-            Ok(pty) => lo.cli_table_str(pty, "about", cli.span),
+            Ok(pty) => lo.cli_table_str(pty, "about"),
             None    => lo.cli_text(""),
         }),
     })
@@ -804,12 +794,7 @@ cli_spec = (
 }
 
 // A `str` entry of the type's table; the empty string without one.
-cli_table_str = (
-    lo   :: Lowerer,
-    ty   : TyId,
-    key  : str,
-    span : Span
-) Res<Value, LowerError> {
+cli_table_str = (lo :: Lowerer, ty: TyId, key: str) Res<Value, LowerError> {
     str_ty = lo.prim("str").try();
     lo.cli_entry(lo.cli_table(ty).try(), key, false).match({
         Ok(eid) => lo.decl_value(eid, ty, str_ty),

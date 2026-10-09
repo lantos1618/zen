@@ -1,0 +1,47 @@
+// With ZEN_ACTOR_SEED set the runtime runs every turn on one thread and
+// the seed picks which ready actor goes next, so two talkers' lines reach
+// the log in an order that is the same on every run with this seed (and
+// differs between seeds). Each talker's own lines stay in order.
+
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Log = {}
+
+Log.impl(Actor, {
+    line = (self :: @Self, ctx: Context, who: u64, n: i32) { println(
+        "{} {}",
+        who,
+        n
+    ); }
+})
+
+Talker = { who: u64, log: Ref<Log> }
+
+Talker.impl(Actor, {
+    go = (self :: @Self, ctx: Context, n: i32) { self.log.line(
+        self.who,
+        n
+    ).ignore(); }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    log = env.spawn(Log()).try();
+    a   = env.spawn(Talker(who: 1, log: log)).try();
+    b   = env.spawn(Talker(who: 2, log: log)).try();
+    Range(0, 4).loop((i) {
+        a.go(i).ignore();
+        b.go(i).ignore();
+    });
+    a.stop();
+    b.stop();
+    a.join();
+    b.join();
+    log.stop();
+    log.join();
+    Ok(0)
+}

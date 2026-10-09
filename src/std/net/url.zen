@@ -2,7 +2,7 @@
 // allocates nothing; protocols map Invalid into their own error set.
 
 { str } = std.text
-{ Res, Ok, ok_or, Error } = std.core
+{ Res, Ok, ok_or, Error, Range } = std.core
 
 UrlError* = { | Invalid }
 UrlError.impl(Error, {})
@@ -15,6 +15,12 @@ ParsedUrl* = {
 }
 
 parse_url* = (url: str) Res<ParsedUrl, UrlError> {
+    valid ::= true;
+    Range(0, url.len).loop((i) {
+        byte  = url.index(i);
+        valid = valid && byte > ' ' && byte != 127;
+    });
+    valid.ensure(UrlError.Invalid).try();
     colon = url.find(':').ok_or(UrlError.Invalid).try();
     (colon + 2 < url.len).ensure(UrlError.Invalid).try();
     (url[colon + 1] == '/' && url[colon + 2] == '/')
@@ -40,5 +46,6 @@ parse_url* = (url: str) Res<ParsedUrl, UrlError> {
                 .parse_u16().ok_or(UrlError.Invalid).try();
         },
     });
+    (host.len > 0).ensure(UrlError.Invalid).try();
     Ok(ParsedUrl(scheme: scheme, host: host, port: port, path: path))
 }

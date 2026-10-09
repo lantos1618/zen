@@ -1,0 +1,13 @@
+// zen-view: a live dashboard over a ZEN_ACTOR_TRACE file. See src/zen_view.zen.
+{ Res, Ok } = std.core
+{ Path } = std.core
+{ Builder, BuildError } = std.build
+
+build = (b :: Builder) Res<BuildError> {
+    b.exe("zen-view", {
+        src: Path("src/zen_view.zen"),
+        deps: [],
+        out: Ok(Path("build/zen-view")),
+    }).try();
+    Ok
+}

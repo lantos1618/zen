@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zen-view</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--bg:#0b0e14;--panel:#11151d;--line:#1f2633;--text:#c9d1d9;--dim:#6b7686;--accent:#4cc2ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--violet:#a371f7}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#app{display:grid;grid-template-rows:auto 1fr 300px;grid-template-columns:240px 1fr 320px;height:100vh;gap:1px;background:var(--line)}
+header{grid-column:1/4;display:flex;align-items:center;gap:22px;padding:8px 14px;background:var(--panel)}
+header h1{font-size:14px;margin:0;color:#fff;letter-spacing:.5px}
+header h1 b{color:var(--accent)}
+.stat{display:flex;flex-direction:column}
+.stat span{color:var(--dim);font-size:10px;text-transform:uppercase}
+.stat strong{font-size:15px;color:#fff;font-weight:600}
+.stat canvas{margin-top:2px}
+#live{margin-left:auto;display:flex;align-items:center;gap:8px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+button{background:#1a2130;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 9px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--accent)}
+select{background:#1a2130;color:var(--text);border:1px solid var(--line);border-radius:4px;font:inherit;padding:2px 4px}
+button.sel{background:#173149;border-color:var(--accent);color:#fff}
+.panel{background:var(--panel);overflow:auto;position:relative}
+.panel h2{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin:0;padding:8px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:1}
+#tree .row{padding:2px 8px;cursor:pointer;white-space:nowrap;display:flex;gap:6px;align-items:center}
+#tree .row:hover{background:#18202c}
+#tree .row.sel{background:#173149}
+#tree .row .n{color:var(--dim);margin-left:auto}
+.st{width:7px;height:7px;border-radius:50%;flex:none}
+.st.run{background:var(--ok)}.st.idle{background:#3b4656}.st.blocked{background:var(--warn)}.st.failed{background:var(--bad)}.st.stopped{background:#555}
+#topo{padding:0}
+#topo canvas{display:block;width:100%;height:calc(100% - 31px)}
+#topo h2 button{padding:0 6px;font-size:10px}
+#insp .kv{display:grid;grid-template-columns:120px 1fr;padding:3px 10px}
+#insp .kv span:first-child{color:var(--dim)}
+.bar{height:6px;background:#1a2130;border-radius:3px;overflow:hidden;margin:2px 10px 8px}
+.bar i{display:block;height:100%;background:var(--accent)}
+#insp h3{font-size:10px;color:var(--dim);text-transform:uppercase;margin:10px 10px 4px}
+table{border-collapse:collapse;width:100%}
+td,th{padding:2px 8px;text-align:left;white-space:nowrap;border-bottom:1px solid #161c26}
+th{color:var(--dim);font-weight:normal;position:sticky;top:31px;background:var(--panel)}
+td.r,th.r{text-align:right}
+.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
+#bottom{grid-column:1/4;display:flex;flex-direction:column}
+#tabs{display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--line);align-items:center}
+#tabs .sp{flex:1}
+#scrub{width:340px}
+#views{flex:1;overflow:auto;position:relative}
+#views>div{display:none;height:100%}
+#views>div.on{display:block}
+#tl,#sched,#flame{width:100%;height:100%;display:block}
+#empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13px;text-align:center;line-height:1.8}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1><b>zen</b>-view</h1>
+  <div class="stat"><span>actors</span><strong id="sActors">0</strong></div>
+  <div class="stat"><span>msgs/s</span><strong id="sRate">0</strong><canvas id="sparkRate" width="90" height="18"></canvas></div>
+  <div class="stat"><span>queue p95</span><strong id="sP95">-</strong><canvas id="sparkLat" width="90" height="18"></canvas></div>
+  <div class="stat"><span>in mailboxes</span><strong id="sMail">0</strong></div>
+  <div class="stat"><span>blocked</span><strong id="sBlocked">0</strong></div>
+  <div class="stat"><span>failures</span><strong id="sFail">0</strong></div>
+  <div class="stat"><span>events</span><strong id="sEvents">0</strong></div>
+  <div id="live"><span class="dot" id="liveDot"></span><span id="liveText">connecting</span>
+    <button id="btnLive" class="sel" title="follow the end of the trace">live</button></div>
+</header>
+<div class="panel" id="tree"><h2>actors</h2><div id="treeRows"></div></div>
+<div class="panel" id="topo"><h2>topology <span class="dim" id="topoNote"></span><span style="float:right"><button id="mTree" class="sel" title="who spawned whom">tree</button> <button id="mGraph" title="who talks to whom, pulled together by how much">graph</button> <button id="mRing" title="every actor around one table">ring</button></span></h2><canvas id="topoC"></canvas></div>
+<div class="panel" id="insp"><h2>inspector</h2><div id="inspBody"><div class="kv"><span>select an actor</span></div></div></div>
+<div class="panel" id="bottom">
+  <div id="tabs">
+    <button data-v="vTl" class="sel">timeline</button>
+    <button data-v="vFlame">flame</button>
+    <button data-v="vMsg">messages</button>
+    <button data-v="vSched">scheduler</button>
+    <button data-v="vFail">failures</button>
+    <span class="sp"></span>
+    <button id="btnStart" title="back to the first event">&#9198;</button>
+    <button id="btnPlay" title="play the recorded trace (space)">&#9654; play</button>
+    <select id="speed" title="trace time per wall-clock second">
+      <option value="0.001">0.001x</option><option value="0.01">0.01x</option><option value="0.05" selected>0.05x</option>
+      <option value="0.25">0.25x</option><option value="1">1x</option><option value="4">4x</option>
+    </select>
+    <span class="dim" id="tCursor">t = 0 ms</span>
+    <input type="range" id="scrub" min="0" max="1000" value="1000">
+  </div>
+  <div id="views">
+    <div id="vTl" class="on"><canvas id="tl"></canvas></div>
+    <div id="vFlame"><canvas id="flame"></canvas></div>
+    <div id="vMsg"><table><thead><tr><th>t (ms)</th><th>from</th><th>to</th><th>behaviour</th><th class="r">queued</th><th class="r">ran</th><th>worker</th></tr></thead><tbody id="msgRows"></tbody></table></div>
+    <div id="vSched"><canvas id="sched"></canvas></div>
+    <div id="vFail"><table><thead><tr><th>t (ms)</th><th>what</th><th>actor</th><th>detail</th></tr></thead><tbody id="failRows"></tbody></table></div>
+  </div>
+</div>
+</div>
+<div id="empty" style="display:none"></div>
+<script>
+"use strict";
+// ---------------------------------------------------------------- trace
+// One event per line: index ns kind from to message (see docs/ACTOR_RUNTIME.md).
+const K = {SEND:1,PARK:2,RELEASE:3,REFUSE:4,TAKE:5,BREAK:6,BLOCK:7,UNBLOCK:8,SLEEP:9,WAKE:10,CLOSED:11,WAIT:12,SPAWN:13,DONE:14,FAIL:15,STOP:16,DROP:17};
+// took[i]: for a send or park, when its message was taken (0 while queued).
+const T = {n:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null};
+const queued = new Map();
+const meta = {workers:0, bound:256, names:new Map(), ended:false, lost:0};
+let offset = 0;
+
+function grow(need){
+  if (need <= T.cap) return;
+  let cap = Math.max(65536, T.cap * 2); while (cap < need) cap *= 2;
+  const re = (A, old) => { const a = new A(cap); if (old) a.set(old.subarray(0, T.n)); return a; };
+  T.ns = re(Float64Array, T.ns); T.kind = re(Uint8Array, T.kind); T.from = re(Uint32Array, T.from);
+  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.took = re(Float64Array, T.took); T.cap = cap;
+}
+
+function ingest(text){
+  const lines = text.split("\n");
+  grow(T.n + lines.length);
+  for (const line of lines){
+    if (!line) continue;
+    if (line[0] === "#"){ header(line); continue; }
+    const f = line.split(" ");
+    if (f.length < 6) continue;
+    const i = T.n++;
+    T.ns[i] = +f[1]; T.kind[i] = +f[2]; T.from[i] = +f[3]; T.to[i] = +f[4]; T.msg[i] = +f[5]; T.took[i] = 0;
+    const k = T.kind[i];
+    if (k === K.SEND || k === K.PARK) queued.set(T.msg[i], i);
+    else if (k === K.TAKE || k === K.REFUSE || k === K.CLOSED || k === K.DROP){ const s = queued.get(T.msg[i]); if (s !== undefined){ T.took[s] = T.ns[i]; queued.delete(T.msg[i]); } }
+  }
+}
+
+function header(line){
+  let m;
+  if ((m = line.match(/^# name (\d+) (.*)$/))) meta.names.set(+m[1], m[2]);
+  else if ((m = line.match(/^# workers (\d+)(?: bound (\d+))?/))){ meta.workers = +m[1]; if (m[2]) meta.bound = +m[2]; }
+  else if ((m = line.match(/^# end events (\d+) lost (\d+)/))){ meta.ended = true; meta.lost = +m[2]; }
+}
+
+// ---------------------------------------------------------------- model
+// Replays events 0..upto into per-actor state; live mode appends.
+let M;
+function fresh(){
+  return {upto:0, actors:new Map(), edges:new Map(), pending:new Map(), running:new Map(),
+          workers:[], bars:[], msgs:[], fails:[], latency:[], done:0, cause:new Map(), turnId:0};
+}
+function actor(i){
+  let a = M.actors.get(i);
+  if (!a){
+    a = {i, parent:0, type:"", spawn:0, stop:-1, failed:false, mail:0, parked:0, blocked:false, waitOn:0,
+         sent:0, turns:0, busy:0, dropped:0, q:[], run:[], recent:[], kids:[], last:0};
+    M.actors.set(i, a);
+  }
+  return a;
+}
+const MAX_KEEP = 20000, SAMPLE = 512;
+function keep(arr, v, n){ arr.push(v); if (arr.length > n * 1.25) arr.splice(0, arr.length - n); }
+function nameOf(code){ return meta.names.get(code) || ("turn@" + code.toString(16)); }
+function typeOf(code){ const n = meta.names.get(code); return n ? n.split(".")[0] : ""; }
+function worker(w){ while (M.workers.length <= w) M.workers.push({spans:[], busyFrom:-1, sleepFrom:-1}); return M.workers[w]; }
+
+function apply(upto){
+  for (let i = M.upto; i < upto; i++){
+    const k = T.kind[i], t = T.ns[i], from = T.from[i], to = T.to[i], m = T.msg[i];
+    switch (k){
+    case K.SEND: case K.PARK: {
+      const a = actor(to); if (from) actor(from).sent++;
+      if (k === K.SEND) a.mail++; else a.parked++;
+      const key = from + ">" + to, e = M.edges.get(key) || {from, to, n:0};
+      e.n++; M.edges.set(key, e);
+      M.pending.set(m, {t, from}); a.last = t;
+      if (from){ for (const r of M.running.values()) if (r.actor === from){ M.cause.set(m, r); break; } }
+      break; }
+    case K.RELEASE: { const a = actor(to); a.parked = Math.max(0, a.parked - 1); a.mail++; break; }
+    case K.REFUSE: { const a = actor(to); a.parked = Math.max(0, a.parked - 1); M.pending.delete(m);
+      keep(M.fails, {t, what:"refused", actor:to, detail:"parked send from " + label(from) + " dropped: receiver stopped"}, MAX_KEEP); break; }
+    case K.CLOSED: M.pending.delete(m);
+      keep(M.fails, {t, what:"closed", actor:to, detail:"send from " + label(from) + " refused: receiver gone"}, MAX_KEEP); break;
+    case K.TAKE: {
+      const a = actor(to); a.mail = Math.max(0, a.mail - 1);
+      const p = M.pending.get(m); M.pending.delete(m);
+      const q = p ? t - p.t : 0;
+      const parent = M.cause.get(m); M.cause.delete(m);
+      M.running.set(from, {t, actor:to, q, src:p ? p.from : 0, id:++M.turnId, parent:parent || null, depth:parent ? parent.depth + 1 : 0});
+      keep(a.q, q, SAMPLE); keep(M.latency, {t, q}, 4096);
+      worker(from).busyFrom = t; break; }
+    case K.DONE: case K.FAIL: {
+      const r = M.running.get(from); M.running.delete(from);
+      const a = actor(to), start = r ? r.t : t, dur = t - start, name = nameOf(m);
+      if (!a.type) a.type = typeOf(m);
+      a.turns++; a.busy += dur; keep(a.run, dur, SAMPLE); M.done++;
+      const rec = {t0:start, t1:t, from:r ? r.src : 0, to, name, q:r ? r.q : 0, dur, w:from, failed:k === K.FAIL, depth:r ? r.depth : 0};
+      keep(M.msgs, rec, MAX_KEEP); keep(a.recent, rec, 50); keep(M.bars, rec, MAX_KEEP * 2);
+      const w = worker(from); keep(w.spans, [start, t, to], 4000); w.busyFrom = -1;
+      if (k === K.FAIL){ a.failed = true; keep(M.fails, {t, what:"failed", actor:to, detail:name + " trapped"}, MAX_KEEP); }
+      break; }
+    case K.DROP: actor(to).dropped++; M.pending.delete(m);
+      keep(M.fails, {t, what:"dropped", actor:to, detail:"message not run: actor had failed"}, MAX_KEEP); break;
+    case K.SPAWN: {
+      const a = actor(to); a.parent = from; a.spawn = t; a.stop = -1;
+      if (!a.type) a.type = typeOf(m);
+      if (from) { const p = actor(from); if (!p.kids.includes(to)) p.kids.push(to); }
+      break; }
+    case K.STOP: { const a = actor(to); a.stop = t; if (m) a.failed = true;
+      if (m) keep(M.fails, {t, what:"stopped", actor:to, detail:"finalised after failing"}, MAX_KEEP); break; }
+    case K.BLOCK: if (from) actor(from).blocked = true; break;
+    case K.UNBLOCK: if (from){ const a = actor(from); a.blocked = false; a.waitOn = 0; } break;
+    case K.WAIT: if (from) actor(from).waitOn = to; break;
+    case K.BREAK: keep(M.fails, {t, what:"cycle", actor:to, detail:"let in over the bound: " + label(from) + " waiting would close a cycle"}, MAX_KEEP); break;
+    case K.SLEEP: worker(from).sleepFrom = t; break;
+    case K.WAKE: worker(from).sleepFrom = -1; break;
+    }
+  }
+  M.upto = upto;
+}
+
+function label(i){
+  if (!i) return "main";
+  const a = M.actors.get(i);
+  return (a && a.type ? a.type : "actor") + "#" + i;
+}
+function status(a){
+  if (a.failed) return "failed";
+  if (a.stop >= 0) return "stopped";
+  if (a.blocked) return "blocked";
+  for (const r of M.running.values()) if (r.actor === a.i) return "run";
+  return "idle";
+}
+function pct(arr, p){ if (!arr.length) return 0; const s = arr.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
+function ms(ns){ return ns >= 1e9 ? (ns / 1e9).toFixed(2) + " s" : ns >= 1e6 ? (ns / 1e6).toFixed(1) + " ms" : ns >= 1e3 ? (ns / 1e3).toFixed(1) + " µs" : Math.round(ns) + " ns"; }
+
+// ---------------------------------------------------------------- cursor
+// Live follows the end; scrubbing replays up to the chosen time.
+let live = true, cursorNs = 0, selected = 0, view = "vTl", playing = false, speed = 0.05, lastWall = 0;
+function endNs(){ return T.n ? T.ns[T.n - 1] : 0; }
+function startNs(){ return T.n ? T.ns[0] : 0; }
+function indexAt(ns){ let lo = 0, hi = T.n; while (lo < hi){ const mid = (lo + hi) >> 1; if (T.ns[mid] <= ns) lo = mid + 1; else hi = mid; } return lo; }
+function sync(){
+  const upto = live ? T.n : indexAt(cursorNs);
+  if (!M || upto < M.upto) M = fresh();
+  apply(upto);
+  if (live) cursorNs = lastActivity();
+}
+// The last turn's end: a program idling before exit still shows its work.
+function lastActivity(){
+  for (let i = T.n - 1; i >= 0 && i >= T.n - 500000; i--){ const k = T.kind[i]; if (k === K.DONE || k === K.FAIL) return T.ns[i]; }
+  return endNs();
+}
+function windowRate(ns, span){
+  const lo = indexAt(ns - span), hi = indexAt(ns); let n = 0;
+  for (let i = lo; i < hi; i++){ const k = T.kind[i]; if (k === K.SEND || k === K.PARK) n++; }
+  return n * 1e9 / span;
+}
+function edgeRates(ns, span){
+  const lo = indexAt(ns - span), hi = indexAt(ns), r = new Map();
+  for (let i = lo; i < hi; i++){ const k = T.kind[i]; if (k === K.SEND || k === K.PARK){ const key = T.from[i] + ">" + T.to[i]; r.set(key, (r.get(key) || 0) + 1); } }
+  for (const [k, v] of r) r.set(k, v * 1e9 / span);
+  return r;
+}
+
+// ---------------------------------------------------------------- render
+const $ = id => document.getElementById(id);
+function fit(c){ const r = c.getBoundingClientRect(), d = devicePixelRatio || 1;
+  if (c.width !== Math.round(r.width * d) || c.height !== Math.round(r.height * d)){ c.width = Math.round(r.width * d); c.height = Math.round(r.height * d); }
+  const g = c.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); return [g, r.width, r.height]; }
+
+function spark(id, vals, color){
+  const c = $(id), g = c.getContext("2d"), w = c.width, h = c.height; g.clearRect(0, 0, w, h);
+  if (vals.length < 2) return; const mx = Math.max(...vals) || 1;
+  g.strokeStyle = color; g.lineWidth = 1.2; g.beginPath();
+  vals.forEach((v, i) => { const x = i * w / (vals.length - 1), y = h - 1 - v / mx * (h - 2); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke();
+}
+
+function renderHeader(){
+  const span = 1e9, now = cursorNs, acts = [...M.actors.values()];
+  const liveActs = acts.filter(a => a.stop < 0);
+  $("sActors").textContent = liveActs.length + (acts.length > liveActs.length ? " / " + acts.length : "");
+  $("sRate").textContent = Math.round(windowRate(now, span)).toLocaleString();
+  const recentQ = M.latency.filter(l => l.t > now - span).map(l => l.q);
+  $("sP95").textContent = recentQ.length ? ms(pct(recentQ, .95)) : "-";
+  $("sMail").textContent = acts.reduce((s, a) => s + a.mail + a.parked, 0);
+  $("sBlocked").textContent = acts.filter(a => a.blocked).length;
+  $("sFail").textContent = acts.filter(a => a.failed).length;
+  $("sFail").className = acts.some(a => a.failed) ? "bad" : "";
+  $("sEvents").textContent = T.n.toLocaleString() + (meta.lost ? " (" + meta.lost + " lost)" : "");
+  const step = Math.max(endNs() / 40, 1e6), rates = [], lats = [];
+  for (let i = 39; i >= 0; i--){ const t = now - i * step; rates.push(windowRate(t, step));
+    const qs = M.latency.filter(l => l.t > t - step && l.t <= t).map(l => l.q); lats.push(qs.length ? pct(qs, .95) : 0); }
+  spark("sparkRate", rates, "#4cc2ff"); spark("sparkLat", lats, "#d29922");
+}
+
+function order(){
+  const roots = [...M.actors.values()].filter(a => !a.parent || !M.actors.has(a.parent)).sort((x, y) => x.i - y.i);
+  const out = [];
+  const walk = (a, d) => { out.push([a, d]); a.kids.slice().sort((x, y) => x - y).forEach(k => walk(M.actors.get(k), d + 1)); };
+  roots.forEach(r => walk(r, 0));
+  return out;
+}
+
+function renderTree(rows){
+  const html = rows.slice(0, 1500).map(([a, d]) =>
+    `<div class="row${a.i === selected ? " sel" : ""}" data-i="${a.i}" style="padding-left:${8 + d * 12}px">` +
+    `<span class="st ${status(a)}"></span>${label(a.i)}<span class="n">${a.mail + a.parked}</span></div>`).join("");
+  $("treeRows").innerHTML = html + (rows.length > 1500 ? `<div class="row dim">+${rows.length - 1500} more</div>` : "");
+}
+
+let nodes = [], topoMode = "tree";
+function renderTopo(rows){
+  const [g, W, H] = fit($("topoC")); g.clearRect(0, 0, W, H);
+  if (!rows.length) return;
+  // Busiest actors only when there are many, plus the selected one.
+  const MAXN = 60; let shown = rows;
+  if (rows.length > MAXN){
+    const busy = rows.slice().sort((x, y) => (y[0].turns + y[0].sent) - (x[0].turns + x[0].sent)).slice(0, MAXN).map(r => r[0].i);
+    const keepSet = new Set(busy); keepSet.add(selected);
+    shown = rows.filter(r => keepSet.has(r[0].i));
+    $("topoNote").textContent = `· busiest ${shown.length} of ${rows.length}`;
+  } else $("topoNote").textContent = "";
+  nodes = []; const pos = new Map();
+  let nw = 112, nh = 30, route = null;
+  const put = (a, x, y) => { pos.set(a.i, [x, y]); nodes.push({a, x, y, w:nw, h:nh}); };
+  const rates = edgeRates(cursorNs, 1e9);
+  if (topoMode === "tree"){
+    // Top-down tidy tree: leaves take columns in order, a parent sits above the
+    // middle of its children. The program's main thread spawned the roots.
+    const keepSet = new Set(shown.map(r => r[0].i));
+    const roots = shown.filter(r => r[1] === 0 || !keepSet.has(r[0].parent || 0)).map(r => r[0]);
+    const kidsOf = a => a.i ? a.kids.filter(k => keepSet.has(k)).sort((x, y) => x - y).map(k => M.actors.get(k)) : roots;
+    const main = {i:0, kids:[], type:"", mail:0, parked:0, stop:-1, failed:false, blocked:false};
+    const leaves = Math.max(1, shown.filter(r => !kidsOf(r[0]).length).length), depth = Math.max(...shown.map(r => r[1])) + 2;
+    const colW = Math.min(150, (W - 20) / leaves); nw = Math.max(40, Math.min(112, colW - 8));
+    const rowH = Math.min(90, (H - 20) / depth); nh = Math.max(14, Math.min(30, rowH - 26));
+    const left = Math.max(10, (W - leaves * colW) / 2);
+    let col = 0;
+    const place = (a, d) => { const ks = kidsOf(a); let x;
+      if (!ks.length) x = left + (col++) * colW + (colW - nw) / 2; else { const xs = ks.map(k => place(k, d + 1)); x = (xs[0] + xs[xs.length - 1]) / 2; }
+      put(a, x, 10 + d * rowH); return x; };
+    place(main, 0);
+    // A message travels the tree: up from its sender to the nearest actor the
+    // two share, then down to its receiver.
+    const parentOf = i => { if (!i) return -1; const p = M.actors.get(i).parent || 0; return pos.has(p) ? p : 0; };
+    const link = c => { const p = pos.get(parentOf(c)), q = pos.get(c); const x1 = p[0] + nw / 2, y1 = p[1] + nh, x2 = q[0] + nw / 2, y2 = q[1], ym = (y1 + y2) / 2;
+      return [[x1, y1], [x1, ym], [x2, ym], [x2, y2]]; };
+    const ups = i => { const out = []; for (let c = i; c >= 0 && out.length < 64; c = parentOf(c)) out.push(c); return out; };
+    const paths = new Map();
+    route = (a, b) => { const key = a + ">" + b; let r = paths.get(key); if (r) return r;
+      const ua = ups(a), ub = ups(b), sb = new Set(ub), lca = ua.find(c => sb.has(c)) ?? 0;
+      const up = ua.slice(0, Math.max(0, ua.indexOf(lca))), down = ub.slice(0, Math.max(0, ub.indexOf(lca))).reverse();
+      const pa = pos.get(a), pb = pos.get(b), pts = [[pa[0] + nw / 2, pa[1] + nh / 2]];
+      for (const c of up) pts.push(...link(c).reverse());
+      for (const c of down) pts.push(...link(c));
+      pts.push([pb[0] + nw / 2, pb[1] + nh / 2]);
+      const cum = [0]; for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
+      r = {pts, cum, links:up.concat(down)}; paths.set(key, r); return r; };
+    // Each branch carries every message whose route crosses it.
+    const load = new Map(), hotLinks = new Set();
+    for (const e of M.edges.values()){
+      if (!pos.has(e.from) || !pos.has(e.to) || e.from === e.to) continue;
+      const r = rates.get(e.from + ">" + e.to) || 0; if (!r) continue;
+      const hot = e.from === selected || e.to === selected;
+      for (const c of route(e.from, e.to).links){ load.set(c, (load.get(c) || 0) + r); if (hot) hotLinks.add(c); }
+    }
+    const maxL = Math.max(1, ...load.values());
+    g.font = "10px ui-monospace,monospace";
+    for (const n of nodes){ const c = n.a.i; if (!c) continue;
+      const pts = link(c), l = load.get(c) || 0;
+      g.strokeStyle = l ? (hotLinks.has(c) ? "rgba(76,194,255,.95)" : "rgba(76,194,255,.5)") : "rgba(160,170,190,.3)";
+      g.lineWidth = l ? 1 + 4 * Math.sqrt(l / maxL) : 1;
+      g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (const q of pts.slice(1)) g.lineTo(q[0], q[1]); g.stroke();
+      if (l && (hotLinks.has(c) || nodes.length < 40)){ g.fillStyle = "#8fd8ff"; g.fillText(Math.round(l) + "/s", pts[3][0] + 4, (pts[2][1] + pts[3][1]) / 2 + 3); }
+    }
+  } else if (topoMode === "graph"){
+    const list = shown.map(r => r[0]);
+    settle(list, W, H, nw);
+    for (const a of list){ const q = fpos.get(a.i); put(a, q.x - nw / 2, q.y - nh / 2); }
+    messageEdges(g, pos, nw, nh, rates, shown.length);
+  } else {
+    // The roundtable: spawners in the middle, the rest on a ring.
+    const hubs = shown.filter(r => r[0].kids.length).map(r => r[0]), ring = shown.map(r => r[0]).filter(a => !a.kids.length);
+    const cx = W / 2 - nw / 2, cy = H / 2 - nh / 2;
+    hubs.forEach((a, j) => put(a, cx + (j - (hubs.length - 1) / 2) * (nw + 10), cy));
+    const rx = W / 2 - nw / 2 - 10, ry = H / 2 - nh / 2 - 8;
+    ring.forEach((a, j) => { const th = -Math.PI / 2 + 2 * Math.PI * j / ring.length; put(a, cx + rx * Math.cos(th), cy + ry * Math.sin(th)); });
+    messageEdges(g, pos, nw, nh, rates, shown.length);
+  }
+  dots(g, pos, nw, nh, route);
+  for (const n of nodes){
+    const a = n.a, s = n.a.i ? status(a) : "idle";
+    g.fillStyle = a.i === selected ? "#173149" : "#151b26"; g.strokeStyle = {run:"#3fb950", blocked:"#d29922", failed:"#f85149", stopped:"#444", idle:"#2a3444"}[s];
+    g.lineWidth = a.i === selected ? 2 : 1;
+    g.beginPath(); g.roundRect(n.x, n.y, n.w, n.h, 5); g.fill(); g.stroke();
+    g.fillStyle = s === "stopped" ? "#666" : "#e6edf3"; g.font = "11px ui-monospace,monospace";
+    g.fillText(label(a.i).slice(0, Math.max(3, Math.floor((n.w - 10) / 6.6))), n.x + 5, n.y + Math.min(13, n.h - 2));
+    if (n.h < 24) continue;
+    const fill = Math.min(1, (a.mail + a.parked) / meta.bound);
+    g.fillStyle = "#1f2633"; g.fillRect(n.x + 7, n.y + 20, n.w - 14, 4);
+    g.fillStyle = fill > .8 ? "#f85149" : fill > .5 ? "#d29922" : "#4cc2ff"; g.fillRect(n.x + 7, n.y + 20, (n.w - 14) * fill, 4);
+  }
+}
+
+// Sender-to-receiver edges, width by count, labelled with the current rate.
+function messageEdges(g, pos, nw, nh, rates, count){
+    const maxN = Math.max(1, ...[...M.edges.values()].map(e => e.n));
+    for (const e of M.edges.values()){
+      const p = pos.get(e.from), q = pos.get(e.to); if (!p || !q) continue;
+      const r = rates.get(e.from + ">" + e.to) || 0, hot = e.from === selected || e.to === selected;
+      g.strokeStyle = r > 0 ? (hot ? "rgba(76,194,255,.95)" : "rgba(76,194,255,.45)") : "rgba(120,130,150,.18)";
+      g.lineWidth = 1 + 3 * Math.sqrt(e.n / maxN);
+      const c = curve(p, q, nw, nh);
+      g.beginPath();
+      if (e.from === e.to){ g.arc(c[0] + nw / 2, p[1], 8, 0, Math.PI * 2); }
+      else { g.moveTo(c[0], c[1]); g.quadraticCurveTo(c[2], c[3], c[4], c[5]); }
+      g.stroke();
+      if (r > 0 && (hot || count < 25)){ g.fillStyle = "#8fd8ff"; g.font = "10px ui-monospace,monospace";
+        g.fillText(Math.round(r) + "/s", (c[0] + c[4]) / 2 - 12, (c[1] + c[5]) / 2 - 4); }
+    }
+}
+
+// Force layout for the graph view: actors repel, message edges pull by how
+// many messages crossed them, spawn links pull a little. Positions persist
+// between frames, so each frame only refines the last.
+const fpos = new Map();
+function settle(list, W, H, nw){
+  const keep = new Set(list.map(a => a.i)), ids = [...keep];
+  for (const a of list) if (!fpos.has(a.i)){
+    const p = fpos.get(a.parent || 0) || {x:W / 2, y:H / 2};
+    fpos.set(a.i, {x:p.x + (Math.random() - .5) * 120, y:p.y + (Math.random() - .5) * 120});
+  }
+  const springs = [];
+  let maxW = 1;
+  for (const e of M.edges.values()) if (e.from !== e.to && keep.has(e.from) && keep.has(e.to)){ const w = Math.log2(1 + e.n); maxW = Math.max(maxW, w); springs.push([e.from, e.to, w]); }
+  for (const s of springs) s[2] /= maxW;
+  for (const a of list) if (keep.has(a.parent)) springs.push([a.i, a.parent, .3]);
+  const k = Math.sqrt(W * H / Math.max(1, ids.length)) * .55;
+  for (let it = 0; it < 10; it++){
+    const f = new Map(ids.map(i => [i, [0, 0]]));
+    for (let x = 0; x < ids.length; x++) for (let y = x + 1; y < ids.length; y++){
+      const p = fpos.get(ids[x]), q = fpos.get(ids[y]), dx = p.x - q.x, dy = (p.y - q.y) * 2, d = Math.max(1, Math.hypot(dx, dy)), r = k * k / d / d;
+      const fp = f.get(ids[x]), fq = f.get(ids[y]); fp[0] += dx * r; fp[1] += dy * r; fq[0] -= dx * r; fq[1] -= dy * r;
+      // Boxes that overlap push apart along the shorter way out.
+      const ox = nw + 14 - Math.abs(p.x - q.x), oy = 44 - Math.abs(p.y - q.y);
+      if (ox > 0 && oy > 0){ const sx = p.x < q.x ? -1 : 1, sy = p.y < q.y ? -1 : 1;
+        if (oy < ox){ fp[1] += sy * oy; fq[1] -= sy * oy; } else { fp[0] += sx * ox; fq[0] -= sx * ox; } }
+    }
+    for (const [a, b, w] of springs){
+      const p = fpos.get(a), q = fpos.get(b), dx = q.x - p.x, dy = q.y - p.y, d = Math.max(1, Math.hypot(dx, dy)), r = d / k * w;
+      const fp = f.get(a), fq = f.get(b); fp[0] += dx * r; fp[1] += dy * r; fq[0] -= dx * r; fq[1] -= dy * r;
+    }
+    for (const i of ids){ const p = fpos.get(i), v = f.get(i);
+      v[0] += (W / 2 - p.x) * .02; v[1] += (H / 2 - p.y) * .04;
+      const m = Math.hypot(v[0], v[1]), step = Math.min(8, m) / Math.max(m, 1e-9);
+      p.x = Math.min(W - nw / 2 - 6, Math.max(nw / 2 + 6, p.x + v[0] * step));
+      p.y = Math.min(H - 24, Math.max(24, p.y + v[1] * step)); }
+  }
+  dirty = true;
+}
+
+// Message edges bow to one side so a pair's two directions don't overlap.
+function curve(p, q, nw, nh){
+  const x1 = p[0] + nw / 2, y1 = p[1] + nh / 2, x2 = q[0] + nw / 2, y2 = q[1] + nh / 2;
+  return [x1, y1, (x1 + x2) / 2 + (y2 - y1) * .2, (y1 + y2) / 2 - (x2 - x1) * .2, x2, y2];
+}
+// The point a fraction f of the way along a route.
+function along(r, f){
+  const d = f * r.cum[r.cum.length - 1]; let k = 1;
+  while (k < r.cum.length - 1 && r.cum[k] < d) k++;
+  const a = r.pts[k - 1], b = r.pts[k], seg = r.cum[k] - r.cum[k - 1], u = seg ? (d - r.cum[k - 1]) / seg : 0;
+  return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+}
+// One dot per message in flight at the cursor: it leaves the sender when sent
+// and reaches the receiver when a worker takes it.
+const MAX_DOTS = 600;
+function dots(g, pos, nw, nh, route){
+  const now = cursorNs, look = Math.max(windowNs() / 4, 1e6), lo = indexAt(now - look), hi = indexAt(now);
+  let n = 0;
+  for (let i = hi - 1; i >= lo && n < MAX_DOTS; i--){
+    const k = T.kind[i]; if (k !== K.SEND && k !== K.PARK) continue;
+    const p = pos.get(T.from[i]), q = pos.get(T.to[i]); if (!p || !q || T.from[i] === T.to[i]) continue;
+    const t0 = T.ns[i], t1 = T.took[i] || now + 1;
+    if (t1 < now) continue;
+    // Queue time is long next to travel: show the wait as the dot easing in.
+    const f = Math.min(1, (now - t0) / Math.max(1, Math.min(t1 - t0, look)));
+    let x, y;
+    if (route){ [x, y] = along(route(T.from[i], T.to[i]), f); }
+    else { const c = curve(p, q, nw, nh), u = 1 - f;
+      x = u * u * c[0] + 2 * u * f * c[2] + f * f * c[4]; y = u * u * c[1] + 2 * u * f * c[3] + f * f * c[5]; }
+    const hot = T.from[i] === selected || T.to[i] === selected;
+    g.fillStyle = k === K.PARK ? "#d29922" : hot ? "#ffffff" : "#8fd8ff";
+    g.beginPath(); g.arc(x, y, hot ? 3 : 2.2, 0, Math.PI * 2); g.fill(); n++;
+  }
+}
+
+function renderInspector(){
+  const a = M.actors.get(selected);
+  if (!a){ $("inspBody").innerHTML = '<div class="kv"><span>select an actor</span></div>'; return; }
+  const life = (a.stop >= 0 ? a.stop : cursorNs) - a.spawn, s = status(a), fill = (a.mail + a.parked) / meta.bound;
+  const oldest = [...M.pending.entries()].length && a.mail ? oldestFor(a.i) : 0;
+  const kv = (k, v, c) => `<div class="kv"><span>${k}</span><span class="${c || ""}">${v}</span></div>`;
+  let h = kv("actor", label(a.i)) + kv("status", s, s === "failed" ? "bad" : s === "blocked" ? "warn" : "") +
+    kv("spawned by", label(a.parent)) + kv("alive", ms(life)) +
+    kv("mailbox", `${a.mail} / ${meta.bound}` + (a.parked ? ` · ${a.parked} parked` : "")) +
+    `<div class="bar"><i style="width:${Math.min(100, fill * 100)}%;background:${fill > .8 ? "var(--bad)" : "var(--accent)"}"></i></div>` +
+    (oldest ? kv("oldest message", ms(cursorNs - oldest), cursorNs - oldest > 1e8 ? "warn" : "") : "") +
+    (a.waitOn ? kv("waiting on", label(a.waitOn), "warn") : "") +
+    kv("busy", life > 0 ? (100 * a.busy / life).toFixed(1) + " %" : "-") +
+    kv("turns", a.turns.toLocaleString()) + kv("sent", a.sent.toLocaleString()) +
+    kv("queue p50 / p95", a.q.length ? ms(pct(a.q, .5)) + " / " + ms(pct(a.q, .95)) : "-") +
+    kv("turn p50 / p95", a.run.length ? ms(pct(a.run, .5)) + " / " + ms(pct(a.run, .95)) : "-") +
+    (a.dropped ? kv("dropped", a.dropped, "bad") : "") +
+    `<h3>recent messages</h3><table>` +
+    a.recent.slice(-14).reverse().map(r => `<tr><td>${r.name.split(".").pop()}</td><td class="dim">${label(r.from)}</td><td class="r">${ms(r.q)}</td><td class="r${r.failed ? " bad" : ""}">${ms(r.dur)}</td></tr>`).join("") + `</table>`;
+  $("inspBody").innerHTML = h;
+}
+function oldestFor(i){
+  // Messages still pending to `i`: the earliest send among them.
+  let best = 0;
+  for (let j = Math.max(0, M.upto - 200000); j < M.upto; j++){
+    const k = T.kind[j]; if ((k === K.SEND || k === K.PARK) && T.to[j] === i && M.pending.has(T.msg[j])){ best = T.ns[j]; break; }
+  }
+  return best;
+}
+
+// While playing, the lanes show the last few wall-clock seconds of trace time.
+let zoom = 1;
+function windowNs(){ return Math.max(2e4, zoom * Math.min(endNs(), playing ? speed * 4e9 : 200e6)); }
+
+function renderTimeline(rows){
+  const [g, W, H] = fit($("tl")); g.clearRect(0, 0, W, H);
+  const lanes = rows.map(r => r[0]).slice(0, Math.floor((H - 20) / 16));
+  const span = windowNs(), t1 = cursorNs, t0 = t1 - span, lx = 150;
+  const x = t => lx + (t - t0) / span * (W - lx - 10), lane = new Map(lanes.map((a, j) => [a.i, j]));
+  g.font = "10px ui-monospace,monospace";
+  lanes.forEach((a, j) => { const y = 16 + j * 16; g.fillStyle = a.i === selected ? "#173149" : j % 2 ? "#121721" : "#0f141c";
+    g.fillRect(0, y, W, 16); g.fillStyle = "#9aa4b2"; g.fillText(label(a.i).slice(0, 20), 6, y + 11); });
+  for (const b of M.bars){
+    if (b.t1 < t0 || b.t0 > t1) continue; const j = lane.get(b.to); if (j === undefined) continue;
+    const y = 16 + j * 16, xa = Math.max(lx, x(b.t0)), xb = Math.max(xa + 1.5, x(b.t1));
+    if (b.q > 0){ g.fillStyle = "rgba(210,153,34,.25)"; g.fillRect(Math.max(lx, x(b.t0 - b.q)), y + 7, xa - Math.max(lx, x(b.t0 - b.q)), 2); }
+    g.fillStyle = b.failed ? "#f85149" : "#3fb9a0"; g.fillRect(xa, y + 3, xb - xa, 10);
+    if (xb - xa > 50){ g.fillStyle = "#0b0e14"; g.fillText(b.name.split(".").pop(), xa + 3, y + 11); }
+  }
+  g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(1) + " ms", x(t) - 16, 11); }
+}
+
+// Causality flame chart: x is time, a turn sits one row under the turn whose
+// send caused it, so a stack is a chain of messages.
+let flameBars = [];
+function renderFlame(){
+  const [g, W, H] = fit($("flame")); g.clearRect(0, 0, W, H);
+  const span = windowNs(), t1 = cursorNs, t0 = t1 - span, x = t => (t - t0) / span * W, rowH = 16;
+  g.font = "10px ui-monospace,monospace"; flameBars = [];
+  const hues = new Map(); let hue = 0;
+  for (const b of M.bars){
+    if (b.t1 < t0 || b.t0 > t1) continue;
+    const y = H - 18 - (b.depth + 1) * rowH; if (y < 14) continue;
+    const xa = Math.max(0, x(b.t0)), xb = Math.max(xa + 1, x(b.t1));
+    const ty = (M.actors.get(b.to) || {}).type || "";
+    if (!hues.has(ty)) hues.set(ty, (hue += 67) % 360);
+    g.fillStyle = b.failed ? "#f85149" : `hsl(${hues.get(ty)},55%,${b.to === selected ? 62 : 44}%)`;
+    g.fillRect(xa, y, xb - xa - .5, rowH - 1); flameBars.push([xa, y, xb, b]);
+    if (xb - xa > 60){ g.fillStyle = "#0b0e14"; g.fillText((label(b.to) + " " + b.name.split(".").pop()).slice(0, Math.floor((xb - xa) / 6.2)), xa + 3, y + 11); }
+  }
+  g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(2) + " ms", Math.min(W - 60, x(t)), H - 4); }
+  g.fillText("each bar is a turn; the bar under it is the turn whose send caused it · wheel to zoom", 6, 11);
+}
+
+function renderSched(){
+  const [g, W, H] = fit($("sched")); g.clearRect(0, 0, W, H);
+  const span = windowNs(), t1 = cursorNs, t0 = t1 - span, lx = 90;
+  const x = t => lx + (t - t0) / span * (W - lx - 10), lh = Math.min(28, (H - 20) / Math.max(1, M.workers.length));
+  g.font = "10px ui-monospace,monospace";
+  M.workers.forEach((w, j) => {
+    const y = 16 + j * lh; g.fillStyle = j % 2 ? "#121721" : "#0f141c"; g.fillRect(0, y, W, lh);
+    let busy = 0;
+    for (const [a, b, act] of w.spans){ if (b < t0 || a > t1) continue; busy += Math.min(b, t1) - Math.max(a, t0);
+      g.fillStyle = act === selected ? "#4cc2ff" : "#3fb9a0"; g.fillRect(Math.max(lx, x(a)), y + 3, Math.max(1, x(b) - Math.max(lx, x(a))), lh - 6); }
+    g.fillStyle = "#9aa4b2"; g.fillText(`worker ${j}  ${(100 * busy / span).toFixed(0)}%`, 6, y + lh / 2 + 3);
+  });
+  g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(1) + " ms", x(t) - 16, 11); }
+}
+
+function renderTables(){
+  if (view === "vMsg") $("msgRows").innerHTML = M.msgs.slice(-300).reverse().map(r =>
+    `<tr><td>${(r.t0 / 1e6).toFixed(3)}</td><td>${label(r.from)}</td><td>${label(r.to)}</td><td>${r.name}</td><td class="r">${ms(r.q)}</td><td class="r${r.failed ? " bad" : ""}">${ms(r.dur)}</td><td class="dim">${r.w}</td></tr>`).join("");
+  if (view === "vFail") $("failRows").innerHTML = M.fails.slice(-500).reverse().map(f =>
+    `<tr><td>${(f.t / 1e6).toFixed(3)}</td><td class="${f.what === "failed" || f.what === "stopped" ? "bad" : "warn"}">${f.what}</td><td>${label(f.actor)}</td><td class="dim">${f.detail}</td></tr>`).join("") ||
+    '<tr><td class="dim" colspan="4">no failures</td></tr>';
+}
+
+function render(){
+  sync();
+  const empty = $("empty");
+  if (!T.n){ empty.style.display = "flex"; empty.innerHTML = "waiting for trace events…<br><span>run the program with ZEN_ACTOR_TRACE=&lt;file&gt;</span>"; return; }
+  empty.style.display = "none";
+  if (!selected && M.actors.size) selected = [...M.actors.keys()][0];
+  const rows = order();
+  renderHeader(); renderTree(rows); renderTopo(rows); renderInspector();
+  if (view === "vTl") renderTimeline(rows); else if (view === "vSched") renderSched(); else if (view === "vFlame") renderFlame(); else renderTables();
+  $("tCursor").textContent = "t = " + (cursorNs / 1e6).toFixed(2) + " ms";
+  const span = endNs() - startNs();
+  $("scrub").value = live ? 1000 : span > 0 ? Math.round(1000 * (cursorNs - startNs()) / span) : 0;
+}
+
+// ---------------------------------------------------------------- input
+$("treeRows").onclick = e => { const r = e.target.closest(".row"); if (r && r.dataset.i){ selected = +r.dataset.i; dirty = true; } };
+$("topoC").onclick = e => { const b = e.target.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+  const n = nodes.find(n => x >= n.x && x <= n.x + n.w && y >= n.y && y <= n.y + n.h); if (n && n.a.i){ selected = n.a.i; dirty = true; } };
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("sel", x === b));
+  document.querySelectorAll("#views>div").forEach(v => v.classList.toggle("on", v.id === b.dataset.v));
+  view = b.dataset.v; dirty = true; });
+function goLive(on){ live = on; $("btnLive").classList.toggle("sel", on); }
+function setPlaying(on){
+  playing = on; lastWall = performance.now();
+  $("btnPlay").innerHTML = on ? "&#10074;&#10074; pause" : "&#9654; play"; $("btnPlay").classList.toggle("sel", on);
+  if (on){ goLive(false); if (cursorNs >= endNs() || cursorNs <= startNs()) cursorNs = startNs(); }
+  dirty = true;
+}
+$("scrub").oninput = e => { goLive(false); cursorNs = startNs() + (endNs() - startNs()) * e.target.value / 1000; dirty = true; };
+$("btnLive").onclick = () => { setPlaying(false); goLive(true); dirty = true; };
+$("btnPlay").onclick = () => setPlaying(!playing);
+$("btnStart").onclick = () => { goLive(false); cursorNs = startNs(); lastWall = performance.now(); dirty = true; };
+$("speed").onchange = e => { speed = +e.target.value; dirty = true; };
+addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT"){ e.preventDefault(); setPlaying(!playing); } });
+addEventListener("resize", () => dirty = true);
+// Wheel over the lanes zooms the time window.
+for (const id of ["tl", "sched", "flame"]) $(id).addEventListener("wheel", e => { e.preventDefault();
+  zoom = Math.min(4, Math.max(1e-4, zoom * (e.deltaY > 0 ? 1.25 : 0.8))); dirty = true; }, {passive:false});
+const MODES = [["mTree", "tree"], ["mGraph", "graph"], ["mRing", "ring"]];
+for (const [id, mode] of MODES) $(id).onclick = () => { topoMode = mode;
+  for (const [other, m] of MODES) $(other).classList.toggle("sel", m === mode); dirty = true; };
+$("flame").onclick = e => { const b = e.target.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+  const hit = flameBars.find(([xa, ya, xb]) => x >= xa && x <= xb && y >= ya && y <= ya + 16); if (hit){ selected = hit[3].to; dirty = true; } };
+
+// ---------------------------------------------------------------- polling
+let dirty = true, polling = false;
+async function poll(){
+  if (polling) return; polling = true;
+  try {
+    const r = await fetch("/trace?from=" + offset, {cache:"no-store"});
+    const start = +(r.headers.get("X-Trace-Start") || 0), text = await r.text();
+    if (start !== offset){ T.n = 0; queued.clear(); offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
+    if (text.length){ ingest(text); offset += new TextEncoder().encode(text).length; dirty = true; }
+    $("liveDot").classList.toggle("on", !meta.ended);
+    $("liveText").textContent = meta.ended ? "program exited" : "running";
+  } catch (e) { $("liveDot").classList.remove("on"); $("liveText").textContent = "server gone"; }
+  polling = false;
+}
+setInterval(poll, 400); poll();
+(function frame(){
+  if (playing){
+    const now = performance.now(); cursorNs += (now - lastWall) * 1e6 * speed; lastWall = now;
+    if (cursorNs >= endNs()){ cursorNs = endNs(); if (meta.ended) setPlaying(false); }
+    dirty = true;
+  }
+  if (dirty){ dirty = false; render(); }
+  setTimeout(() => requestAnimationFrame(frame), playing ? 33 : 120);
+})();
+</script>
+</body>
+</html>

@@ -39,7 +39,7 @@
 { capability } = gen.gen_lower_shape
 { variant_index, size_of, TAG_BYTES } = gen.gen_lower_shape
 { call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
-{ SynthAt, lower_pending } = gen.gen_lower_thread
+{ SynthAt, TurnName, lower_pending } = gen.gen_lower_thread
 { owner_of } = sema.sema_inst
 
 // A value computed into a slot, with its concrete (substituted) type.
@@ -167,6 +167,10 @@ Lowerer* = {
     // Pending instances the lowering synthesizes (thread bodies, actor
     // entry points), by function index; see gen_lower_thread.
     synths* :: Vec<SynthAt>,
+    // Each turn's `Type.behaviour`, and the index of the function that
+    // hands them to the runtime (gen_lower_actor.names_function).
+    turn_names* :: Vec<TurnName>,
+    names_at* :: Res<usize> = None,
 
     // -------------------------------------------------------------------
     // blocks and slots
@@ -2977,6 +2981,9 @@ Lowerer* = {
     }
 
     // A real function instance for (callee, substitution, Self).
+    // The function index of the program's turn name table.
+    name_table_at* = (self :: @Self, at: usize) { self.names_at = Ok(at); }
+
     enqueue* = (self :: @Self, callee: Callee) Res<usize, LowerError> {
         key = self.instance_key(callee).try();
         self.known.get(key.view()).match({
@@ -3432,7 +3439,8 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         case_tests: alloc.Vec<CaseTest>(),
         tag_guards: alloc.Vec<TagGuard>(),
         payload_reads: alloc.Vec<PayloadRead>(),
-        synths: alloc.Vec<SynthAt>()
+        synths: alloc.Vec<SynthAt>(),
+        turn_names: alloc.Vec<TurnName>()
     );
     main_decl   = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
     main_fn     = main_decl.kind.match({ Function(f) => Ok(f), _ => None })
@@ -3468,6 +3476,19 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         });
         functions.add(f).try(LowerError.OutOfMemory);
         i = i + 1;
+    });
+    // The name table was lowered when reached; lower it again now that
+    // every turn is known. It calls only what it called the first time.
+    state.names_at.when_ok((at) {
+        callee = state.pending.get(at).ok_or(unsupported(module.span, "a missing name table")).try();
+        f      = state.lower_pending(at, callee, false).try();
+        (state.pending.len != functions.len).then(
+            () { Err(unsupported(
+                module.span,
+                "a name table that reaches a new function"
+            )).try(); }
+        );
+        functions.set(at, f).ok_or(unsupported(module.span, "a missing name table slot")).try();
     });
     // A broken implementor refuses the program only when a value of it
     // can reach its bound.

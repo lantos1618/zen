@@ -39,6 +39,11 @@ clock_gettime* = (clock: i32, time: Ptr<u8>) i64
 // Linux getrandom; on macOS getentropy in chunks of at most 256 bytes, with
 // the Linux result (the byte count).
 getrandom* = (buf: Ptr<u8>, len: usize, flags: u32) i64
+mkdirat* = (dir: i32, path: Ptr<u8>, mode: u32) i64
+unlinkat* = (dir: i32, path: Ptr<u8>, flags: i32) i64
+// Linux answers the length with its terminator; macOS's getcwd answers the
+// buffer, or 0 on failure. Either way the text is a C string in `buf`.
+getcwd* = (buf: Ptr<u8>, len: usize) i64
 socket* = (domain: i32, kind: i32, protocol: i32) i64
 bind* = (fd: i32, address: Ptr<u8>, len: u32) i64
 listen* = (fd: i32, backlog: i32) i64

@@ -98,7 +98,6 @@ tests/corpus/env/fs_lock_excludes_until_released # FAIL: exit 1 (expected 0) std
 tests/corpus/env/fs_lock_survives_a_move_across_frames # FAIL: exit 1 (expected 0) stdout differs (0 bytes, expected 36) 
 tests/corpus/env/fs_mkdir_creates_once # UNSUPPORTED: fs_mkdir_creates_once.zen:9:5: error: unsupported by this backend: this environment operation
 tests/corpus/env/fs_read_special_file_with_zero_stat_size/main # FAIL: exit 1 (expected 0) stdout differs (0 bytes, expected 14) 
-tests/corpus/env/fs_remove_directory_stays_isdir/main # UNSUPPORTED: main.zen:25:5: error: unsupported by this backend: this environment operation
 tests/corpus/env/fs_remove_true_when_something_was_there # UNSUPPORTED: fs_remove_true_when_something_was_there.zen:17:5: error: unsupported by this backend: this environme
 tests/corpus/env/proc_arguments # UNSUPPORTED: std/proc/proc.zen:241:16: error: unsupported by this backend: the compiler-provided operation `std.p
 tests/corpus/env/proc_close_without_live_child # UNSUPPORTED: proc_close_without_live_child.zen:28:6: error: unsupported by this backend: alternatives of a value 

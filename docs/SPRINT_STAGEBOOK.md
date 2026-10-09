@@ -5,6 +5,35 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: native crypto timing stress (2026-10-09)
+
+On main `96dd344f4`, the bundled ChaCha20-Poly1305 benchmark was refreshed
+from zen-crypto main `17ec398` with only the syntax changes required by this
+compiler. The previous copy produced six GCC `-O2`/`-O3` static-audit failures
+from secret-dependent checked arithmetic in Poly1305 and `load32`. The
+`ctcheck` gate now audits both AEAD entry points and their secret-bearing
+helpers in optimized assembly. The refreshed copy passed 33 Clang/GCC audit
+checks with zero failures at `-O2`/`-O3`; the old copy failed this same audit.
+Its RFC 8439 vectors and 186 tamper cases passed under ASan/UBSan and the
+native assembly backend, and C/native benchmark tags agreed at one and eight
+MiB rounds. The audit permits one branch for the public authentication result;
+it does not establish a general constant-time guarantee.
+
+Fresh `make -j1 seed verify J=8 TEST_J=8` passed: 1732 corpus cases passed,
+zero failed; seed regeneration made no tracked change. Zen-written AFL targets
+against this compiler completed 110240 URL executions and 167677 fixed-AEAD
+executions with zero saved crashes or hangs. The maintained zen-crypto package
+passed its full primitive suite, TLS record nonce/fragmentation checks, DHE
+hostile-peer cases, and server hostile-peer and interoperability checks on its
+matching compiler. Its source still needs a separate syntax/API migration to
+build unchanged with the latest Zen main.
+
+The older `/home/ubuntu/zenc` checkout remains uncommitted and untouched. Its
+URL validation and JSON member API are already upstream; HTTP moved to
+zen-http. Its native `proc.c` RPC queue/cancellation work cannot be cherry-picked
+because current main removed that file and its interaction API. Preserve that
+work until a replacement architecture and regression tests are defined.
+
 ## Current checkpoint: URL input validation (2026-10-09)
 
 The borrowed HTTP URL parser rejects raw ASCII whitespace, control bytes,

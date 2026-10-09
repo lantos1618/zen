@@ -3,7 +3,8 @@
 { Env } = std.env
 { println } = std.io
 
-// ChaCha20-Poly1305 throughput: zen-crypto's chacha20poly1305.zen, unchanged,
+// ChaCha20-Poly1305 throughput: zen-crypto's chacha20poly1305.zen, adapted
+// to this compiler's syntax,
 // built with the C backend and the native asm backend. Seals a 1 MiB buffer
 // `rounds` times (argument, default 64), feeding each tag back into the
 // message, and prints the final tag so both builds can be checked for
@@ -14,17 +15,28 @@
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();
     size: usize = 1048576;
-    rounds = env.argv.get(1).match({ Ok(s) => s.parse_usize().value_or(64), None => 64 });
-    message = a.raw(size, 16).try();
+    rounds      = env.argv.get(1).match({ Ok(s) => s.parse_usize().value_or(64), None => 64 });
+    message     = a.raw(size, 16).try();
     Range(0, size).loop((i) { message.write(i, (i % 251).to_u8().value_or(0)); });
     output = a.raw(size + 16, 16).try();
-    key = a.raw(32, 16).try();
+    key    = a.raw(32, 16).try();
     Range<usize>(0, 32).loop((i) { key.write(i, (i * 7 + 1).to_u8().value_or(0)); });
     nonce = a.raw(12, 16).try();
     Range<usize>(0, 12).loop((i) { nonce.write(i, (i + 64).to_u8().value_or(0)); });
     scratch = a.raw(42 * 8, 16).try().to<u64>();
     Range(0, rounds).loop((r) {
-        chacha20poly1305_seal(output, size + 16, message, size, key, 16, key, nonce, scratch, 42);
+        chacha20poly1305_seal(
+            output,
+            size + 16,
+            message,
+            size,
+            key,
+            16,
+            key,
+            nonce,
+            scratch,
+            42
+        );
         message.write(0, output.read(size));
     });
     hex ::= a.String().try();

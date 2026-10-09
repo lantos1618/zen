@@ -38,7 +38,7 @@ Sys* = { Read
     | Getcwd
     | Mkdirat
     | Unlinkat
-    | Renameat2
+    | Renameat
     // Processes: `fork` is clone(SIGCHLD) on Linux and libSystem's fork on
     // Darwin, whose `pipe` and `dup2` stand in for pipe2 and dup3.
     | Pipe2
@@ -114,7 +114,7 @@ arity* = (call: Sys) usize {
         Getcwd           => 2,
         Mkdirat          => 3,
         Unlinkat         => 3,
-        Renameat2        => 5,
+        Renameat         => 4,
         Pipe2            => 2,
         Fork             => 5,
         Execve           => 3,
@@ -177,7 +177,7 @@ linux_x86_64* = (call: Sys) Res<usize> {
         Getcwd           => Ok(79),
         Mkdirat          => Ok(258),
         Unlinkat         => Ok(263),
-        Renameat2        => Ok(316),
+        Renameat         => Ok(264),
         Pipe2            => Ok(293),
         Fork             => Ok(56),
         Execve           => Ok(59),
@@ -224,7 +224,7 @@ linux_arm64* = (call: Sys) Res<usize> {
         Getcwd           => Ok(17),
         Mkdirat          => Ok(34),
         Unlinkat         => Ok(35),
-        Renameat2        => Ok(276),
+        Renameat         => Ok(38),
         Pipe2            => Ok(59),
         Fork             => Ok(220),
         Execve           => Ok(221),
@@ -278,7 +278,7 @@ darwin_symbol* = (call: Sys) Res<str> {
         Getcwd           => Ok("getcwd"),
         Mkdirat          => Ok("mkdirat"),
         Unlinkat         => Ok("unlinkat"),
-        Renameat2        => Ok("renameatx_np"),
+        Renameat         => Ok("renameat"),
         Pipe2            => Ok("pipe"),
         Fork             => Ok("fork"),
         Execve           => Ok("execve"),
@@ -350,12 +350,13 @@ SysConstant* = { AtFdcwd
     | MapPrivateAnonymous
     // 1 on Darwin, 0 on Linux: which thread primitives std.sys builds on.
     | IsDarwin
-    // 1 where threads go through pthreads (Darwin), 0 on native Linux.
-    | PthreadThreads
-    // The C compiler's predefined target macros, 1 or 0.
+    // 1 on the matching target, as the C compiler predefines the macros
+    // `__linux__`, `__x86_64__` and `__aarch64__`.
     | IsLinux
     | IsX86_64
-    | IsArm64 }
+    | IsAarch64
+    // 1 where threads go through pthreads (Darwin), 0 on native Linux.
+    | PthreadThreads }
 
 // The operating systems and architectures with constant tables.
 Platform* = { LinuxX86_64 | LinuxArm64 | Darwin }
@@ -381,22 +382,10 @@ constant_value* = (name: SysConstant, platform: Platform) i64 {
         // MAP_PRIVATE | MAP_ANONYMOUS
         MapPrivateAnonymous => linux.match({ true => 34, false => 4098 }),
         IsDarwin            => linux.match({ true => 0, false => 1 }),
-        PthreadThreads      => linux.match({ true => 0, false => 1 }),
         IsLinux             => linux.match({ true => 1, false => 0 }),
         IsX86_64            => platform.match({ LinuxX86_64 => 1, _ => 0 }),
-        IsArm64             => platform.match({ LinuxX86_64 => 0, _ => 1 }),
-    })
-}
-
-// The target macro a C compiler predefines under this name, whose value a
-// native target knows without reading any header.
-predefined_constant* = (name: str) Res<SysConstant> {
-    name.match({
-        "__APPLE__"   => Ok(SysConstant.IsDarwin),
-        "__linux__"   => Ok(SysConstant.IsLinux),
-        "__x86_64__"  => Ok(SysConstant.IsX86_64),
-        "__aarch64__" => Ok(SysConstant.IsArm64),
-        _             => None,
+        IsAarch64           => platform.match({ LinuxX86_64 => 0, _ => 1 }),
+        PthreadThreads      => linux.match({ true => 0, false => 1 }),
     })
 }
 
@@ -431,7 +420,7 @@ sys_named* = (name: str) Res<Sys> {
         "getcwd"                 => Ok(Sys.Getcwd),
         "mkdirat"                => Ok(Sys.Mkdirat),
         "unlinkat"               => Ok(Sys.Unlinkat),
-        "renameat2"              => Ok(Sys.Renameat2),
+        "renameat"               => Ok(Sys.Renameat),
         "pipe2"                  => Ok(Sys.Pipe2),
         "fork"                   => Ok(Sys.Fork),
         "execve"                 => Ok(Sys.Execve),

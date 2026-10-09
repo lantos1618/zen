@@ -1016,7 +1016,7 @@ infer_impl_bound = (c :: Checker, bound: TyId, g: TyId, inst :: Inst)
                    Res<AllocError> {
     c.types.at(g).match({
         Named(n) => c.infer_named_impl(bound, n, inst),
-        // `str.impl(Seq<u8>, ..)` names the element a callback receives.
+        // A primitive's impls attach to std.core's declaration of its name.
         Prim(p)  => c.prim_named(p).try().match({
             Ok(pn) => c.infer_named_impl(bound, pn, inst),
             None   => Ok,

@@ -96,10 +96,22 @@ main = (env: Env) Res<i32, AllocError> {
     emit_inlined ::= a.Vec<str>();
     [str, 10](zen, "build", "tools/ct/inlined", "--entry", "main.zen", "--std", std, "--emit-c", "-o", "build/ct/inlined.c")
         .loop((w) { emit_inlined.add(w).try(); });
-    inlined_emitted = env.proc.run_argv(a, "", emit_inlined).match({ Ok(r) => r.code == 0, Err(_) => false });
-    (!inlined_emitted).then(() { println("FAIL could not emit tools/ct/inlined with {}", zen); });
-    control_manifest = env.fs.read(a, "tools/ct/inlined/manifest.txt").match({ Ok(t) => t.view(), Err(_) => "" });
-    control_roots    = env.fs.read(a, "tools/ct/inlined/roots.txt").match({ Ok(t) => t.view(), Err(_) => "" });
+    inlined_emitted = env.proc.run_argv(
+        a,
+        "",
+        emit_inlined
+    ).match({ Ok(r) => r.code == 0, Err(_) => false });
+    (!inlined_emitted).then(
+        () { println("FAIL could not emit tools/ct/inlined with {}", zen); }
+    );
+    control_manifest = env.fs.read(
+        a,
+        "tools/ct/inlined/manifest.txt"
+    ).match({ Ok(t) => t.view(), Err(_) => "" });
+    control_roots    = env.fs.read(
+        a,
+        "tools/ct/inlined/roots.txt"
+    ).match({ Ok(t) => t.view(), Err(_) => "" });
     expected ::= a.Vec<str>();
     compilers.loop((cc) {
         clang_x86(env, a, cc).then(() { expected.add(a.String("select_control@{}", cc).try().view()).try(); });
@@ -107,11 +119,21 @@ main = (env: Env) Res<i32, AllocError> {
     default_ok = inlined_emitted && run_audit(
         env,
         a,
-        Audit(manifest: control_manifest, compilers: compilers, levels: levels, leaky: a.Vec<str>(), work: work),
+        Audit(
+            manifest: control_manifest,
+            compilers: compilers,
+            levels: levels,
+            leaky: a.Vec<str>(),
+            work: work
+        ),
         "build/ct/inlined.c"
     ).match({
         Ok(o)  => {
-            println("inlined control, default audit: {} passed, {} failed", o.passed, o.failed);
+            println(
+                "inlined control, default audit: {} passed, {} failed",
+                o.passed,
+                o.failed
+            );
             o.failed == 0
         },
         Err(_) => false,
@@ -119,7 +141,14 @@ main = (env: Env) Res<i32, AllocError> {
     inlined_ok = inlined_emitted && run_audit(
         env,
         a,
-        Audit(manifest: control_manifest, roots: control_roots, compilers: compilers, levels: levels, leaky: expected, work: work),
+        Audit(
+            manifest: control_manifest,
+            roots: control_roots,
+            compilers: compilers,
+            levels: levels,
+            leaky: expected,
+            work: work
+        ),
         "build/ct/inlined.c"
     ).match({
         Ok(o)  => {
@@ -133,6 +162,47 @@ main = (env: Env) Res<i32, AllocError> {
         },
         Err(_) => false,
     });
+    // Audit the actual bundled AEAD source with helpers inlined as optimized.
+    // The earlier copy's checked arithmetic produced secret-dependent GCC
+    // branches; keeping this in ctcheck catches that regression.
+    crypto_dir_ok = run(env, a, words(a, "mkdir -p build/ct/chacha").try());
+    crypto_emit ::= a.Vec<str>();
+    [str, 10](zen, "build", "tests/native/bench/chacha20", "--entry", "ct.zen", "--std", std, "--emit-c", "-o", "build/ct/chacha.c")
+        .loop((w) { crypto_emit.add(w).try(); });
+    crypto_emitted  = crypto_dir_ok && run(env, a, crypto_emit);
+    crypto_manifest = env.fs.read(
+        a,
+        "tools/ct/chacha.manifest"
+    ).match({ Ok(t) => t.view(), Err(_) => "" });
+    crypto_roots    = env.fs.read(
+        a,
+        "tools/ct/chacha.roots"
+    ).match({ Ok(t) => t.view(), Err(_) => "" });
+    crypto_ok       = crypto_emitted && crypto_manifest.len > 0 && crypto_roots.len > 0
+        && run_audit(
+            env,
+            a,
+            Audit(
+                manifest: crypto_manifest,
+                roots: crypto_roots,
+                compilers: compilers,
+                levels: levels,
+                leaky: a.Vec<str>(),
+                work: "build/ct/chacha"
+            ),
+            "build/ct/chacha.c"
+        ).match({
+            Ok(o)  => {
+                println(
+                    "bundled AEAD inlined audit: {} passed, {} failed, {} inlined",
+                    o.passed,
+                    o.failed,
+                    o.inlined
+                );
+                o.passed > 0 && o.failed == 0
+            },
+            Err(_) => false,
+        });
     probe ::= a.Vec<str>();
     probe.add("valgrind").try();
     probe.add("--version").try();
@@ -174,7 +244,9 @@ main = (env: Env) Res<i32, AllocError> {
             true
         },
     });
-    Ok((static_ok && default_ok && inlined_ok && grind_ok).match({ true => 0, false => 1 }))
+    Ok(
+        (static_ok && default_ok && inlined_ok && crypto_ok && grind_ok).match({ true => 0, false => 1 })
+    )
 }
 
 // True when `cc` is Clang generating x86-64 code.

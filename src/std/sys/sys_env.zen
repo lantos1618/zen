@@ -10,7 +10,7 @@
 { read_file, write_file, env_var, arg, argc, Pages } = std.sys
 { monotonic_ns, realtime_ns, c_path, openat, close, at_fdcwd, o_rdonly, o_cloexec } = std.sys
 { o_directory, o_rdwr, o_creat, flock, eagain } = std.sys
-{ c_len, getcwd, mkdirat, renameat2, unlinkat } = std.sys
+{ c_len, getcwd, mkdirat, unlinkat } = std.sys
 { sleep_ns } = std.sys.sys_thread
 
 // A kernel -errno as the Fs error a caller can act on.
@@ -60,20 +60,6 @@ fs_cwd* = (a: Alloc) Res<String, FsError> {
     scratch.free(buf);
     added.try();
     Ok(out)
-}
-
-// `fs.rename(from, to)`: `to` names what `from` named, in one step.
-fs_rename* = (from: str, to: str) Res<FsError> {
-    scratch = Pages();
-    old     = c_path(scratch, from).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
-    new     = c_path(scratch, to).match({
-        Ok(p)  => Ok(p),
-        Err(_) => { scratch.free(old); Err(FsError.OutOfMemory) },
-    }).try();
-    rc      = renameat2(at_fdcwd(), old, at_fdcwd(), new, 0);
-    scratch.free(old);
-    scratch.free(new);
-    (rc == 0).match({ true => Ok, false => Err(fs_error(rc)) })
 }
 
 // True when this call made the directory; false when one was already there.

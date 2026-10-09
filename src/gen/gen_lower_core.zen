@@ -30,7 +30,7 @@
 { Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, SysValue } = gen.gen_ir
-{ predefined_constant } = gen.gen_sys
+{ SysConstant } = gen.gen_sys
 { word, integer, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
@@ -758,7 +758,7 @@ Lowerer* = {
                 Ok(Ref(p))    => Ok(p),
                 _             => None,
             })),
-            Access(a) => (self.is_value_access(a) && !self.names_member_const(a)).match({
+            Access(a) => self.is_value_access(a).match({
                 false => Ok(None),
                 true  => self.place_of(a.base).try().match({
                     Ok(base) => Ok(Ok(
@@ -875,35 +875,6 @@ Lowerer* = {
         })
     }
 
-    // A zeroed value of `ty`, for storage that is written before it is read
-    // in ways the IR's initialization check cannot see, and for an empty
-    // fixed-array literal, whose elements start at zero.
-    blank* = (self :: @Self, ty: TyId) Res<Value, LowerError> {
-        out  = self.temp(ty).try();
-        size = size_of(self.class_of(ty).try());
-        at   = self.slot_of(Scalar.Ptr).try();
-        self.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
-        offset :: usize = 0;
-        Range(0, size / 8).loop((_) {
-            self.zero_at(at, offset, Scalar.U64).try();
-            offset = offset + 8;
-        });
-        Range(offset, size).loop((_) {
-            self.zero_at(at, offset, Scalar.U8).try();
-            offset = offset + 1;
-        });
-        Ok(out)
-    }
-
-    zero_at = (self :: @Self, at: usize, offset: usize, class: Scalar) Res<LowerError> {
-        zero = self.word_const(class, 0).try();
-        self.add(Instruction.StoreValue(Store(
-            base: at,
-            offset: offset,
-            value: zero
-        )))
-    }
-
     zeroed = (self :: @Self, ty: TyId) Res<Value, LowerError> {
         self.is_unit(ty).match({
             true  => self.constant(ty, 0),
@@ -931,7 +902,7 @@ Lowerer* = {
     }
 
     // Zero the first `bytes` bytes of `value`'s storage, a word at a time.
-    zero_fill = (self :: @Self, value: Value, bytes: usize) Res<LowerError> {
+    zero_fill* = (self :: @Self, value: Value, bytes: usize) Res<LowerError> {
         at = self.slot_of(Scalar.Ptr).try();
         self.add(Instruction.AddressOf(Address(
             out: at,
@@ -985,47 +956,13 @@ Lowerer* = {
             Const(c) => Ok(c),
             _        => None,
         }).ok_or(unsupported(span, "a constant without a value")).try();
-        self.const_value(
-            d.id.module.to_usize(),
-            constant.value,
-            constant.type,
-            ty
-        )
+        self.const_in(constant.value, constant.type, d.id.module.to_usize(), ty)
     }
 
-    // `Caps.sync` or `caps.sync`: a constant declared in a struct body.
-    member_const = (self :: @Self, owner: DeclId, member: str, ty: TyId)
-                   Res<Res<Value>, LowerError> {
-        decl_at(self.tree, owner).match({
-            None    => Ok(None),
-            Ok(def) => def.kind.match({
-                Struct(s) => s.members.find((m) {
-                    m.kind.match({ Const(c) => c.name.text.eq(
-                        member
-                    ), _ => false })
-                }).match({
-                    None    => Ok(None),
-                    Ok(hit) => hit.kind.match({
-                        Const(c) => Ok(Ok(
-                            self.const_value(
-                                owner.module.to_usize(),
-                                c.value,
-                                c.type,
-                                ty
-                            ).try()
-                        )),
-                        _        => Ok(None),
-                    }),
-                }),
-                _         => Ok(None),
-            }),
-        })
-    }
-
-    // The initializer is read in its declaring module, at its written type
-    // when it has one.
-    const_value = (self :: @Self, module: usize, value: ExprId, written: Res<TypeId>, ty: TyId)
-                  Res<Value, LowerError> {
+    // A constant's initializer, read in its declaring module at its written
+    // type when it has one.
+    const_in = (self :: @Self, value: ExprId, written: Res<TypeId>, module: usize, ty: TyId)
+               Res<Value, LowerError> {
         saved = self.frame;
         self.frames.add(Frame(
             inst: self.alloc.Inst(),
@@ -1052,20 +989,8 @@ Lowerer* = {
             Ok(value) => Ok(value),
             None      => {
                 self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
-                e             = self.tree.expr_at(self.unwrapped(id));
-                // Each arm meets the wanted type itself; sema's join of the
-                // arms may be a type one of them only lifts into.
-                e.kind.match({
-                    Match(m) => self.match_at(m, e.span, ty),
-                    Block(b) => {
-                        value = self.block_as(b, true, Ok(ty)).try();
-                        self.coerce(value, ty)
-                    },
-                    _        => {
-                        value = self.expr(id).try();
-                        self.coerce(value, ty)
-                    },
-                })
+                value         = self.expr(id).try();
+                self.coerce(value, ty)
             },
         })
     }
@@ -1631,7 +1556,7 @@ Lowerer* = {
     }
 
     // A block expression whose value the context wants at `want`.
-    block_want = (self :: @Self, id: BlockId, want: TyId) Res<Value, LowerError> {
+    block_want* = (self :: @Self, id: BlockId, want: TyId) Res<Value, LowerError> {
         self.block_as(id, true, Ok(want))
     }
 
@@ -1646,13 +1571,19 @@ Lowerer* = {
         wanted = self.expected.match({
             Ok(want) => (want.id == id && self.settled(want.ty) && (!self.settled(own)
                 || (self.prim_name(own).eq("int") && !self.prim_name(want.ty).eq("int")
-                    && self.integer_type(want.ty)))).match({
+                    && self.integer_type(want.ty))
+                || (self.is_res(want.ty) && !self.is_res(own))
+                || (self.is_res(want.ty) && self.open_res(own)))).match({
                 true  => Ok(want.ty),
                 false => None,
             }),
             None     => None,
         });
         Ok(wanted.value_or(own))
+    }
+
+    is_res = (self :: @Self, ty: TyId) bool {
+        self.check.types.at(ty).match({ Res(_) => true, _ => false })
     }
 
     handle_named = (self: @Self, id: ExprId) bool {
@@ -1724,7 +1655,7 @@ Lowerer* = {
 
     // `used` is false for a block in statement position: nothing receives
     // its value, so a binding it would hand out is dropped at its brace.
-    block_as* = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>) Res<Value, LowerError> {
+    block_as = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>) Res<Value, LowerError> {
         block = self.tree.block_at(id);
         mark  = self.locals.len;
         self.scopes.add(Cleanup(
@@ -1744,20 +1675,15 @@ Lowerer* = {
                     // lowered at the type the block's value is wanted at;
                     // a unit block discards its tail whatever its type.
                     true  => want.match({
-                        Ok(t) => (t == self.unit_ty).match({
-                            true  => { self.discarded(
-                                e.expr
-                            ).try(); self.unit() },
-                            false => (used && self.settled(t)
+                        Ok(t) => (used && t != self.unit_ty && self.settled(t)
                             && !self.settled(self.type_of(e.expr).try()))
                             .match({
                                 true  => self.expr_as(e.expr, t),
                                 false => self.expr(e.expr),
                             }),
-                        }),
                         None  => self.expr(e.expr),
                     }),
-                    false => { self.discarded(e.expr).try(); self.unit() },
+                    false => { self.expr(e.expr).try(); self.unit() },
                 }),
                 Bind(b)     => { self.bind(b, s.span).try(); self.unit() },
                 Deferred(d) => { self.deferred(d, s.span).try(); self.unit() },
@@ -2107,66 +2033,101 @@ Lowerer* = {
         });
         type_name.match({
             Ok(name) => self.type_member(id, name, a.name.text, span),
-            None     => {
-                capability = self.capability_of(a.base).try();
-                capability.match({
-                    Ok(_) => {
-                        ty     = self.type_of(id).try();
-                        handle = self.shape(
-                            ty
-                        ).try().form.match({ Handle(_) => true, _ => false });
-                        (self.is_unit(ty) || handle).match({
-                            // `env.mem` is the zero `Mem`: the OS page source.
-                            true  => self.zeroed(ty),
-                            // `env.argv`: the process arguments.
-                            false => a.name.text.eq("argv").match({
-                                true  => self.sys_env_call(
-                                    id,
-                                    "argv",
-                                    self.alloc.Vec<Source>(),
-                                    Call(
-                                        callee: id,
-                                        targs: self.alloc.Vec<TypeId>(),
-                                        args: self.alloc.Vec<Arg>(),
-                                        args_span: span
-                                    ),
-                                    span
-                                ),
-                                false => Err(unsupported(
-                                    span,
-                                    "this environment field"
-                                )),
-                            }),
-                        })
-                    },
-                    None  => self.value_const(
-                        id,
-                        a.base,
-                        a.name.text
-                    ).try().match({
-                        Ok(v) => Ok(v),
-                        None  => self.field_access(a, span),
-                    }),
-                })
-            },
+            None     => self.member_const(a.base, a.name.text, id).try().match({
+                Ok(v) => Ok(v),
+                None  => self.value_access(id, a, span),
+            }),
         })
     }
 
-    field_access = (self :: @Self, a: Access, span: Span) Res<Value, LowerError> {
-                    self.place_of(a.base).try().match({
-                        Ok(place) => self.read(
-                            self.field_place(place, a.name.text, span).try()
+    // `value.name` where `name` is a constant of the value's type: the
+    // constant, read once per type.
+    member_const = (self :: @Self, base: ExprId, name: str, id: ExprId)
+                   Res<Res<Value>, LowerError> {
+        decl   = self.type_of(base).match({
+            Ok(t)  => self.check.types.at(t).match({ Named(n) => Ok(n.decl), _ => None }),
+            Err(_) => None,
+        });
+        member = decl.match({
+            Ok(did) => decl_at(self.tree, did).match({
+                Ok(d) => d.kind.match({
+                    Struct(s) => s.members.find((m) {
+                        m.kind.match({ Const(k) => k.name.text.eq(
+                            name
+                        ), _ => false })
+                    }),
+                    _         => None,
+                }),
+                None  => None,
+            }),
+            None    => None,
+        });
+        member.match({
+            None  => Ok(None),
+            Ok(m) => m.kind.match({
+                Const(k) => Ok(Ok(
+                    self.const_in(
+                        k.value,
+                        k.type,
+                        decl.ok_or(unsupported(
+                            nowhere(),
+                            "a constant without a type"
+                        )).try().module.to_usize(),
+                        self.type_of(id).try()
+                    ).try()
+                )),
+                _        => Ok(None),
+            }),
+        })
+    }
+
+    value_access = (self :: @Self, id: ExprId, a: Access, span: Span) Res<Value, LowerError> {
+        capability = self.capability_of(a.base).try();
+        capability.match({
+            Ok(_) => {
+                ty     = self.type_of(id).try();
+                handle = self.shape(
+                    ty
+                ).try().form.match({ Handle(_) => true, _ => false });
+                (self.is_unit(ty) || handle).match({
+                    // `env.mem` is the zero `Mem`: the OS page source.
+                    true  => self.zeroed(ty),
+                    // `env.argv`: the process arguments.
+                    false => a.name.text.eq("argv").match({
+                        true  => self.sys_env_call(
+                            id,
+                            "argv",
+                            self.alloc.Vec<Source>(),
+                            Call(
+                                callee: id,
+                                targs: self.alloc.Vec<TypeId>(),
+                                args: self.alloc.Vec<Arg>(),
+                                args_span: span
+                            ),
+                            span
                         ),
-                        None      => {
-                            base  = self.expr(a.base).try();
-                            field = self.field_place(
-                                self.spill(base),
-                                a.name.text,
-                                span
-                            ).try();
-                            self.read(field)
-                        },
-                    })
+                        false => Err(unsupported(
+                            span,
+                            "this environment field"
+                        )),
+                    }),
+                })
+            },
+            None  => self.place_of(a.base).try().match({
+                Ok(place) => self.read(
+                    self.field_place(place, a.name.text, span).try()
+                ),
+                None      => {
+                    base  = self.expr(a.base).try();
+                    field = self.field_place(
+                        self.spill(base),
+                        a.name.text,
+                        span
+                    ).try();
+                    self.read(field)
+                },
+            }),
+        })
     }
 
     // `Type.Variant`, `i32.MAX` and similar associated values.
@@ -2175,100 +2136,51 @@ Lowerer* = {
         ty = self.type_of(id).try();
         is_prim(type_name).match({
             true  => self.prim_constant(ty, type_name, member, span),
-            false => self.names_native_constants(type_name).match({
-                true  => self.native_constant(ty, member, span),
-                false => self.struct_named(type_name).match({
-                    Ok(owner) => self.member_const(
-                        owner,
-                        member,
-                        ty
-                    ).try().match({
-                        Ok(v) => Ok(v),
-                        None  => self.variant_value(ty, member, None, span),
-                    }),
-                    None      => self.variant_value(ty, member, None, span),
-                }),
+            false => self.c_bound(type_name).match({
+                true  => self.predefined(ty, member, span),
+                false => self.variant_value(ty, member, None, span),
             }),
         })
     }
 
-    struct_named = (self :: @Self, name: str) Res<DeclId> {
+    // A struct bound from a C header by `c.bind`: its constants are macros.
+    c_bound = (self :: @Self, name: str) bool {
         defs ::= self.alloc.Vec<Def>();
         self.check.world.defs_of(self.here().module, name, defs).ignore();
         defs.find(
             (d) { d.kind.match({ StructDef => true, _ => false }) }
         ).match({
-            Ok(d) => Ok(d.id),
-            None  => None,
-        })
-    }
-
-    names_member_const = (self :: @Self, a: Access) bool {
-        self.type_of(a.base).match({
-            Err(_) => false,
-            Ok(bt) => self.check.types.at(bt).match({
-                Named(n) => decl_at(self.tree, n.decl).match({
-                    None    => false,
-                    Ok(def) => def.kind.match({
-                        Struct(s) => s.members.find((m) {
-                            m.kind.match({ Const(c) => c.name.text.eq(
-                                a.name.text
-                            ), _ => false })
-                        }).match({ Ok(_) => true, None => false }),
-                        _         => false,
-                    }),
-                }),
-                _        => false,
-            }),
-        })
-    }
-
-    // A struct constant read through a value of the struct.
-    value_const = (self :: @Self, id: ExprId, base: ExprId, member: str)
-                  Res<Res<Value>, LowerError> {
-        self.type_of(base).match({
-            Err(_) => Ok(None),
-            Ok(bt) => self.check.types.at(bt).match({
-                Named(n) => self.member_const(
-                    n.decl,
-                    member,
-                    self.type_of(id).try()
-                ),
-                _        => Ok(None),
-            }),
-        })
-    }
-
-    // A `c.bind` header record, whose fields read C macros.
-    names_native_constants = (self :: @Self, name: str) bool {
-        defs ::= self.alloc.Vec<Def>();
-        self.check.world.defs_of(self.here().module, name, defs).ignore();
-        defs.find(
-            (d) { d.kind.match({ StructDef => true, _ => false }) }
-        ).match({
-            None  => false,
             Ok(d) => decl_at(self.tree, d.id).match({
-                None    => false,
-                Ok(def) => def.kind.match({
-                    Struct(s) => s.native_header.match({
-                        Ok(_) => !s.native_record && !s.native_host,
+                Ok(decl) => decl.kind.match({
+                    Struct(s) => !s.native_record && !s.native_host && s.native_header.match({
+                        Ok(_) => true,
                         None  => false,
                     }),
                     _         => false,
                 }),
+                None     => false,
             }),
+            None  => false,
         })
     }
 
-    // A native target knows the C compiler's predefined target macros; any
-    // other macro's value lives in a header it does not read.
-    native_constant = (self :: @Self, ty: TyId, member: str, span: Span)
-                      Res<Value, LowerError> {
-        name = predefined_constant(member).ok_or(unsupported(span, "a native constant whose value lives in a C header")).try();
-        out  = self.temp(ty).try();
+    // The target macros the C compiler predefines, answered by the target.
+    predefined = (self :: @Self, ty: TyId, macro: str, span: Span) Res<Value, LowerError> {
+        name: Res<SysConstant> = macro.match({
+            "__APPLE__"   => Ok(SysConstant.IsDarwin),
+            "__linux__"   => Ok(SysConstant.IsLinux),
+            "__x86_64__"  => Ok(SysConstant.IsX86_64),
+            "__aarch64__" => Ok(SysConstant.IsAarch64),
+            _             => None,
+        });
+        constant               = name.ok_or(unsupported(
+            span,
+            "a C macro other than a target predefine"
+        )).try();
+        out                    = self.temp(ty).try();
         self.add(Instruction.SysConst(SysValue(
             out: out.slot,
-            name: name
+            name: constant
         ))).try();
         Ok(out)
     }
@@ -2333,11 +2245,13 @@ Lowerer* = {
             ),
             Paren(p)  => self.capability_of(p.inner),
             Access(a) => self.capability_of(a.base).try().match({
-                // A record field can hold a capability, as `self.env` does.
-                None  => Ok(self.type_of(id).match({
-                    Ok(ty) => self.is_capability(ty).match({ true => Ok(ty), false => None }),
-                    Err(_) => None,
-                })),
+                // `self.env`: a capability held in a field.
+                None  => self.type_of(id).match({
+                    Ok(ty) => Ok(
+                        self.is_capability(ty).match({ true => Ok(ty), false => None })
+                    ),
+                    Err(_) => Ok(None),
+                }),
                 Ok(_) => {
                     ty = self.type_of(id).try();
                     Ok(
@@ -2596,25 +2510,18 @@ Lowerer* = {
     match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
         // Arms that disagree (`Named(n) => n.args.loop(..), Other => ()`)
         // give no value: sema types the match by its first arm only, and the
-        // arms run for their effects.
-        ty = self.check.value_agrees(id).match({
+        // arms run for their effects. Where the context wants a value of a
+        // settled type, the arms are converted to it instead.
+        ty         = self.check.value_agrees(id).match({
             true  => self.narrowed(id).try(),
-            false => self.unit_ty,
+            false => self.expected.match({
+                Ok(want) => (want.id == id && self.settled(want.ty)).match({
+                    true  => want.ty,
+                    false => self.unit_ty,
+                }),
+                None     => self.unit_ty,
+            }),
         });
-        self.match_at(m, span, ty)
-    }
-
-    // A match whose value a statement drops joins nothing: its arms are
-    // lowered for their effects, whatever type sema joined them at.
-    discarded = (self :: @Self, id: ExprId) Res<Value, LowerError> {
-        e = self.tree.expr_at(self.unwrapped(id));
-        e.kind.match({
-            Match(m) => self.match_at(m, e.span, self.unit_ty),
-            _        => self.expr(id),
-        })
-    }
-
-    match_at = (self :: @Self, m: Match, span: Span, ty: TyId) Res<Value, LowerError> {
         subject_ty = self.type_of(m.scrutinee).try();
         subject    = self.expr_as(m.scrutinee, subject_ty).try();
         out        = self.temp(ty).try();
@@ -2648,10 +2555,7 @@ Lowerer* = {
                 subject,
                 read
             ).try();
-            value = (ty == self.unit_ty).match({
-                true  => { self.discarded(arm.body).try(); self.unit() },
-                false => self.expr_as(arm.body, ty),
-            }).try();
+            value = self.expr_as(arm.body, ty).try();
             self.add(Instruction.Copy(Move(
                 out: out.slot,
                 source: value.slot
@@ -2923,7 +2827,7 @@ Lowerer* = {
     // the expression, converting the failure to that frame's result type.
     try_expr = (self :: @Self, id: ExprId, operand: ExprId, error: Res<ExprId>, span: Span)
                Res<Value, LowerError> {
-        value    = self.expr(operand).try();
+        value    = self.try_operand(operand).try();
         variants = self.variants_of(value.ty).try();
         ok_tag   = variant_index(variants, "Ok").ok_or(unsupported(span, "try on a value without Ok")).try();
         is_ok    = self.tag_test(value, ok_tag).try();
@@ -2950,6 +2854,40 @@ Lowerer* = {
         ty      = self.type_of(id).try();
         payload = self.payload_of(value, ok_tag).try();
         self.coerce(payload, ty)
+    }
+
+    // A `match` whose arms are bare `Ok` leaves its error open (`Res~(),?`);
+    // it fails as the frame's result does, so it is lowered at that form.
+    try_operand = (self :: @Self, operand: ExprId) Res<Value, LowerError> {
+        own  = self.type_of(operand).try();
+        ret  = self.here().ret_ty;
+        want = self.check.types.at(own).match({
+            Res(r) => self.open_res(own).match({
+                true  => self.check.types.at(ret).match({
+                    Res(f) => Ok(f.form.match({
+                        Failure => self.check.types.res_failure(
+                            r.value,
+                            f.error
+                        ),
+                        _       => self.check.types.res_absence(r.value),
+                    }).try(LowerError.OutOfMemory)),
+                    _      => None,
+                }),
+                false => None,
+            }),
+            _      => None,
+        });
+        want.match({
+            Ok(ty) => self.expr_as(operand, ty),
+            None   => self.expr(operand),
+        })
+    }
+
+    open_res = (self :: @Self, ty: TyId) bool {
+        self.check.types.at(ty).match({
+            Res(r) => r.form.match({ Open => true, _ => false }),
+            _      => false,
+        })
     }
 
     // The frame's result for a failed operand: None stays None; an error
@@ -3142,10 +3080,10 @@ Lowerer* = {
         l.params.loop((h, i, p) {
             args.get(i).when_ok((arg) { self.bind_local(p.name.text, arg).try(); });
         });
-        unit  = (want == self.unit_ty).match({ true => Ok(
-            want
-        ), false => None });
-        value = self.block_as(l.body, true, unit).try();
+        value = self.settled(want).match({
+            true  => self.block_want(l.body, want),
+            false => self.block(l.body),
+        }).try();
         self.release_locals(mark);
         self.frame = saved;
         self.coerce(value, want)

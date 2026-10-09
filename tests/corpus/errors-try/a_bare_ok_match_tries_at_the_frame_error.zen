@@ -1,0 +1,39 @@
+// A `match` whose arms end in bare `Ok` leaves its error open; `.try()` on it
+// fails as the enclosing function's result does.
+
+{ Res, Ok, None } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Entry = { n: i32 }
+
+say = (x: i32) Res<AllocError> {
+    println("{}", x);
+    Ok
+}
+
+pick = (xs: [Entry, 3], want: i32) Res<Entry> {
+    found :: Res<Entry> = None;
+    xs.loop((e) { (e.n == want).then(() { found = Ok(e); }); });
+    found
+}
+
+emit = (xs: [Entry, 3], want: i32) Res<AllocError> {
+    say(1).try();
+    pick(xs, want).match({
+        None  => Ok,
+        Ok(e) => {
+            say(e.n * 10).try();
+            Ok
+        },
+    }).try();
+    say(4)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    xs: [Entry, 3] = [Entry(n: 1), Entry(n: 2), Entry(n: 3)];
+    emit(xs, 2).try();
+    emit(xs, 9).try();
+    Ok(0);
+}

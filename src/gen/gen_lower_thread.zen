@@ -212,7 +212,6 @@ operand = (
         Computed(v) => Ok(v),
         Located(p)  => lo.read(p),
         Absent      => Err(unsupported(span, "an omitted argument")),
-        Packed(_)   => Err(unsupported(span, "an omitted argument")),
     })
 }
 
@@ -794,7 +793,6 @@ fs_unlock* = (
         Located(p)  => Ok(p.ty),
         Computed(v) => Ok(v.ty),
         Absent      => Err(unsupported(span, "an unlock without a Lock")),
-        Packed(_)   => Err(unsupported(span, "an unlock without a Lock")),
     }).try();
     place    = lo.argument_place(receiver, lock_ty, span).try();
     fd_place = lo.field_place(place, "fd", span).try();

@@ -14,7 +14,7 @@
 { lower, LowerError } = gen.gen_lower
 { Program, float } = gen.gen_ir
 { emit_js, emit_app, emit_runtime, PAGE, supports } = gen.gen_js
-{ emit_c } = gen.gen_c_ir
+{ emit_c, supports_c } = gen.gen_c_ir
 { refused, describe } = gen.gen_ir_feature
 { X86_64Linux } = gen.gen_asm_x86
 { Arm64, Arm64Os } = gen.gen_asm_arm64
@@ -190,11 +190,23 @@ Generation* = {
                         },
                     }),
                 }),
-                CIr => publish(Artifact(
-                    kind: ArtifactKind.Source,
-                    name: "zen.c",
-                    text: emit_c(self.alloc, program).try().view()
-                )),
+                CIr => program.refused(
+                    (feature) { supports_c(feature) }
+                ).match({
+                    Ok(refusal) => {
+                        report.fmt(
+                            "error: unsupported by the C IR backend: {} (first in `{}`)\n",
+                            refusal.feature.describe(),
+                            refusal.function
+                        ).try();
+                        Ok(1)
+                    },
+                    None        => publish(Artifact(
+                        kind: ArtifactKind.Source,
+                        name: "zen.c",
+                        text: emit_c(self.alloc, self.mem, program).try().view()
+                    )),
+                }),
                 Asm => refused_by_asm(program).match({
                     Ok(what) => {
                         report.fmt(

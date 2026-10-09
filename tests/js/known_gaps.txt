@@ -95,7 +95,6 @@ tests/corpus/env/threads_spawn_joins_two_bodies # UNSUPPORTED: error: unsupporte
 tests/corpus/env/threads_spawn_many_and_join_in_order # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/errors-res/a_union_of_errors_is_an_error # UNSUPPORTED: a_union_of_errors_is_an_error.zen:24:14: error: unsupported by this backend: a value conversion this backend does not model (`
 tests/corpus/errors-try/fallible_inline_helper_in_thread/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
-tests/corpus/errors-try/try_on_an_all_ok_match_never_widens/ # UNSUPPORTED: main.zen:20:5: error: unsupported by this backend: an unknown variant (`Res!i32,main.Fail|main.Kind|
 tests/corpus/file-io/posix_stream/main # UNSUPPORTED: main.zen:29:23: error: unsupported by this backend: a call without successful semantic checking
 tests/corpus/fmt/a_comment_between_items_stays_put # UNSUPPORTED: a_comment_between_items_stays_put.zen:15:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/f
 tests/corpus/fmt/a_file_that_does_not_parse_is_left_alone # UNSUPPORTED: a_file_that_does_not_parse_is_left_alone.zen:14:10: nothing is at that path: tried `fmt/fmt.zen` and

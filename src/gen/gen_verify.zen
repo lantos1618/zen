@@ -621,6 +621,8 @@ checked = (program: Program, alloc: Alloc) Res<VerifyError> {
                 index: index,
                 guards: guards,
                 entry: alloc.Vec<Vec<usize>>(),
+                index_of: alloc.Vec<usize>(),
+                tracked: 0,
                 block: 0
             );
             payloads.check().try();
@@ -639,7 +641,8 @@ checked = (program: Program, alloc: Alloc) Res<VerifyError> {
 // Facts are one known alternative per slot: KNOWN_NONE when nothing is
 // known, UNREACHED before any path arrives. A write to the slot forgets its
 // fact, and so does a store or call through a pointer to it; a store
-// through a pointer of unknown origin forgets every fact.
+// through a pointer of unknown origin forgets every fact. Only slots some
+// test or read names carry facts, so a state is one entry per such slot.
 // Alternative indices are small; these two never name one.
 UNREACHED: usize = 4294967295
 KNOWN_NONE: usize = 4294967294
@@ -652,6 +655,8 @@ Payloads = {
     index: usize,
     guards: Guards,
     entry :: Vec<Vec<usize>>,
+    index_of :: Vec<usize>,
+    tracked :: usize,
     block :: usize,
 
     fault = (self: @Self, reason: IrReason) VerifyError {
@@ -667,15 +672,39 @@ Payloads = {
             self.block = g.block;
             self.genuine(g).ensure(self.fault(IrReason.Guard)).try();
         });
+        self.index_of = filled(
+            self.alloc,
+            self.function.slots.len,
+            NO_SLOT
+        ).try();
+        self.guards.tests.loop((g) { self.track(g.subject); });
+        self.guards.reads.loop((r) { self.track(r.subject); });
         self.solve().try();
         self.guards.reads.loop((r) {
             self.block = r.block;
             state ::= self.state_at(r.block, r.at).try();
-            known = state.get(r.subject).value_or(KNOWN_NONE);
+            known = state.get(self.fact(r.subject)).value_or(KNOWN_NONE);
             (known == UNREACHED || known == r.variant)
                 .ensure(self.fault(IrReason.UnguardedPayload)).try();
         });
         Ok
+    }
+
+    track = (self :: @Self, slot: usize) {
+        (self.index_of.get(slot).value_or(0) == NO_SLOT).then(() {
+            self.index_of.set(slot, self.tracked);
+            self.tracked = self.tracked + 1;
+        });
+    }
+
+    // Where `slot`'s fact sits in a state; NO_SLOT when it carries none.
+    fact = (self: @Self, slot: usize) usize {
+        self.index_of.get(slot).value_or(NO_SLOT)
+    }
+
+    drop_fact = (self: @Self, state :: Vec<usize>, slot: usize) {
+        at = self.fact(slot);
+        (at != NO_SLOT).then(() { state.set(at, KNOWN_NONE); });
     }
 
     // The only instruction writing `slot`, when exactly one does.
@@ -748,7 +777,7 @@ Payloads = {
     }
 
     solve = (self :: @Self) Res<VerifyError> {
-        slots = self.function.slots.len;
+        slots = self.tracked;
         self.function.blocks.loop((_) {
             self.entry.add(
                 filled(self.alloc, slots, UNREACHED).try()
@@ -778,9 +807,9 @@ Payloads = {
                             yes ::= copied(self.alloc, out).try();
                             no  ::= copied(self.alloc, out).try();
                             guard.when_ok((g) {
-                                yes.set(g.subject, g.variant);
+                                yes.set(self.fact(g.subject), g.variant);
                                 g.otherwise.when_ok(
-                                    (o) { no.set(g.subject, o); }
+                                    (o) { no.set(self.fact(g.subject), o); }
                                 );
                             });
                             changed = self.merge(br.yes, yes).try() || changed;
@@ -824,7 +853,7 @@ Payloads = {
     }
 
     forget = (self: @Self, state :: Vec<usize>, instruction: Instruction) {
-        written(instruction).when_ok((slot) { state.set(slot, KNOWN_NONE); });
+        written(instruction).when_ok((slot) { self.drop_fact(state, slot); });
         // Writes through a pointer, listed without a fallback for the same
         // reason as `written`.
         instruction.match({
@@ -848,7 +877,7 @@ Payloads = {
             AtomicLoad(_)   => (),
             CodeAddress(_)  => (),
             Machine(c)      => {
-                c.outs.loop((slot) { state.set(slot, KNOWN_NONE); });
+                c.outs.loop((slot) { self.drop_fact(state, slot); });
                 c.args.loop((a) { self.forget_argument(state, a); });
             },
             Wait(_)         => (),
@@ -883,7 +912,7 @@ Payloads = {
 
     forget_through = (self: @Self, state :: Vec<usize>, pointer: usize) {
         self.pointee(pointer).match({
-            Ok(slot) => { state.set(slot, KNOWN_NONE); },
+            Ok(slot) => { self.drop_fact(state, slot); },
             None     => Range(0, state.len).loop((slot) {
                 (state.get(slot).value_or(KNOWN_NONE) != UNREACHED).then(() { state.set(slot, KNOWN_NONE); });
             }),

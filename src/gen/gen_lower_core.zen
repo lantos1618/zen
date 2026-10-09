@@ -34,7 +34,7 @@
 { word, integer, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
-{ to_bound, resolve } = gen.gen_lower_member
+{ to_bound, resolve, bound_of, handle_for_place } = gen.gen_lower_member
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { real_call } = gen.gen_lower_call
 { capability } = gen.gen_lower_shape
@@ -987,11 +987,32 @@ Lowerer* = {
     expr_as* = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
         self.folded(id, ty).try().match({
             Ok(value) => Ok(value),
-            None      => {
-                self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
-                value         = self.expr(id).try();
-                self.coerce(value, ty)
-            },
+            None      => self.borrowed_handle(id, ty).try().match({
+                Ok(handle) => Ok(handle),
+                None       => {
+                    self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
+                    value         = self.expr(id).try();
+                    self.coerce(value, ty)
+                },
+            }),
+        })
+    }
+
+    // A bound wanted from a place (`Holder(alloc: owner.counting)`) points
+    // at that place, never at a copy that dies with this frame.
+    borrowed_handle = (self :: @Self, id: ExprId, ty: TyId) Res<Res<Value>, LowerError> {
+        bound = self.settled(ty).match({ true => self.bound_of(ty).try(), false => None });
+        bound.match({
+            None        => Ok(None),
+            Ok(bound)   => bound.implementors.find((t) {
+                self.type_of(id).match({ Ok(own) => t == own, Err(_) => false })
+            }).match({
+                None    => Ok(None),
+                Ok(_)   => self.place_of(id).try().match({
+                    None        => Ok(None),
+                    Ok(place)   => self.handle_for_place(place, ty),
+                }),
+            }),
         })
     }
 
@@ -2862,7 +2883,15 @@ Lowerer* = {
         target_variants = self.variants_of(ret).try();
         variant_index(variants, "Err").match({
             None    => error.match({
-                None  => self.variant_value(ret, "None", None, span),
+                // An open Res (a bare `Ok` arm) has a None it never holds
+                // when the frame's result has no None to carry it into.
+                None  => variant_index(target_variants, "None").match({
+                    Ok(_) => self.variant_value(ret, "None", None, span),
+                    None  => {
+                        self.trap(TrapKind.Unreachable, span).try();
+                        self.temp(ret)
+                    },
+                }),
                 Ok(e) => {
                     reason = self.replacement(e, ret, None).try();
                     self.variant_value(ret, "Err", Ok(reason), span)

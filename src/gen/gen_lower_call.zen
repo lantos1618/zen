@@ -963,9 +963,15 @@ pack_value = (lo :: Lowerer, ty: TyId, elem: TyId, c: Call, first: Res<ExprId>)
             ty
         ),
         false => {
+            // An open element (`count(1, 2)` through `vararg<T>`) takes the
+            // type sema gave the first argument.
+            cell     = lo.settled(elem).match({
+                true  => elem,
+                false => run.get(0).match({ Ok(a) => lo.type_of(a).try(), None => elem }),
+            });
             count    = (run.len == 0).match({ true => 1, false => run.len });
             store_ty = lo.check.types.array(
-                elem,
+                cell,
                 count
             ).try(LowerError.OutOfMemory);
             elements = lo.shape(store_ty).try().form.match({ Array(e) => Ok(e), _ => None })
@@ -977,7 +983,7 @@ pack_value = (lo :: Lowerer, ty: TyId, elem: TyId, c: Call, first: Res<ExprId>)
             lo.zero_fill(store, count * elements.stride).try();
             base = lo.slot_of(Scalar.Ptr).try();
             run.loop((h, i, arg) {
-                value = lo.expr_as(arg, elem).try();
+                value = lo.expr_as(arg, cell).try();
                 lo.add(Instruction.AddressOf(Address(
                     out: base,
                     slot: store.slot

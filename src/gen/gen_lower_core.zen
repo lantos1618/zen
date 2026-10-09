@@ -875,6 +875,35 @@ Lowerer* = {
         })
     }
 
+    // A zeroed value of `ty`, for storage that is written before it is read
+    // in ways the IR's initialization check cannot see, and for an empty
+    // fixed-array literal, whose elements start at zero.
+    blank* = (self :: @Self, ty: TyId) Res<Value, LowerError> {
+        out  = self.temp(ty).try();
+        size = size_of(self.class_of(ty).try());
+        at   = self.slot_of(Scalar.Ptr).try();
+        self.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+        offset :: usize = 0;
+        Range(0, size / 8).loop((_) {
+            self.zero_at(at, offset, Scalar.U64).try();
+            offset = offset + 8;
+        });
+        Range(offset, size).loop((_) {
+            self.zero_at(at, offset, Scalar.U8).try();
+            offset = offset + 1;
+        });
+        Ok(out)
+    }
+
+    zero_at = (self :: @Self, at: usize, offset: usize, class: Scalar) Res<LowerError> {
+        zero = self.word_const(class, 0).try();
+        self.add(Instruction.StoreValue(Store(
+            base: at,
+            offset: offset,
+            value: zero
+        )))
+    }
+
     zeroed = (self :: @Self, ty: TyId) Res<Value, LowerError> {
         self.is_unit(ty).match({
             true  => self.constant(ty, 0),
@@ -2398,7 +2427,10 @@ Lowerer* = {
                 span,
                 "an array literal without a fixed array type"
             )).try();
-        out      = self.temp(ty).try();
+        out      = (elems.len == 0).match({
+            true  => self.blank(ty),
+            false => self.temp(ty),
+        }).try();
         base     = self.slot_of(Scalar.Ptr).try();
         elems.loop((h, i, elem) {
             value = self.expr_as(elem, elements.elem).try();

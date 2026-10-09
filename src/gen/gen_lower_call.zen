@@ -1233,7 +1233,7 @@ inline_call* = (lo :: Lowerer, open: Callee, sources: Vec<Source>, span: Span)
     callee.f.params.loop((h, i, p) {
         kinds.get(i).when_ok((k) { lo.bind_local(p.name.text, k).try(); });
     });
-    value   = lo.block(body).try();
+    value   = lo.block_as(body, true, Ok(ret)).try();
     here    = lo.here();
     coerced = lo.coerce(value, ret).try();
     lo.add(Instruction.Copy(Move(
@@ -3124,7 +3124,7 @@ at_value = (
             ).try(),
         });
     });
-    value   = lo.block(body).try();
+    value   = lo.block_as(body, true, Ok(ret)).try();
     here    = lo.here();
     coerced = lo.coerce(value, ret).try();
     lo.add(Instruction.Copy(Move(

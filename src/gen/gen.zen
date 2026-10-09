@@ -185,14 +185,15 @@ Generation* = {
                     }),
                 }),
                 Asm => refused_by_asm(program).match({
-                    Ok(what) => {
+                    Ok(refusal) => {
                         report.fmt(
-                            "error: unsupported by the asm backend: {}\n",
-                            what
+                            "error: unsupported by the asm backend: {} (in `{}`)\n",
+                            refusal.what,
+                            refusal.function
                         ).try();
                         Ok(1)
                     },
-                    None     => self.publish_assembly(
+                    None        => self.publish_assembly(
                         program,
                         report,
                         (artifact) { publish(artifact) }
@@ -315,21 +316,25 @@ COutput = {
 // The IR features the assembly renderers do not implement yet, checked
 // before rendering so the program is refused with a reason (IR_ARCHITECTURE
 // §2.3: support boundaries are declared, not discovered).
-refused_by_asm = (program: Program) Res<str> {
-    found :: Res<str> = None;
+AsmRefusal = { what: str, function: str }
+
+refused_by_asm = (program: Program) Res<AsmRefusal> {
+    found :: Res<AsmRefusal> = None;
     program.functions.loop((function) {
         function.slots.loop((ty) {
-            float(ty).then(() { found = Ok("floating-point values"); });
+            float(ty).then(() { found = Ok(AsmRefusal(what: "floating-point values", function: function.name)); });
         });
         function.blocks.loop((block) {
             block.code.loop((instruction) {
                 instruction.match({
-                    Host(_) => { found = Ok(
-                        "JavaScript host calls (js.bind)"
-                    ); },
-                    Wait(_) => { found = Ok(
-                        "JavaScript event waits (std.js.wait)"
-                    ); },
+                    Host(_) => { found = Ok(AsmRefusal(
+                        what: "JavaScript host calls (js.bind)",
+                        function: function.name
+                    )); },
+                    Wait(_) => { found = Ok(AsmRefusal(
+                        what: "JavaScript event waits (std.js.wait)",
+                        function: function.name
+                    )); },
                     _       => (),
                 });
             });

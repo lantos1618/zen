@@ -968,33 +968,3 @@ quoted = (lo :: Lowerer, text: str) Res<Res<String>, LowerError> {
         )),
     })
 }
-
-// A zeroed value of `ty`: every path writes one before it is read, but the
-// engine's guarantees (a required field, a known variant) are not visible to
-// the IR's initialization check.
-blank = (lo :: Lowerer, ty: TyId) Res<Value, LowerError> {
-    out  = lo.temp(ty).try();
-    size = size_of(lo.class_of(ty).try());
-    at   = lo.slot_of(Scalar.Ptr).try();
-    lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
-    offset :: usize = 0;
-    Range(0, size / 8).loop((_) {
-        lo.zero_at(at, offset, Scalar.U64).try();
-        offset = offset + 8;
-    });
-    Range(offset, size).loop((_) {
-        lo.zero_at(at, offset, Scalar.U8).try();
-        offset = offset + 1;
-    });
-    Ok(out)
-}
-
-zero_at = (
-    lo     :: Lowerer,
-    at     : usize,
-    offset : usize,
-    class  : Scalar
-) Res<LowerError> {
-    zero = lo.word_const(class, 0).try();
-    lo.add(Instruction.StoreValue(Store(base: at, offset: offset, value: zero)))
-}

@@ -2831,7 +2831,17 @@ run_body = (lo :: Lowerer, body: LambdaRef, loop_id: usize, values: Vec<Value>)
             },
         });
     });
-    value = lo.block(l.body).try();
+    // A `()` callback's tail is lowered for its effects alone.
+    want: Res<TyId> = lo.type_of(body.expr).match({
+        Ok(t)  => lo.check.types.at(t).match({
+            Fn(f) => (f.ret == lo.unit_ty).match({ true => Ok(
+                lo.unit_ty
+            ), false => None }),
+            _     => None,
+        }),
+        Err(_) => None,
+    });
+    value           = lo.block_as(l.body, true, want).try();
     lo.release_locals(mark);
     lo.use_frame(saved);
     Ok(value)

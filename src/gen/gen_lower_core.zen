@@ -1656,7 +1656,7 @@ Lowerer* = {
 
     // `used` is false for a block in statement position: nothing receives
     // its value, so a binding it would hand out is dropped at its brace.
-    block_as = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>) Res<Value, LowerError> {
+    block_as* = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>) Res<Value, LowerError> {
         block = self.tree.block_at(id);
         mark  = self.locals.len;
         self.scopes.add(Cleanup(
@@ -1676,12 +1676,17 @@ Lowerer* = {
                     // lowered at the type the block's value is wanted at;
                     // a unit block discards its tail whatever its type.
                     true  => want.match({
-                        Ok(t) => (used && t != self.unit_ty && self.settled(t)
+                        Ok(t) => (t == self.unit_ty).match({
+                            true  => { self.discarded(
+                                e.expr
+                            ).try(); self.unit() },
+                            false => (used && self.settled(t)
                             && !self.settled(self.type_of(e.expr).try()))
                             .match({
                                 true  => self.expr_as(e.expr, t),
                                 false => self.expr(e.expr),
                             }),
+                        }),
                         None  => self.expr(e.expr),
                     }),
                     false => { self.discarded(e.expr).try(); self.unit() },
@@ -3051,7 +3056,10 @@ Lowerer* = {
         l.params.loop((h, i, p) {
             args.get(i).when_ok((arg) { self.bind_local(p.name.text, arg).try(); });
         });
-        value = self.block(l.body).try();
+        unit  = (want == self.unit_ty).match({ true => Ok(
+            want
+        ), false => None });
+        value = self.block_as(l.body, true, unit).try();
         self.release_locals(mark);
         self.frame = saved;
         self.coerce(value, want)

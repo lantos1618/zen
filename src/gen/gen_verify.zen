@@ -349,7 +349,16 @@ Check = {
     }
 
     initialized = (self: @Self, flags: Vec<bool>, slot: usize) Res<VerifyError> {
-        flags.get(slot).value_or(false).ensure(self.fault(IrReason.Uninitialized)).try();
+        (self.empty(slot) || flags.get(slot).value_or(false))
+            .ensure(self.fault(IrReason.Uninitialized)).try();
+    }
+
+    // A slot of no bytes holds nothing that could be read uninitialized.
+    empty = (self: @Self, slot: usize) bool {
+        self.function.slots.get(slot).match({
+            Ok(ty) => ty.match({ Block(l) => l.size == 0, _ => false }),
+            None   => false,
+        })
     }
 
     reads = (self: @Self, flags: Vec<bool>, instruction: Instruction) Res<VerifyError> {

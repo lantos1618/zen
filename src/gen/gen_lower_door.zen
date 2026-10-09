@@ -1,0 +1,1192 @@
+// Type-directed doors on the IR path: `value.to_json(a)` and std.cli's
+// `outcome<T>(env, a, argv)`. Neither has a body: each is expanded at its
+// call, where the type is concrete, into calls of the ordinary std
+// functions that do the work. Every helper that can fail answers a Res; a
+// failure is copied into the door's answer and ends the expansion.
+
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, Err, None, Range } = std.core
+{ ExprId, Struct, Impl } = std.ast
+{ Span, nowhere } = std.source
+{ TyId, TyNamed, Inst, DeclId, ImplId, decl_at } = sema.sema
+{ is_failure } = sema.sema_ty
+{ impl_bound_type } = sema.sema_supply
+{ inst_of_named } = sema.sema_inst
+{ Instruction, Move, Binary, Op, Convert, Scalar } = gen.gen_ir
+{ LowerError, unsupported } = gen.gen_lower
+{ Lowerer, Value, Place, Callee, to_i64_bits } = gen.gen_lower_core
+{ Source, real_call } = gen.gen_lower_call
+{ succeeded, ok_payload } = gen.gen_lower_thread
+{ payload_type } = gen.gen_lower_member
+{ variant_index, shape, size_of, class_of, VariantAt } = gen.gen_lower_shape
+
+JSON_MODULE: str = "std.json.json_meta"
+
+// Where a door's answer goes, and the block every early exit joins.
+Exit* = { out*: Value, done*: usize }
+
+// `value.to_json(a)`: an empty String, then one std.json writer per
+// primitive, String or field name, walking records field by field.
+json_door* = (lo :: Lowerer, id: ExprId, sources: Vec<Source>, span: Span)
+             Res<Value, LowerError> {
+    ret   = lo.type_of(id).try();
+    value = lo.source_value(sources.get(0).value_or(Source.Absent), span).try();
+    alloc ::= lo.alloc.Vec<Source>();
+    alloc.add(sources.get(1).value_or(Source.Absent)).try(LowerError.OutOfMemory);
+    empty = lo.module_function("std.text.text_string", "String", 1, span).try();
+    made  = lo.real_call(empty, alloc, span).try();
+    exit  = Exit(out: lo.temp(ret).try(), done: lo.label().try());
+    lo.fail_unless_ok(made, exit, span).try();
+    buffer = lo.spill(lo.copy_value(lo.ok_payload(made).try()).try());
+    lo.json_value(buffer, exit, value, span).try();
+    lo.answer_ok(exit, lo.read(buffer).try(), span)
+}
+
+json_value = (
+    lo     :: Lowerer,
+    buffer : Place,
+    exit   : Exit,
+    value  : Value,
+    span   : Span
+)
+             Res<LowerError> {
+    lo.check.types.at(value.ty).match({
+        Prim(p)  => json_writer(p.name).match({
+            Ok(writer) => lo.json_write(buffer, exit, writer, value, span),
+            None       => Err(unsupported(
+                span,
+                "a value that cannot be encoded as JSON"
+            )),
+        }),
+        Named(n) => is_string(lo, n).match({
+            true  => lo.json_write(buffer, exit, "write_string", value, span),
+            false => lo.json_record(buffer, exit, value, span),
+        }),
+        _        => Err(unsupported(
+            span,
+            "a value that cannot be encoded as JSON"
+        )),
+    })
+}
+
+json_record = (
+    lo     :: Lowerer,
+    buffer : Place,
+    exit   : Exit,
+    value  : Value,
+    span   : Span
+)
+              Res<LowerError> {
+    fields = lo.shape(value.ty).try().form.match({
+        Record(f) => Ok(f),
+        _         => None,
+    }).ok_or(unsupported(span, "a value that cannot be encoded as JSON")).try();
+    whole  = lo.spill(lo.copy_value(value).try());
+    lo.json_raw(buffer, exit, "{", span).try();
+    fields.loop((h, i, f) {
+        key ::= lo.alloc.String().try(LowerError.OutOfMemory);
+        (i > 0).then(() { key.add(',').try(LowerError.OutOfMemory); });
+        key.fmt("\"{}\":", f.name).try(LowerError.OutOfMemory);
+        lo.json_raw(buffer, exit, key.view(), span).try();
+        field = lo.read(lo.field_place(whole, f.name, span).try()).try();
+        lo.json_value(buffer, exit, field, span).try();
+    });
+    lo.json_raw(buffer, exit, "}", span)
+}
+
+json_raw = (lo :: Lowerer, buffer: Place, exit: Exit, text: str, span: Span)
+           Res<LowerError> {
+    value = lo.string(text, lo.prim("str").try()).try();
+    lo.json_write(buffer, exit, "write_raw", value, span)
+}
+
+json_write = (
+    lo     :: Lowerer,
+    buffer : Place,
+    exit   : Exit,
+    writer : str,
+    value  : Value,
+    span   : Span
+) Res<LowerError> {
+    args ::= lo.alloc.Vec<Source>();
+    args.add(Source.Located(buffer)).try(LowerError.OutOfMemory);
+    args.add(Source.Computed(value)).try(LowerError.OutOfMemory);
+    wrote = lo.real_call(
+        lo.module_function(JSON_MODULE, writer, 2, span).try(),
+        args,
+        span
+    ).try();
+    lo.fail_unless_ok(wrote, exit, span)
+}
+
+json_writer = (name: str) Res<str> {
+    name.match({
+        "str"   => Ok("write_str"),
+        "bool"  => Ok("write_bool"),
+        "i8"    => Ok("write_i8"),
+        "i16"   => Ok("write_i16"),
+        "i32"   => Ok("write_i32"),
+        "i64"   => Ok("write_i64"),
+        "u8"    => Ok("write_u8"),
+        "u16"   => Ok("write_u16"),
+        "u32"   => Ok("write_u32"),
+        "u64"   => Ok("write_u64"),
+        "usize" => Ok("write_usize"),
+        "f32"   => Ok("write_f32"),
+        "f64"   => Ok("write_f64"),
+        _       => None,
+    })
+}
+
+is_string = (lo :: Lowerer, n: TyNamed) bool {
+    n.name.eq("String") && lo.check.world.module_name(n.decl).eq("std.text.text_string")
+}
+
+// ---------------------------------------------------------------------
+// outcome<T>(env, a, argv)
+// ---------------------------------------------------------------------
+
+// One std.cli.cli_derive declaration per field or variant, one scan, then
+// one conversion per field. A struct is one command and an enum is its
+// subcommands; a payload that is itself a command nests.
+
+CLI_MODULE: str = "std.cli.cli_derive"
+
+// What one word of a field becomes.
+Word = { Text | Location | Unsigned: TyId | Signed: TyId | Choice: TyId }
+
+// How a field takes its words: a switch, one word, an optional word, every
+// repetition (Vec<str>), or the words after `--`.
+Form = { Switch | One: Word | Maybe: Word | Many | Rest | Unfit }
+
+// One field of a derived struct. `entry` is its Spec in the Cli table.
+CliField = {
+    id: usize,
+    name: str,
+    ty: TyId,
+    form: Form,
+    positional: bool,
+    default: Res<ExprId>,
+    entry: Res<ExprId>,
+}
+
+// The door's answer and the arguments every helper is handed again.
+Cli = { exit: Exit, env: Source, alloc: Source, argv: Value, program: Value, span: Span }
+
+// What a field declaration passes to its helper.
+Site = {
+    cmd: Place,
+    id: Value,
+    long: Value,
+    upper: Value,
+    spec: Value,
+    positional: bool,
+    default: Value,
+    has: bool,
+}
+
+Args = {
+    list :: Vec<Source>,
+
+    value = (self :: @Self, v: Value) Res<LowerError> {
+        self.list.add(Source.Computed(v)).try(LowerError.OutOfMemory);
+    }
+
+    source = (self :: @Self, s: Source) Res<LowerError> {
+        self.list.add(s).try(LowerError.OutOfMemory);
+    }
+}
+
+outcome_door* = (lo :: Lowerer, id: ExprId, sources: Vec<Source>, span: Span)
+                Res<Value, LowerError> {
+    ret  = lo.type_of(id).try();
+    top  = lo.payload_type(ret, "Ok").try();
+    argv = lo.source_value(sources.get(2).value_or(Source.Absent), span).try();
+    exit = Exit(out: lo.temp(ret).try(), done: lo.label().try());
+    name = lo.cli_table_str(top, "name").try();
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.value(argv).try();
+    args.value(name).try();
+    program = lo.real_call(
+        lo.module_function(CLI_MODULE, "program", 2, span).try(),
+        args.list,
+        span
+    ).try();
+    cli     = Cli(
+        exit: exit,
+        env: sources.get(0).value_or(Source.Absent),
+        alloc: sources.get(1).value_or(Source.Absent),
+        argv: argv,
+        program: program,
+        span: span
+    );
+    start   = lo.cli_usize(1).try();
+    help    = lo.cli_bool(false).try();
+    value   = lo.cli_command(cli, top, program, start, help).try();
+    lo.answer_ok(exit, value, span)
+}
+
+// A command of type `ty` whose usage path is `path`, parsing from word
+// `start`; `help` says whether only its help is wanted.
+cli_command = (
+    lo    :: Lowerer,
+    cli   : Cli,
+    ty    : TyId,
+    path  : Value,
+    start : Value,
+    help  : Value
+)
+              Res<Value, LowerError> {
+    refused = unsupported(
+        cli.span,
+        "a command line type that is not a struct or an enum"
+    );
+    lo.check.types.at(ty).match({
+        Named(n) => decl_at(lo.tree, n.decl).match({
+            Ok(decl) => decl.kind.match({
+                Struct(record) => lo.cli_fields(
+                    cli,
+                    ty,
+                    record,
+                    path,
+                    start,
+                    help
+                ),
+                Enum(_)        => lo.cli_variants(cli, ty, path, start, help),
+                _              => Err(refused),
+            }),
+            None     => Err(refused),
+        }),
+        _        => Err(refused),
+    })
+}
+
+// One struct: declare each field, scan, then fill each field.
+cli_fields = (
+    lo     :: Lowerer,
+    cli    : Cli,
+    ty     : TyId,
+    record : Struct,
+    path   : Value,
+    start  : Value,
+    help   : Value
+) Res<Value, LowerError> {
+    cmd   = lo.spill(lo.copy_value(lo.cli_model(cli, ty, path).try()).try());
+    table = lo.cli_table(ty).try();
+    laid  = lo.shape(ty).try().form.match({ Record(f) => Ok(f), _ => None })
+        .ok_or(unsupported(
+            cli.span,
+            "a command line struct without a record layout"
+        )).try();
+    slots ::= lo.alloc.Vec<CliField>();
+    record.members.loop((member) {
+        member.kind.match({
+            Field(f) => laid.find((at) { at.name.eq(f.name.text) }).when_ok((at) {
+                entry = lo.cli_entry(table, f.name.text, true);
+                slots.add(CliField(
+                    id: slots.len,
+                    name: f.name.text,
+                    ty: at.ty,
+                    form: lo.form_of(at.ty, lo.trailing_in(entry)),
+                    positional: !f.mutable,
+                    default: f.value,
+                    entry: entry
+                )).try(LowerError.OutOfMemory);
+            }),
+            _        => (),
+        });
+    });
+    slots.loop((slot) { lo.cli_declare(cli, ty, cmd, slot).try(); });
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.source(cli.alloc).try();
+    args.value(lo.read(cmd).try()).try();
+    args.source(cli.env).try();
+    args.value(cli.argv).try();
+    args.value(start).try();
+    args.value(cli.program).try();
+    args.value(help).try();
+    scanned = lo.cli_checked(cli, "scan_fields", args.list).try();
+    matches = lo.ok_payload(scanned).try();
+    out     = lo.blank(ty).try();
+    whole   = lo.spill(out);
+    slots.loop((slot) { lo.cli_fill(cli, ty, whole, matches, slot).try(); });
+    Ok(out)
+}
+
+// `derived(a, path, about, note)`, from the type's Cli table.
+cli_model = (
+    lo   :: Lowerer,
+    cli  : Cli,
+    ty   : TyId,
+    path : Value
+) Res<Value, LowerError> {
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.source(cli.alloc).try();
+    args.value(path).try();
+    args.value(lo.cli_table_str(ty, "about").try()).try();
+    args.value(lo.cli_table_str(ty, "note").try()).try();
+    lo.cli_call(cli, "derived", args.list)
+}
+
+cli_declare = (lo :: Lowerer, cli: Cli, ty: TyId, cmd: Place, slot: CliField)
+              Res<LowerError> {
+    shown = lo.default_text(slot.form, slot.default).try();
+    site  = Site(
+        cmd: cmd,
+        id: lo.cli_usize(slot.id).try(),
+        long: lo.cli_text(lo.long_of(slot.name).try().view()).try(),
+        upper: lo.cli_text(lo.env_of(slot.name).try().view()).try(),
+        spec: lo.cli_spec(cli, ty, slot.entry).try(),
+        positional: slot.positional,
+        default: lo.cli_text(
+            shown.match({ Ok(t) => t.view(), None => "" })
+        ).try(),
+        has: shown.match({ Ok(_) => true, None => false })
+    );
+    slot.form.match({
+        Switch      => {
+            args ::= Args(list: lo.alloc.Vec<Source>());
+            args.source(Source.Located(cmd)).try();
+            args.value(site.id).try();
+            args.value(site.long).try();
+            args.value(site.spec).try();
+            lo.cli_checked(cli, "switch_field", args.list).try();
+        },
+        Rest        => {
+            args ::= Args(list: lo.alloc.Vec<Source>());
+            args.source(Source.Located(cmd)).try();
+            lo.cli_call(cli, "trailing_field", args.list).try();
+        },
+        Many        => lo.word_field(
+            cli,
+            site,
+            Word.Text,
+            slot.positional,
+            true
+        ).try(),
+        One(word)   => lo.word_field(
+            cli,
+            site,
+            word,
+            slot.default.match({ Ok(_) => false, None => true }),
+            false
+        ).try(),
+        Maybe(word) => lo.word_field(cli, site, word, false, false).try(),
+        Unfit       => Err(unsupported(
+            cli.span,
+            "a field std.cli cannot parse"
+        )).try(),
+    });
+}
+
+word_field = (
+    lo       :: Lowerer,
+    cli      : Cli,
+    site     : Site,
+    word     : Word,
+    required : bool,
+    many     : bool
+)
+             Res<LowerError> {
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.source(Source.Located(site.cmd)).try();
+    args.value(site.id).try();
+    args.value(site.long).try();
+    args.value(site.upper).try();
+    args.value(site.spec).try();
+    args.value(lo.cli_bool(site.positional).try()).try();
+    args.value(lo.cli_bool(required).try()).try();
+    args.value(lo.cli_bool(many).try()).try();
+    args.value(site.default).try();
+    args.value(lo.cli_bool(site.has).try()).try();
+    helper = word.match({
+        Text        => "text_field",
+        Location    => "text_field",
+        Unsigned(p) => { lo.limits(args, p).try(); "number_field" },
+        Signed(p)   => { lo.limits(args, p).try(); "number_field" },
+        Choice(e)   => {
+            args.value(lo.cli_text(lo.choices_of(e).try().view()).try()).try();
+            "choice_field"
+        },
+    });
+    lo.cli_checked(cli, helper, args.list).try();
+}
+
+// `signed, min, max` for an integer type.
+limits = (lo :: Lowerer, args :: Args, ty: TyId) Res<LowerError> {
+    name     = lo.prim_name(ty);
+    signed   = name.eq("i8") || name.eq("i16") || name.eq("i32") || name.eq("i64");
+    min: i64 = name.match({
+        "i8"  => -128,
+        "i16" => -32768,
+        "i32" => -2147483648,
+        "i64" => -9223372036854775807 - 1,
+        _     => 0,
+    });
+    // u64 and usize hold all ones, -1 as the constant's bits.
+    max: i64 = name.match({
+        "u8"  => 255,
+        "u16" => 65535,
+        "u32" => 4294967295,
+        "i8"  => 127,
+        "i16" => 32767,
+        "i32" => 2147483647,
+        "i64" => 9223372036854775807,
+        _     => -1,
+    });
+    args.value(lo.cli_bool(signed).try()).try();
+    args.value(lo.constant(lo.prim("i64").try(), min).try()).try();
+    args.value(lo.constant(lo.prim("u64").try(), max).try()).try();
+}
+
+// Each field lands in the value: from its words, else its default.
+cli_fill = (
+    lo      :: Lowerer,
+    cli     : Cli,
+    ty      : TyId,
+    whole   : Place,
+    matches : Value,
+    slot    : CliField
+)
+           Res<LowerError> {
+    place = lo.field_place(whole, slot.name, cli.span).try();
+    id    = lo.cli_usize(slot.id).try();
+    found ::= Args(list: lo.alloc.Vec<Source>());
+    found.value(matches).try();
+    found.value(id).try();
+    slot.form.match({
+        Switch      => {
+            got   = lo.cli_call(cli, "switch_of", found.list).try();
+            value = slot.default.match({
+                None    => got,
+                Ok(eid) => {
+                    given = lo.decl_value(eid, ty, slot.ty).try();
+                    both  = lo.temp(slot.ty).try();
+                    lo.add(Instruction.BinaryValue(Binary(
+                        out: both.slot,
+                        left: got.slot,
+                        right: given.slot,
+                        op: Op.Or,
+                        span: cli.span
+                    ))).try();
+                    both
+                },
+            });
+            lo.write(place, value).try();
+        },
+        Many        => {
+            args ::= Args(list: lo.alloc.Vec<Source>());
+            args.source(cli.alloc).try();
+            args.value(matches).try();
+            args.value(id).try();
+            got = lo.cli_checked(cli, "texts_of", args.list).try();
+            lo.write(place, lo.ok_payload(got).try()).try();
+        },
+        Rest        => {
+            args ::= Args(list: lo.alloc.Vec<Source>());
+            args.source(cli.alloc).try();
+            args.value(cli.argv).try();
+            args.value(matches).try();
+            got = lo.cli_checked(cli, "rest_of", args.list).try();
+            lo.write(place, lo.ok_payload(got).try()).try();
+        },
+        One(word)   => {
+            got     = lo.word_of(cli, word, found).try();
+            ok      = lo.succeeded(got).try();
+            present = lo.label().try();
+            absent  = lo.label().try();
+            join    = lo.label().try();
+            lo.branch_to(ok, present, absent).try();
+            lo.start(absent);
+            // The engine refuses a required field that is absent.
+            slot.default.when_ok((eid) {
+                lo.write(place, lo.decl_value(eid, ty, slot.ty).try()).try();
+            });
+            lo.jump(join).try();
+            lo.start(present);
+            lo.write(
+                place,
+                lo.cli_convert(
+                    word,
+                    slot.ty,
+                    lo.ok_payload(got).try(),
+                    cli.span
+                ).try()
+            ).try();
+            lo.enter(join).try();
+        },
+        Maybe(word) => {
+            got     = lo.word_of(cli, word, found).try();
+            ok      = lo.succeeded(got).try();
+            present = lo.label().try();
+            absent  = lo.label().try();
+            join    = lo.label().try();
+            lo.branch_to(ok, present, absent).try();
+            lo.start(absent);
+            lo.write(
+                place,
+                lo.variant_value(slot.ty, "None", None, cli.span).try()
+            ).try();
+            lo.jump(join).try();
+            lo.start(present);
+            inner = lo.payload_type(slot.ty, "Ok").try();
+            value = lo.cli_convert(
+                word,
+                inner,
+                lo.ok_payload(got).try(),
+                cli.span
+            ).try();
+            lo.write(
+                place,
+                lo.variant_value(slot.ty, "Ok", Ok(value), cli.span).try()
+            ).try();
+            lo.enter(join).try();
+        },
+        Unfit       => (),
+    });
+}
+
+// The helper answering one word's value: Res<str>, Res<Path>, Res<u64>,
+// Res<i64>, or the Res<usize> position of a choice.
+word_of = (
+    lo    :: Lowerer,
+    cli   : Cli,
+    word  : Word,
+    found :: Args
+) Res<Value, LowerError> {
+    helper = word.match({
+        Text        => "text_of",
+        Location    => "path_of",
+        Unsigned(_) => "unsigned_of",
+        Signed(_)   => "signed_of",
+        Choice(e)   => {
+            found.value(lo.cli_text(lo.choices_of(e).try().view()).try()).try();
+            "choice_of"
+        },
+    });
+    lo.cli_call(cli, helper, found.list)
+}
+
+// A word's Ok payload as the field's type: a number is narrowed (the
+// engine checked its range) and a choice picks a variant.
+cli_convert = (lo :: Lowerer, word: Word, ty: TyId, payload: Value, span: Span)
+              Res<Value, LowerError> {
+    word.match({
+        Choice(e)   => lo.choose(e, payload, span),
+        Unsigned(_) => lo.cli_narrowed(payload, ty),
+        Signed(_)   => lo.cli_narrowed(payload, ty),
+        _           => Ok(payload),
+    })
+}
+
+cli_narrowed = (lo :: Lowerer, value: Value, ty: TyId) Res<Value, LowerError> {
+    out = lo.temp(ty).try();
+    lo.add(Instruction.Cast(Convert(out: out.slot, input: value.slot))).try();
+    Ok(out)
+}
+
+// The variant at `position` of a bare enum.
+choose = (
+    lo       :: Lowerer,
+    e        : TyId,
+    position : Value,
+    span     : Span
+) Res<Value, LowerError> {
+    out = lo.blank(e).try();
+    lo.variants_of(e).try().loop((h, i, v) {
+        lo.when_equal(position, i, () {
+            value = lo.variant_value(e, v.name, None, span).try();
+            lo.add(Instruction.Copy(Move(
+                out: out.slot,
+                source: value.slot
+            ))).try();
+        }).try();
+    });
+    Ok(out)
+}
+
+// One enum: each variant a subcommand, then `help` and maybe `--version`,
+// then the chosen variant's own command.
+cli_variants = (
+    lo    :: Lowerer,
+    cli   : Cli,
+    ty    : TyId,
+    path  : Value,
+    start : Value,
+    help  : Value
+) Res<Value, LowerError> {
+    cmd   = lo.spill(lo.copy_value(lo.cli_model(cli, ty, path).try()).try());
+    table = lo.cli_table(ty).try();
+    laid  = lo.variants_of(ty).try();
+    laid.loop((h, i, v) {
+        args ::= Args(list: lo.alloc.Vec<Source>());
+        args.source(Source.Located(cmd)).try();
+        args.value(lo.cli_usize(i).try()).try();
+        args.value(lo.cli_text(lo.kebab(v.name).try().view()).try()).try();
+        args.value(lo.variant_about(cli, ty, v, table).try()).try();
+        lo.cli_checked(cli, "command_field", args.list).try();
+    });
+    count = laid.len;
+    helped ::= Args(list: lo.alloc.Vec<Source>());
+    helped.source(cli.alloc).try();
+    helped.source(Source.Located(cmd)).try();
+    helped.value(lo.cli_usize(count).try()).try();
+    helped.value(cli.program).try();
+    lo.cli_checked(cli, "help_field", helped.list).try();
+    version = lo.cli_table_str(ty, "version").try();
+    lo.cli_entry(table, "version", false).when_ok((_) {
+        args ::= Args(list: lo.alloc.Vec<Source>());
+        args.source(Source.Located(cmd)).try();
+        args.value(lo.cli_usize(count + 1).try()).try();
+        lo.cli_checked(cli, "version_field", args.list).try();
+    });
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.source(cli.alloc).try();
+    args.value(lo.read(cmd).try()).try();
+    args.source(cli.env).try();
+    args.value(cli.argv).try();
+    args.value(start).try();
+    args.value(cli.program).try();
+    args.value(help).try();
+    args.value(lo.cli_usize(count).try()).try();
+    args.value(version).try();
+    picked  = lo.cli_checked(cli, "scan_commands", args.list).try();
+    pick    = lo.spill(lo.copy_value(lo.ok_payload(picked).try()).try());
+    variant = lo.read(lo.field_place(pick, "variant", cli.span).try()).try();
+    next    = lo.read(lo.field_place(pick, "next", cli.span).try()).try();
+    asked   = lo.read(lo.field_place(pick, "help", cli.span).try()).try();
+    out     = lo.blank(ty).try();
+    laid.loop((h, i, v) {
+        lo.when_equal(variant, i, () {
+            value = lo.cli_chosen(cli, ty, v, table, path, next, asked).try();
+            lo.add(Instruction.Copy(Move(
+                out: out.slot,
+                source: value.slot
+            ))).try();
+        }).try();
+    });
+    Ok(out)
+}
+
+// Run `then` when `value` is `index`; both ways continue after it.
+when_equal = (
+    lo    :: Lowerer,
+    value : Value,
+    index : usize,
+    then  : () ()
+) Res<LowerError> {
+    expected = lo.constant(value.ty, index.to_i64_bits()).try();
+    test     = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: test,
+        left: value.slot,
+        right: expected.slot,
+        op: Op.Equal,
+        span: nowhere()
+    ))).try();
+    yes  = lo.label().try();
+    join = lo.label().try();
+    lo.branch_to(test, yes, join).try();
+    lo.start(yes);
+    then();
+    lo.enter(join).try();
+}
+
+// The chosen variant: its payload's command, or an argument-less one.
+cli_chosen = (
+    lo    :: Lowerer,
+    cli   : Cli,
+    ty    : TyId,
+    v     : VariantAt,
+    table : Res<Impl>,
+    path  : Value,
+    next  : Value,
+    asked : Value
+) Res<Value, LowerError> {
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.source(cli.alloc).try();
+    args.value(path).try();
+    args.value(lo.cli_text(lo.kebab(v.name).try().view()).try()).try();
+    joined = lo.cli_checked(cli, "joined", args.list).try();
+    spell ::= Args(list: lo.alloc.Vec<Source>());
+    spell.value(lo.ok_payload(joined).try()).try();
+    sub_path = lo.cli_call(cli, "spelled", spell.list).try();
+    v.payload.match({
+        Ok(pty) => {
+            inner = lo.cli_command(cli, pty, sub_path, next, asked).try();
+            lo.variant_value(ty, v.name, Ok(inner), cli.span)
+        },
+        None    => {
+            about = lo.entry_help(cli, ty, v.name, table).try().match({
+                Ok(a) => a,
+                None  => lo.cli_text("").try(),
+            });
+            made ::= Args(list: lo.alloc.Vec<Source>());
+            made.source(cli.alloc).try();
+            made.value(sub_path).try();
+            made.value(about).try();
+            made.value(lo.cli_text("").try()).try();
+            cmd = lo.cli_call(cli, "derived", made.list).try();
+            scan ::= Args(list: lo.alloc.Vec<Source>());
+            scan.source(cli.alloc).try();
+            scan.value(cmd).try();
+            scan.source(cli.env).try();
+            scan.value(cli.argv).try();
+            scan.value(next).try();
+            scan.value(cli.program).try();
+            scan.value(asked).try();
+            lo.cli_checked(cli, "scan_fields", scan.list).try();
+            lo.variant_value(ty, v.name, None, cli.span)
+        },
+    })
+}
+
+// A subcommand's line in its parent's help: the parent table's entry for
+// the variant, else the payload's own `about`.
+variant_about = (
+    lo    :: Lowerer,
+    cli   : Cli,
+    ty    : TyId,
+    v     : VariantAt,
+    table : Res<Impl>
+)
+                Res<Value, LowerError> {
+    lo.entry_help(cli, ty, v.name, table).try().match({
+        Ok(about) => Ok(about),
+        None      => v.payload.match({
+            Ok(pty) => lo.cli_table_str(pty, "about"),
+            None    => lo.cli_text(""),
+        }),
+    })
+}
+
+// The `help` of a variant's Spec entry in the table, when there is one.
+entry_help = (lo :: Lowerer, cli: Cli, ty: TyId, name: str, table: Res<Impl>)
+             Res<Res<Value>, LowerError> {
+    entry = lo.cli_entry(table, name, true);
+    entry.match({
+        None  => Ok(None),
+        Ok(_) => {
+            spec = lo.spill(
+                lo.copy_value(lo.cli_spec(cli, ty, entry).try()).try()
+            );
+            Ok(Ok(lo.read(lo.field_place(spec, "help", cli.span).try()).try()))
+        },
+    })
+}
+
+// A table entry's Spec; a plain Spec without one.
+cli_spec = (
+    lo    :: Lowerer,
+    cli   : Cli,
+    ty    : TyId,
+    entry : Res<ExprId>
+) Res<Value, LowerError> {
+    entry.match({
+        Ok(eid) => lo.decl_value(
+            eid,
+            ty,
+            lo.check.expr_memo.get(eid).ok_or(unsupported(cli.span, "an unchecked Cli table entry")).try()
+        ),
+        None    => lo.cli_call(cli, "plain", lo.alloc.Vec<Source>()),
+    })
+}
+
+// A `str` entry of the type's table; the empty string without one.
+cli_table_str = (lo :: Lowerer, ty: TyId, key: str) Res<Value, LowerError> {
+    str_ty = lo.prim("str").try();
+    lo.cli_entry(lo.cli_table(ty).try(), key, false).match({
+        Ok(eid) => lo.decl_value(eid, ty, str_ty),
+        None    => lo.string("", str_ty),
+    })
+}
+
+// The type's impl of std.cli's Cli, which holds its table.
+cli_table = (lo :: Lowerer, ty: TyId) Res<Res<Impl>, LowerError> {
+    lo.check.types.at(ty).match({
+        Named(n) => lo.impl_of_bound(n.decl, "Cli"),
+        _        => Ok(None),
+    })
+}
+
+impl_of_bound = (
+    lo    :: Lowerer,
+    decl  : DeclId,
+    bound : str
+) Res<Res<Impl>, LowerError> {
+    name = decl_at(lo.tree, decl).match({
+        Ok(d) => d.kind.match({ Struct(s) => s.name.text, Enum(e) => e.name.text, _ => "" }),
+        None  => "",
+    });
+    ids ::= lo.alloc.Vec<ImplId>();
+    lo.check.world.impls_named(lo.tree, name, ids).try(LowerError.OutOfMemory);
+    mi = decl.module.to_usize();
+    found :: Res<Impl> = None;
+    ids.loop((id) {
+        (id.decl.module == decl.module).then(() {
+            lo.check.world.impl_at(lo.tree, id).when_ok((im) {
+                ty = lo.check.impl_bound_type(
+                    im,
+                    mi
+                ).try(LowerError.OutOfMemory);
+                lo.check.types.at(ty).match({
+                    Named(b) => (b.name.eq(bound) && lo.check.world.module_name(b.decl).eq(CLI_MODULE))
+                        .then(() { found = Ok(im); }),
+                    _        => (),
+                });
+            });
+        });
+    });
+    Ok(found)
+}
+
+// A table entry is a command setting when it is a `str`, and configures the
+// field or variant of its name when it is a Spec; one name can be only one.
+cli_entry = (
+    lo    :: Lowerer,
+    table : Res<Impl>,
+    key   : str,
+    spec  : bool
+) Res<ExprId> {
+    eid = table.try().field_value(key).try();
+    ty  = lo.check.expr_memo.get(eid).try();
+    (is_spec(lo, ty) == spec).match({ true => Ok(eid), false => None })
+}
+
+is_spec = (lo :: Lowerer, ty: TyId) bool {
+    lo.check.types.at(ty).match({
+        Named(n) => n.name.eq("Spec") && lo.check.world.module_name(n.decl).eq("std.cli.cli"),
+        _        => false,
+    })
+}
+
+// An expression written in `ty`'s declaration (a field default or a table
+// entry), evaluated in its module.
+decl_value = (
+    lo   :: Lowerer,
+    e    : ExprId,
+    ty   : TyId,
+    want : TyId
+) Res<Value, LowerError> {
+    named = lo.check.types.at(ty).match({ Named(n) => Ok(n), _ => None })
+        .ok_or(unsupported(
+            nowhere(),
+            "a command line type without a declaration"
+        )).try();
+    inst  = lo.check.inst_of_named(named).try(LowerError.OutOfMemory);
+    frame = lo.push_frame(
+        inst,
+        named.decl.module.to_usize(),
+        lo.unit_ty,
+        Ok(ty),
+        None
+    ).try();
+    saved = lo.use_frame(frame);
+    value = lo.expr_as(e, want);
+    lo.use_frame(saved);
+    value
+}
+
+// Whether a table entry is a Spec call that sets `trailing: true`.
+trailing_in = (lo :: Lowerer, entry: Res<ExprId>) bool {
+    entry.match({
+        None    => false,
+        Ok(eid) => lo.tree.expr_at(eid).kind.match({
+            Call(c) => c.args.find((a) {
+                a.name.match({ Ok(n) => n.text.eq("trailing"), None => false })
+                    && lo.tree.expr_at(a.value).kind.match({
+                        Literal(l) => l.text.eq("true"),
+                        _          => false,
+                    })
+            }).match({ Ok(_) => true, None => false }),
+            _       => false,
+        }),
+    })
+}
+
+// The form a field's type gives it.
+form_of = (lo :: Lowerer, ty: TyId, trailing: bool) Form {
+    lo.check.types.at(ty).match({
+        Prim(p)  => p.name.eq("bool").match({
+            true  => Form.Switch,
+            false => lo.word_of_type(ty).match({ Ok(w) => Form.One(w), None => Form.Unfit }),
+        }),
+        Res(r)   => is_failure(r.form).match({
+            true  => Form.Unfit,
+            false => lo.word_of_type(r.value).match({ Ok(w) => Form.Maybe(w), None => Form.Unfit }),
+        }),
+        Named(n) => is_str_vec(lo, n).match({
+            true  => trailing.match({ true => Form.Rest, false => Form.Many }),
+            false => lo.word_of_type(ty).match({ Ok(w) => Form.One(w), None => Form.Unfit }),
+        }),
+        _        => Form.Unfit,
+    })
+}
+
+is_str_vec = (lo :: Lowerer, n: TyNamed) bool {
+    n.name.eq("Vec") && n.args.get(0).match({
+        Ok(arg) => lo.check.types.at(arg).match({ Prim(p) => p.name.eq("str"), _ => false }),
+        None    => false,
+    })
+}
+
+word_of_type = (lo :: Lowerer, ty: TyId) Res<Word> {
+    lo.check.types.at(ty).match({
+        Prim(p)  => p.name.match({
+            "str"   => Ok(Word.Text),
+            "u8"    => Ok(Word.Unsigned(ty)),
+            "u16"   => Ok(Word.Unsigned(ty)),
+            "u32"   => Ok(Word.Unsigned(ty)),
+            "u64"   => Ok(Word.Unsigned(ty)),
+            "usize" => Ok(Word.Unsigned(ty)),
+            "i8"    => Ok(Word.Signed(ty)),
+            "i16"   => Ok(Word.Signed(ty)),
+            "i32"   => Ok(Word.Signed(ty)),
+            "i64"   => Ok(Word.Signed(ty)),
+            _       => None,
+        }),
+        Named(n) => (n.name.eq("Path") && lo.check.world.module_name(n.decl).eq("std.core.path")).match({
+            true  => Ok(Word.Location),
+            false => unit_enum(lo, n).match({ true => Ok(Word.Choice(ty)), false => None }),
+        }),
+        _        => None,
+    })
+}
+
+// An enum every variant of which is bare: its names are the choices.
+unit_enum = (lo :: Lowerer, n: TyNamed) bool {
+    decl_at(lo.tree, n.decl).match({
+        Ok(decl) => decl.kind.match({
+            Enum(e) => e.variants.len > 0 && e.variants.find((v) {
+                v.payload.match({ Ok(_) => true, None => false })
+            }).match({ Ok(_) => false, None => true }),
+            _       => false,
+        }),
+        None     => false,
+    })
+}
+
+// `debug|release|small` for `{ Debug | Release | Small }`.
+choices_of = (lo :: Lowerer, ty: TyId) Res<String, LowerError> {
+    out ::= lo.alloc.String().try(LowerError.OutOfMemory);
+    lo.variants_of(ty).try().loop((h, i, v) {
+        (i > 0).then(() { out.add('|').try(LowerError.OutOfMemory); });
+        out.add(lo.kebab(v.name).try().view()).try(LowerError.OutOfMemory);
+    });
+    Ok(out)
+}
+
+// `dry-run` for `DryRun`.
+kebab = (lo :: Lowerer, name: str) Res<String, LowerError> {
+    out ::= lo.alloc.String().try(LowerError.OutOfMemory);
+    Range(0, name.len).loop((h, i) {
+        b     = name.index(i);
+        upper = b >= 'A' && b <= 'Z';
+        (upper && i > 0).then(() { out.add('-').try(LowerError.OutOfMemory); });
+        out.add(
+            upper.match({ true => b + 32, false => b })
+        ).try(LowerError.OutOfMemory);
+    });
+    Ok(out)
+}
+
+// `--emit-c-dir` for `emit_c_dir`.
+long_of = (lo :: Lowerer, field: str) Res<String, LowerError> {
+    out ::= lo.alloc.String("--").try(LowerError.OutOfMemory);
+    Range(0, field.len).loop((h, i) {
+        b = field.index(i);
+        out.add(
+            (b == '_').match({ true => '-', false => b })
+        ).try(LowerError.OutOfMemory);
+    });
+    Ok(out)
+}
+
+// `EMIT_C_DIR` for `emit_c_dir`.
+env_of = (lo :: Lowerer, field: str) Res<String, LowerError> {
+    out ::= lo.alloc.String().try(LowerError.OutOfMemory);
+    Range(0, field.len).loop((h, i) {
+        b = field.index(i);
+        out.add(
+            (b >= 'a' && b <= 'z').match({ true => b - 32, false => b })
+        ).try(LowerError.OutOfMemory);
+    });
+    Ok(out)
+}
+
+// A default help can show: a literal number, string or bool, or a variant
+// of a choice. Anything else is applied without being shown.
+default_text = (lo :: Lowerer, form: Form, default: Res<ExprId>)
+               Res<Res<String>, LowerError> {
+    form.match({
+        One(w) => default.match({
+            Ok(eid) => lo.tree.expr_at(eid).kind.match({
+                Literal(l) => l.kind.match({
+                    Int => w.match({
+                        Unsigned(_) => Ok(Ok(
+                            lo.alloc.String(l.text).try(LowerError.OutOfMemory)
+                        )),
+                        Signed(_)   => Ok(Ok(
+                            lo.alloc.String(l.text).try(LowerError.OutOfMemory)
+                        )),
+                        _           => Ok(None),
+                    }),
+                    Str => w.match({
+                        Text     => lo.quoted(l.text),
+                        Location => lo.quoted(l.text),
+                        _        => Ok(None),
+                    }),
+                    _   => Ok(None),
+                }),
+                Access(a)  => w.match({
+                    Choice(_) => Ok(Ok(lo.kebab(a.name.text).try())),
+                    _         => Ok(None),
+                }),
+                _          => Ok(None),
+            }),
+            None    => Ok(None),
+        }),
+        _      => Ok(None),
+    })
+}
+
+// A string literal's text, when it has no escapes to undo.
+quoted = (lo :: Lowerer, text: str) Res<Res<String>, LowerError> {
+    text.find('\\').match({
+        Ok(_) => Ok(None),
+        None  => Ok(Ok(
+            lo.alloc.String(text.slice(
+                1,
+                text.len - 1
+            )).try(LowerError.OutOfMemory)
+        )),
+    })
+}
+
+cli_call = (
+    lo   :: Lowerer,
+    cli  : Cli,
+    name : str,
+    args : Vec<Source>
+) Res<Value, LowerError> {
+    lo.real_call(
+        lo.module_function(CLI_MODULE, name, args.len, cli.span).try(),
+        args,
+        cli.span
+    )
+}
+
+// A helper answering Res<_, Stop>; a stop ends the door.
+cli_checked = (
+    lo   :: Lowerer,
+    cli  : Cli,
+    name : str,
+    args : Vec<Source>
+) Res<Value, LowerError> {
+    got = lo.cli_call(cli, name, args).try();
+    lo.fail_unless_ok(got, cli.exit, cli.span).try();
+    Ok(got)
+}
+
+// A value filled field by field or branch by branch starts zeroed, so a
+// path that writes nothing (one the engine refuses) reads defined bytes.
+blank = (lo :: Lowerer, ty: TyId) Res<Value, LowerError> {
+    out = lo.temp(ty).try();
+    lo.zero_fill(out, size_of(lo.class_of(ty).try())).try();
+    Ok(out)
+}
+
+cli_usize = (lo :: Lowerer, n: usize) Res<Value, LowerError> {
+    lo.constant(lo.prim("usize").try(), n.to_i64_bits())
+}
+
+cli_bool = (lo :: Lowerer, b: bool) Res<Value, LowerError> {
+    lo.constant(lo.prim("bool").try(), b.match({ true => 1, false => 0 }))
+}
+
+cli_text = (lo :: Lowerer, text: str) Res<Value, LowerError> {
+    lo.string(text, lo.prim("str").try())
+}
+
+// ---------------------------------------------------------------------
+// shared
+// ---------------------------------------------------------------------
+
+// Unless `res` holds Ok, the answer is Err of its error and the door ends.
+fail_unless_ok* = (lo :: Lowerer, res: Value, exit: Exit, span: Span)
+                  Res<LowerError> {
+    ok      = lo.succeeded(res).try();
+    go_on   = lo.label().try();
+    stopped = lo.label().try();
+    lo.branch_to(ok, go_on, stopped).try();
+    lo.start(stopped);
+    variants = lo.variants_of(res.ty).try();
+    err      = variant_index(variants, "Err").ok_or(unsupported(span, "a Res without Err")).try();
+    reason   = lo.payload_of(res, err).try();
+    failed   = lo.variant_value(exit.out.ty, "Err", Ok(reason), span).try();
+    lo.add(Instruction.Copy(Move(
+        out: exit.out.slot,
+        source: failed.slot
+    ))).try();
+    lo.jump(exit.done).try();
+    lo.start(go_on);
+}
+
+// The answer is Ok(value); the door's blocks join after it.
+answer_ok* = (lo :: Lowerer, exit: Exit, value: Value, span: Span)
+             Res<Value, LowerError> {
+    done = lo.variant_value(exit.out.ty, "Ok", Ok(value), span).try();
+    lo.add(Instruction.Copy(Move(out: exit.out.slot, source: done.slot))).try();
+    lo.enter(exit.done).try();
+    Ok(exit.out)
+}
+
+source_value* = (
+    lo     :: Lowerer,
+    source : Source,
+    span   : Span
+) Res<Value, LowerError> {
+    source.match({
+        Given(e)    => lo.expr(e),
+        Computed(v) => Ok(v),
+        Located(p)  => lo.read(p),
+        Absent      => Err(unsupported(span, "a door without its argument")),
+    })
+}
+
+// The function `name` of `module` with `arity` parameters and a body.
+module_function* = (
+    lo     :: Lowerer,
+    module : str,
+    name   : str,
+    arity  : usize,
+    span   : Span
+) Res<Callee, LowerError> {
+    index = lo.check.world.index_of(module).ok_or(unsupported(span, "a missing runtime module")).try();
+    table = lo.check.world.table_at(index).ok_or(unsupported(span, "a missing runtime module table")).try();
+    found :: Res<Callee> = None;
+    seen  ::= false;
+    table.defs.loop((d) {
+        (d.name.eq(name) && !seen).then(() {
+            decl_at(lo.tree, d.id).when_ok((decl) {
+                decl.kind.match({
+                    Function(f) => (f.params.len == arity && f.body.match({ Ok(_) => true, None => false })).then(() {
+                        seen  = true;
+                        found = Ok(Callee(
+                            f: f,
+                            owner: d.id,
+                            member: None,
+                            module: index,
+                            inst: lo.alloc.Inst(),
+                            self_ty: None,
+                            generic_owner: None
+                        ));
+                    }),
+                    _           => (),
+                });
+            });
+        });
+    });
+    found.ok_or(unsupported(span, "a missing runtime function"))
+}

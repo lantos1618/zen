@@ -309,6 +309,7 @@ use_actor_mem* = (
         Computed(v) => Ok(v.ty),
         Located(p)  => Ok(p.ty),
         Absent      => Err(unsupported(span, "env.actor_mem without a Mem")),
+        Packed(_)   => Err(unsupported(span, "env.actor_mem without a Mem")),
     }).try();
     value  = lo.argument_value(source, given, span).try();
     out    = lo.temp(ty).try();

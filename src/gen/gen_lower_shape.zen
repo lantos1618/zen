@@ -259,10 +259,15 @@ named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
     })
 }
 
+// A bound declares at least one function an implementor supplies; a struct
+// of constants and defined functions is an empty record instead.
 behaviour_only* = (s: Struct) bool {
-    functions = s.members.find(
-        (m) { m.kind.match({ Function(_) => true, _ => false }) }
-    );
+    functions = s.members.find((m) {
+        m.kind.match({
+            Function(f) => f.body.match({ Ok(_) => false, None => true }),
+            _           => false,
+        })
+    });
     fields    = s.members.find(
         (m) { m.kind.match({ Field(_) => true, _ => false }) }
     );

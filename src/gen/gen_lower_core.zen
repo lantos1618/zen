@@ -754,7 +754,7 @@ Lowerer* = {
                 Ok(Ref(p))    => Ok(p),
                 _             => None,
             })),
-            Access(a) => self.is_value_access(a).match({
+            Access(a) => (self.is_value_access(a) && !self.names_member_const(a)).match({
                 false => Ok(None),
                 true  => self.place_of(a.base).try().match({
                     Ok(base) => Ok(Ok(
@@ -925,13 +925,51 @@ Lowerer* = {
             Const(c) => Ok(c),
             _        => None,
         }).ok_or(unsupported(span, "a constant without a value")).try();
-        value    = constant.value;
-        // The initializer is read in its declaring module, at its written
-        // type when it has one.
+        self.const_value(
+            d.id.module.to_usize(),
+            constant.value,
+            constant.type,
+            ty
+        )
+    }
+
+    // `Caps.sync` or `caps.sync`: a constant declared in a struct body.
+    member_const = (self :: @Self, owner: DeclId, member: str, ty: TyId)
+                   Res<Res<Value>, LowerError> {
+        decl_at(self.tree, owner).match({
+            None    => Ok(None),
+            Ok(def) => def.kind.match({
+                Struct(s) => s.members.find((m) {
+                    m.kind.match({ Const(c) => c.name.text.eq(
+                        member
+                    ), _ => false })
+                }).match({
+                    None    => Ok(None),
+                    Ok(hit) => hit.kind.match({
+                        Const(c) => Ok(Ok(
+                            self.const_value(
+                                owner.module.to_usize(),
+                                c.value,
+                                c.type,
+                                ty
+                            ).try()
+                        )),
+                        _        => Ok(None),
+                    }),
+                }),
+                _         => Ok(None),
+            }),
+        })
+    }
+
+    // The initializer is read in its declaring module, at its written type
+    // when it has one.
+    const_value = (self :: @Self, module: usize, value: ExprId, written: Res<TypeId>, ty: TyId)
+                  Res<Value, LowerError> {
         saved = self.frame;
         self.frames.add(Frame(
             inst: self.alloc.Inst(),
-            module: d.id.module.to_usize(),
+            module: module,
             ret_slot: 0,
             ret_block: 0,
             ret_ty: self.unit_ty,
@@ -939,7 +977,7 @@ Lowerer* = {
             scope: None
         )).try(LowerError.OutOfMemory);
         self.frame = self.frames.len - 1;
-        want       = constant.type.match({
+        want       = written.match({
             Ok(t) => self.written(t).match({ Ok(w) => w, Err(_) => ty }),
             None  => ty,
         });
@@ -2024,7 +2062,21 @@ Lowerer* = {
                             }),
                         })
                     },
-                    None  => self.place_of(a.base).try().match({
+                    None  => self.value_const(
+                        id,
+                        a.base,
+                        a.name.text
+                    ).try().match({
+                        Ok(v) => Ok(v),
+                        None  => self.field_access(a, span),
+                    }),
+                })
+            },
+        })
+    }
+
+    field_access = (self :: @Self, a: Access, span: Span) Res<Value, LowerError> {
+                    self.place_of(a.base).try().match({
                         Ok(place) => self.read(
                             self.field_place(place, a.name.text, span).try()
                         ),
@@ -2037,10 +2089,7 @@ Lowerer* = {
                             ).try();
                             self.read(field)
                         },
-                    }),
-                })
-            },
-        })
+                    })
     }
 
     // `Type.Variant`, `i32.MAX` and similar associated values.
@@ -2051,7 +2100,64 @@ Lowerer* = {
             true  => self.prim_constant(ty, type_name, member, span),
             false => self.names_native_constants(type_name).match({
                 true  => self.native_constant(ty, member, span),
-                false => self.variant_value(ty, member, None, span),
+                false => self.struct_named(type_name).match({
+                    Ok(owner) => self.member_const(
+                        owner,
+                        member,
+                        ty
+                    ).try().match({
+                        Ok(v) => Ok(v),
+                        None  => self.variant_value(ty, member, None, span),
+                    }),
+                    None      => self.variant_value(ty, member, None, span),
+                }),
+            }),
+        })
+    }
+
+    struct_named = (self :: @Self, name: str) Res<DeclId> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(self.here().module, name, defs).ignore();
+        defs.find(
+            (d) { d.kind.match({ StructDef => true, _ => false }) }
+        ).match({
+            Ok(d) => Ok(d.id),
+            None  => None,
+        })
+    }
+
+    names_member_const = (self :: @Self, a: Access) bool {
+        self.type_of(a.base).match({
+            Err(_) => false,
+            Ok(bt) => self.check.types.at(bt).match({
+                Named(n) => decl_at(self.tree, n.decl).match({
+                    None    => false,
+                    Ok(def) => def.kind.match({
+                        Struct(s) => s.members.find((m) {
+                            m.kind.match({ Const(c) => c.name.text.eq(
+                                a.name.text
+                            ), _ => false })
+                        }).match({ Ok(_) => true, None => false }),
+                        _         => false,
+                    }),
+                }),
+                _        => false,
+            }),
+        })
+    }
+
+    // A struct constant read through a value of the struct.
+    value_const = (self :: @Self, id: ExprId, base: ExprId, member: str)
+                  Res<Res<Value>, LowerError> {
+        self.type_of(base).match({
+            Err(_) => Ok(None),
+            Ok(bt) => self.check.types.at(bt).match({
+                Named(n) => self.member_const(
+                    n.decl,
+                    member,
+                    self.type_of(id).try()
+                ),
+                _        => Ok(None),
             }),
         })
     }
@@ -2150,7 +2256,11 @@ Lowerer* = {
             ),
             Paren(p)  => self.capability_of(p.inner),
             Access(a) => self.capability_of(a.base).try().match({
-                None  => Ok(None),
+                // A record field can hold a capability, as `self.env` does.
+                None  => Ok(self.type_of(id).match({
+                    Ok(ty) => self.is_capability(ty).match({ true => Ok(ty), false => None }),
+                    Err(_) => None,
+                })),
                 Ok(_) => {
                     ty = self.type_of(id).try();
                     Ok(

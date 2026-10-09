@@ -1209,6 +1209,10 @@ source_slot = (lo :: Lowerer, source: Source) Res<usize, LowerError> {
         Computed(v) => Ok(v.slot),
         Located(p)  => Ok(lo.read(p).try().slot),
         Absent      => lo.word_const(Scalar.Ptr, 0),
+        Packed(_)   => Err(unsupported(
+            nowhere(),
+            "a vararg argument to a native operation"
+        )),
     })
 }
 

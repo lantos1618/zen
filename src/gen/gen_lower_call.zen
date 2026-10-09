@@ -16,7 +16,7 @@
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed } = sema.sema
-{ subst } = sema.sema
+{ subst, pack_elem } = sema.sema
 { Found, members_of } = sema.sema_member
 { Printer } = sema.sema_print
 { Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
@@ -38,7 +38,12 @@
 { inst_of_named } = sema.sema_inst
 
 // One argument position after binding names and the receiver.
-Source* = { Given: ExprId | Absent | Computed: Value | Located: Place }
+// `Packed` is a vararg tail's run of written arguments.
+Source* = { Given: ExprId
+    | Absent
+    | Computed: Value
+    | Located: Place
+    | Packed: Vec<ExprId> }
 
 // ---------------------------------------------------------------------
 // dispatch
@@ -650,6 +655,7 @@ settle_params* = (
                 Computed(v) => Ok(v.ty),
                 Located(l)  => Ok(l.ty),
                 Absent      => None,
+                Packed(_)   => None,
             });
             actual.when_ok((a) { lo.unify(raw, a, callee.inst, extra).try(); });
         });
@@ -900,16 +906,34 @@ bind_sources* = (
         }),
         None  => false,
     });
+    // A `vararg<T>` tail collects the remaining positional arguments.
+    packed = (f.params.len > 0) && f.params.get(f.params.len - 1).match({
+        Ok(p) => p.type.match({
+            Ok(t) => lo.written(t).match({
+                Ok(ty) => pack_elem(
+                    lo.check.types,
+                    ty
+                ).match({ Ok(_) => true, None => false }),
+                Err(_) => false,
+            }),
+            None  => false,
+        }),
+        None  => false,
+    });
+    rest ::= lo.alloc.Vec<ExprId>();
     c.args.loop((a) {
         a.name.match({
             None     => {
-                (next < out.len || variadic).ensure(unsupported(
+                (next < out.len || variadic || packed).ensure(unsupported(
                     a.span,
                     "more arguments than parameters"
                 )).try();
-                (next < out.len).then(
-                    () { out.set(next, Source.Given(a.value)); }
-                );
+                (packed && next + 1 >= out.len).match({
+                    true  => rest.add(a.value).try(LowerError.OutOfMemory),
+                    false => (next < out.len).then(
+                        () { out.set(next, Source.Given(a.value)); }
+                    ),
+                });
                 next = next + 1;
             },
             Ok(name) => {
@@ -927,6 +951,7 @@ bind_sources* = (
             },
         });
     });
+    packed.then(() { out.set(out.len - 1, Source.Packed(rest)); });
     Ok(out)
 }
 
@@ -1036,6 +1061,68 @@ argument_value* = (
         Absent      => lo.variant_value(ty, "None", None, span),
         Computed(v) => lo.coerce(v, ty),
         Located(p)  => lo.coerce(lo.read(p).try(), ty),
+        Packed(es)  => lo.pack(es, ty, span),
+    })
+}
+
+// A vararg tail: the run lives in the caller's frame and the callee borrows
+// it. One argument that already has the pack's type is forwarded as is.
+pack = (lo :: Lowerer, elems: Vec<ExprId>, ty: TyId, span: Span)
+       Res<Value, LowerError> {
+    forwarded: Res<ExprId> = (elems.len == 1).match({
+        true  => elems.get(0).match({
+            Ok(e) => lo.type_of(e).match({
+                Ok(t)  => (t == ty).match({ true => Ok(e), false => None }),
+                Err(_) => None,
+            }),
+            None  => None,
+        }),
+        false => None,
+    });
+    forwarded.match({
+        Ok(e) => lo.expr_as(e, ty),
+        None  => {
+            elem   = pack_elem(lo.check.types, ty).ok_or(unsupported(span, "a vararg without an element type")).try();
+            count  = (elems.len == 0).match({ true => 1, false => elems.len });
+            run    = lo.temp(
+                lo.check.types.array(elem, count).try(LowerError.OutOfMemory)
+            ).try();
+            stride = lo.shape(run.ty).try().form.match({
+                Array(a) => Ok(a.stride),
+                _        => None,
+            }).ok_or(unsupported(
+                span,
+                "a vararg run without array layout"
+            )).try();
+            base   = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.AddressOf(Address(
+                out: base,
+                slot: run.slot
+            ))).try();
+            elems.loop((h, i, e) {
+                value = lo.expr_as(e, elem).try();
+                lo.add(Instruction.StoreValue(Store(
+                    base: base,
+                    offset: i * stride,
+                    value: value.slot
+                ))).try();
+            });
+            out  = lo.spill(lo.temp(ty).try());
+            data = lo.temp(lo.field_place(out, "data", span).try().ty).try();
+            lo.add(Instruction.AddressOf(Address(
+                out: data.slot,
+                slot: run.slot
+            ))).try();
+            lo.write(lo.field_place(out, "data", span).try(), data).try();
+            lo.write(
+                lo.field_place(out, "len", span).try(),
+                lo.constant(
+                    lo.prim("usize").try(),
+                    elems.len.to_i64_bits()
+                ).try()
+            ).try();
+            lo.read(out)
+        },
     })
 }
 
@@ -1068,6 +1155,7 @@ source_place = (
         Computed(v) => Ok(lo.spill(lo.copy_value(v).try())),
         Located(p)  => Ok(p),
         Absent      => Err(unsupported(span, "an omitted mutable argument")),
+        Packed(es)  => Ok(lo.spill(lo.pack(es, ty, span).try())),
         Given(e)    => lo.place_of(e).try().match({
             Ok(place) => Ok(place),
             None      => {

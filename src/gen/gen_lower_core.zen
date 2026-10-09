@@ -37,7 +37,7 @@
 { to_bound, resolve, bound_of, handle_for_place } = gen.gen_lower_member
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { real_call } = gen.gen_lower_call
-{ capability } = gen.gen_lower_shape
+{ capability, by_reference } = gen.gen_lower_shape
 { variant_index, size_of, TAG_BYTES } = gen.gen_lower_shape
 { call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
 { SynthAt, TurnName, lower_pending } = gen.gen_lower_thread
@@ -990,7 +990,10 @@ Lowerer* = {
             None      => self.borrowed_handle(id, ty).try().match({
                 Ok(handle) => Ok(handle),
                 None       => {
-                    self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
+                    self.expected = Ok(Expected(
+                        id: self.unwrapped(id),
+                        ty: ty
+                    ));
                     value         = self.expr(id).try();
                     self.coerce(value, ty)
                 },
@@ -1003,14 +1006,14 @@ Lowerer* = {
     borrowed_handle = (self :: @Self, id: ExprId, ty: TyId) Res<Res<Value>, LowerError> {
         bound = self.settled(ty).match({ true => self.bound_of(ty).try(), false => None });
         bound.match({
-            None        => Ok(None),
-            Ok(bound)   => bound.implementors.find((t) {
+            None      => Ok(None),
+            Ok(bound) => bound.implementors.find((t) {
                 self.type_of(id).match({ Ok(own) => t == own, Err(_) => false })
             }).match({
-                None    => Ok(None),
-                Ok(_)   => self.place_of(id).try().match({
-                    None        => Ok(None),
-                    Ok(place)   => self.handle_for_place(place, ty),
+                None  => Ok(None),
+                Ok(_) => self.place_of(id).try().match({
+                    None      => Ok(None),
+                    Ok(place) => self.handle_for_place(place, ty),
                 }),
             }),
         })
@@ -3245,7 +3248,10 @@ Lowerer* = {
                         t
                     )).try(LowerError.OutOfMemory);
                 },
-                false => p.mutable.match({
+                false => (p.mutable || self.by_reference(
+                    false,
+                    t
+                ).try()).match({
                     true  => {
                         pointer = self.slot_of(Scalar.Ptr).try();
                         kinds.add(LocalKind.Ref(Place(
@@ -3343,9 +3349,7 @@ Lowerer* = {
                 "an inferred parameter type"
             )).try();
             t     = self.callee_type(callee, ty).try();
-            class = p.mutable.match({ true => Scalar.Ptr, false => self.class_of(
-                t
-            ).try() });
+            class = (p.mutable || self.by_reference(false, t).try()).match({ true => Scalar.Ptr, false => self.class_of(t).try() });
             self.slots.add(class).try(LowerError.OutOfMemory);
         });
         ret = callee.f.ret.match({ Ok(t) => self.callee_type(callee, t), None => Ok(self.unit_ty) }).try();

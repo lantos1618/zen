@@ -34,7 +34,7 @@
 { bound_of, dispatch, Bound } = gen.gen_lower_member
 { to_i64_bits } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
-{ variant_index, size_of } = gen.gen_lower_shape
+{ variant_index, size_of, by_reference } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
 { json_door, outcome_door } = gen.gen_lower_door
 
@@ -1023,6 +1023,11 @@ in_written_order = (
                    Res<Vec<Source>, LowerError> {
     out ::= lo.alloc.Vec<Source>();
     sources.loop((s) { out.add(s).try(LowerError.OutOfMemory); });
+    // A `::` argument could change what a lent one reads, so a call with
+    // one copies its wide read-only arguments.
+    mutating = callee.f.params.find(
+        (p) { p.mutable }
+    ).match({ Ok(_) => true, None => false });
     order ::= lo.alloc.Vec<ExprId>();
     // The receiver, when present, is the first argument not written in
     // the parentheses.
@@ -1059,10 +1064,20 @@ in_written_order = (
             special = lo.is_fn_type(ty) || lo.is_capability(ty)
                 || pack.match({ Ok(_) => true, None => false });
             (!special).then(() {
-                p.mutable.match({
+                (p.mutable || (!mutating && lo.by_reference(
+                    false,
+                    ty
+                ).try())).match({
                     // A place is resolved now; a temporary is computed now.
+                    // A read-only one is passed in place only at its own type.
                     true  => lo.place_of(e).try().match({
-                        Ok(place) => { out.set(i, Source.Located(place)); },
+                        Ok(place) => (p.mutable || place.ty == ty).match({
+                            true  => { out.set(i, Source.Located(place)); },
+                            false => { out.set(
+                                i,
+                                Source.Computed(lo.expr_as(e, ty).try())
+                            ); },
+                        }),
                         None      => { out.set(
                             i,
                             Source.Computed(lo.expr_as(e, ty).try())
@@ -1197,6 +1212,27 @@ source_place = (
     })
 }
 
+// The address a read-only wide argument is lent at: its own place when it
+// has one of the parameter's type, else a copy of its value.
+lent = (
+    lo     :: Lowerer,
+    source : Source,
+    ty     : TyId,
+    span   : Span
+) Res<usize, LowerError> {
+    source.match({
+        Located(p) => (p.ty == ty).match({
+            true  => lo.address(p),
+            false => lo.address(lo.spill(
+                lo.argument_value(source, ty, span).try()
+            )),
+        }),
+        _          => lo.address(lo.spill(
+            lo.argument_value(source, ty, span).try()
+        )),
+    })
+}
+
 real_call* = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
              Res<Value, LowerError> {
     index = lo.enqueue(callee).try();
@@ -1208,7 +1244,10 @@ real_call* = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
             true  => lo.address(
                 lo.argument_place(source, ty, span).try()
             ).try(),
-            false => lo.argument_value(source, ty, span).try().slot,
+            false => lo.by_reference(false, ty).try().match({
+                true  => lo.lent(source, ty, span).try(),
+                false => lo.argument_value(source, ty, span).try().slot,
+            }),
         });
         args.add(slot).try(LowerError.OutOfMemory);
     });
@@ -2280,11 +2319,14 @@ std_call* = (
     index  = lo.enqueue(callee).try();
     slots ::= lo.alloc.Vec<usize>();
     f.params.loop((h, i, _) {
-        want  = lo.param_type(callee, i).try();
-        value = args.get(i).ok_or(unsupported(span, "a missing std argument")).try();
-        slots.add(
-            lo.coerce(value, want).try().slot
-        ).try(LowerError.OutOfMemory);
+        want    = lo.param_type(callee, i).try();
+        value   = args.get(i).ok_or(unsupported(span, "a missing std argument")).try();
+        coerced = lo.coerce(value, want).try();
+        slot    = lo.by_reference(false, want).try().match({
+            true  => lo.address(lo.spill(lo.copy_value(coerced).try())).try(),
+            false => coerced.slot,
+        });
+        slots.add(slot).try(LowerError.OutOfMemory);
     });
     ret = lo.result_type(callee).try();
     out = lo.temp(ret).try();

@@ -123,6 +123,18 @@ class_of* = (lo :: Lowerer, ty: TyId) Res<Scalar, LowerError> {
     Ok(lo.shape(ty).try().class)
 }
 
+// A read-only parameter wider than two words travels as a pointer to the
+// caller's value, as gen_c passes it as `const T *`; it is never copied.
+by_reference* = (lo :: Lowerer, mutable: bool, ty: TyId) Res<bool, LowerError> {
+    mutable.match({
+        true  => Ok(false),
+        false => lo.class_of(ty).try().match({
+            Block(l) => Ok(l.size > 16),
+            _        => Ok(false),
+        }),
+    })
+}
+
 compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
     lo.check.types.at(ty).match({
         Prim(p)  => p.name.eq("str").match({

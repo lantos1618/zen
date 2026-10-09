@@ -27,7 +27,8 @@
 { machine_op, machine_refusal } = gen.gen_ir_machine
 { Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee } = gen.gen_lower_core
 { DeferEntry, Local } = gen.gen_lower_core
-{ member_call, mem_call, sys_call, resolve, to_bound, handle_for_place } = gen.gen_lower_member
+{ member_call, mem_call, sys_call, resolve, to_bound, handle_for_place, discriminant_decode } = gen.gen_lower_member
+{ format_door } = gen.gen_lower_member
 { sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
 { cli_call } = gen.gen_lower_cli
 { spawn_actor, use_actor_mem } = gen.gen_lower_actor
@@ -139,11 +140,19 @@ construction = (
     name : str,
     span : Span
 ) Res<Value, LowerError> {
-    ty = lo.settled_type(id).try();
-    s  = lo.shape(ty).try();
-    s.form.match({
-        Record(_) => lo.construct_named(ty, c, span),
-        _         => lo.variant_call(ty, c, name, span),
+    lo.check.discriminant_call_of(id).match({
+        Ok(kind) => kind.match({
+            Decode(ty) => lo.discriminant_decode(id, c, ty, span),
+            Encode(_)  => Err(unsupported(span, "a discriminant of a type")),
+        }),
+        None     => {
+            ty = lo.settled_type(id).try();
+            s  = lo.shape(ty).try();
+            s.form.match({
+                Record(_) => lo.construct_named(ty, c, span),
+                _         => lo.variant_call(ty, c, name, span),
+            })
+        },
     })
 }
 
@@ -278,19 +287,7 @@ dot_call_on = (
                         lo.invoke(id, callee, sources, c, span)
                     },
                     // `Type.Variant(payload)` or a construction through a type.
-                    None        => {
-                        ty = lo.settled_type(id).try();
-                        s  = lo.shape(ty).try();
-                        s.form.match({
-                            Record(_) => lo.construct_named(ty, c, span),
-                            _         => lo.variant_call(
-                                ty,
-                                c,
-                                a.name.text,
-                                span
-                            ),
-                        })
-                    },
+                    None        => lo.construction(id, c, a.name.text, span),
                   }),
                 }),
                 false => {
@@ -1576,48 +1573,13 @@ intrinsic = (
                     span
                 ),
                 "std.text.text_fmt"       => name.eq("fmt").match({
-                    // `fmt(out :: Sink, fmt, args..)`: formatting through a Sink.
-                    true  => {
-                        out_source    = sources.get(0).value_or(Source.Absent);
-                        out_ty        = out_source.match({ Given(e) => lo.type_of(e), _ => Err(unsupported(span, "fmt without a sink")) }).try();
-                        place         = lo.argument_place(
-                            out_source,
-                            out_ty,
-                            span
-                        ).try();
-                        written_first = out_source.match({
-                            Given(e) => c.args.get(
-                                0
-                            ).match({ Ok(a) => a.value == e, None => false }),
-                            _        => false,
-                        });
-                        lo.format_call(
-                            c.args,
-                            written_first.match({ true => 1, false => 0 }),
-                            false,
-                            FmtTo.Into(place),
-                            span
-                        ).try();
-                        lo.variant_value(
-                            lo.type_of(id).try(),
-                            "Ok",
-                            Ok(lo.unit().try()),
-                            span
-                        )
-                    },
+                    true  => lo.sink_fmt(id, c, sources, span),
                     false => Err(unsupported(
                         span,
                         "this formatting operation"
                     )),
                 }),
-                _                         => Err(unsupported(
-                    span,
-                    lo.alloc.String(
-                        "the compiler-provided operation `{}.{}`",
-                        module,
-                        name
-                    ).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" })
-                )),
+                _                         => lo.format_door(callee.f).match({ true => lo.sink_fmt(id, c, sources, span), false => Err(unsupported(span, lo.alloc.String("the compiler-provided operation `{}.{}`", module, name).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" }))) }),
             }),
         }),
     })
@@ -3395,6 +3357,33 @@ print_call* = (
     lo.unit()
 }
 
+// `fmt(out :: Sink, fmt, args..)`: formatting through a Sink.
+sink_fmt = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    c       : Call,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    out_source    = sources.get(0).value_or(Source.Absent);
+    out_ty        = out_source.match({ Given(e) => lo.type_of(e), _ => Err(unsupported(span, "fmt without a sink")) }).try();
+    place         = lo.argument_place(out_source, out_ty, span).try();
+    written_first = out_source.match({
+        Given(e) => c.args.get(
+            0
+        ).match({ Ok(a) => a.value == e, None => false }),
+        _        => false,
+    });
+    lo.format_call(
+        c.args,
+        written_first.match({ true => 1, false => 0 }),
+        false,
+        FmtTo.Into(place),
+        span
+    ).try();
+    lo.variant_value(lo.type_of(id).try(), "Ok", Ok(lo.unit().try()), span)
+}
+
 format_call* = (
     lo      :: Lowerer,
     args    : Vec<Arg>,
@@ -3711,11 +3700,14 @@ fmt_helper = (
     Ok
 }
 
-// `String.add(s: str)` on the String at `place`.
+// `String.add(s: str)` on the String at `place`; any other sink a format
+// door writes through is written by its own `write` floor.
 string_add = (lo :: Lowerer, place: Place, value: Value) Res<LowerError> {
+    string = lo.std_type("std.text.text_string", "String", nowhere()).try();
+    floor  = (place.ty == string).match({ true => "add", false => "write" });
     callee = lo.resolve(
         place.ty,
-        "add",
+        floor,
         None,
         2,
         lo.alloc.Inst(),

@@ -19,7 +19,7 @@
 { sys_named, constant_named } = gen.gen_sys
 { TrapKind } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
-{ Lowerer, Value, Place, Base, Callee } = gen.gen_lower_core
+{ Lowerer, Value, Place, Base, Callee, CaseTest } = gen.gen_lower_core
 { to_i64_bits } = gen.gen_lower_core
 { Shape, Form, shape, size_of } = gen.gen_lower_shape
 { Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call } = gen.gen_lower_call
@@ -30,6 +30,9 @@
 { class_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
 { name_source } = sema.sema_variant_name
+{ DiscriminantCall, RepresentedEnum, represented_enum } = sema.sema_discriminant
+{ has_catch_all, is_discriminant_catch_all } = sema.sema_discriminant
+{ const_int } = sema.sema_const
 
 // How a member call reaches its body.
 Target = { Static: Callee | Dynamic: Bound }
@@ -98,6 +101,30 @@ member_call* = (
 }
 
 resolved_member_call = (
+    lo       :: Lowerer,
+    id       : ExprId,
+    c        : Call,
+    checked  : CheckedCall,
+    receiver : ExprId,
+    recv_ty  : TyId,
+    name     : str,
+    span     : Span
+) Res<Value, LowerError> {
+    lo.check.discriminant_call_of(id).match({
+        Ok(kind) => lo.lower_discriminant(id, c, receiver, kind, span),
+        None     => lo.checked_member_call(
+            id,
+            c,
+            checked,
+            receiver,
+            recv_ty,
+            name,
+            span
+        ),
+    })
+}
+
+checked_member_call = (
     lo       :: Lowerer,
     id       : ExprId,
     c        : Call,
@@ -282,7 +309,9 @@ resolve* = (
                                 Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
                                 None  => by_name,
                             }),
-                            Supply  => by_name && f.body.match({ Ok(_) => true, None => false }),
+                            Supply  => by_name && f.body.match({ Ok(_) => true, None => lo.format_door(
+                                f
+                            ) }),
                             Default => body.match({
                                 Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
                                 None  => by_name && f.body.match({ Ok(_) => true, None => false }),
@@ -388,6 +417,143 @@ variant_switch = (lo :: Lowerer, value: Value, ty: TyId, span: Span)
     Ok(out)
 }
 
+// `value.discriminant()` and `T.from_discriminant(n)` on a represented enum:
+// the external integer is translated here, and the dense tag stays internal.
+lower_discriminant = (
+    lo       :: Lowerer,
+    id       : ExprId,
+    c        : Call,
+    receiver : ExprId,
+    kind     : DiscriminantCall,
+    span     : Span
+) Res<Value, LowerError> {
+    kind.match({
+        Encode(ty) => lo.discriminant_encode(id, receiver, ty, span),
+        Decode(ty) => lo.discriminant_decode(id, c, ty, span),
+    })
+}
+
+represented = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    span : Span
+) Res<RepresentedEnum, LowerError> {
+    lo.check.represented_enum(ty).try(LowerError.OutOfMemory).ok_or(unsupported(span, lo.described("a discriminant of an enum without them", ty)))
+}
+
+// A known variant answers its written integer; the catch-all its payload.
+discriminant_encode = (
+    lo       :: Lowerer,
+    id       : ExprId,
+    receiver : ExprId,
+    ty       : TyId,
+    span     : Span
+)
+                      Res<Value, LowerError> {
+    shape = lo.represented(ty, span).try();
+    value = lo.expr(receiver).try();
+    ret   = lo.type_of(id).try();
+    tag   = lo.tag_of(value).try();
+    out   = lo.temp(ret).try();
+    done  = lo.label().try();
+    shape.value.variants.loop((h, i, v) {
+        yes      = lo.label().try();
+        next     = lo.label().try();
+        expected = lo.word_const(Scalar.U32, i.to_i64_bits()).try();
+        test     = lo.slot_of(Scalar.Bool).try();
+        lo.add(Instruction.BinaryValue(Binary(
+            out: test,
+            left: tag,
+            right: expected,
+            op: Op.Equal,
+            span: nowhere()
+        ))).try();
+        // The catch-all's payload read is guarded by this tag test.
+        v.discriminant.match({
+            Ok(_) => (),
+            None  => {
+                lo.case_tests.add(CaseTest(
+                    test: test,
+                    subject: value.slot,
+                    variant: i,
+                    otherwise: None
+                )).try(LowerError.OutOfMemory);
+            },
+        });
+        lo.branch_to(test, yes, next).try();
+        lo.start(yes);
+        wire = v.discriminant.match({
+            Ok(e) => lo.constant(ret, lo.check.const_int(e).value_or(0)),
+            None  => lo.coerce(lo.payload_of(value, i).try(), ret),
+        }).try();
+        lo.add(Instruction.Copy(Move(out: out.slot, source: wire.slot))).try();
+        lo.jump(done).try();
+        lo.start(next);
+    });
+    lo.trap(TrapKind.Unreachable, span).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// An integer no known variant writes is the catch-all holding it, or `None`
+// when the enum has no catch-all.
+discriminant_decode* = (
+    lo   :: Lowerer,
+    id   : ExprId,
+    c    : Call,
+    ty   : TyId,
+    span : Span
+)
+                      Res<Value, LowerError> {
+    shape = lo.represented(ty, span).try();
+    arg   = c.args.get(0).ok_or(unsupported(span, "a from_discriminant without its integer")).try();
+    raw   = lo.expr_as(arg.value, shape.repr).try();
+    ret   = lo.type_of(id).try();
+    open  = has_catch_all(shape.value);
+    out   = lo.temp(ret).try();
+    done  = lo.label().try();
+    shape.value.variants.loop((v) {
+        v.discriminant.when_ok((e) {
+            yes      = lo.label().try();
+            next     = lo.label().try();
+            expected = lo.constant(
+                shape.repr,
+                lo.check.const_int(e).value_or(0)
+            ).try();
+            test     = lo.slot_of(Scalar.Bool).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: test,
+                left: raw.slot,
+                right: expected.slot,
+                op: Op.Equal,
+                span: nowhere()
+            ))).try();
+            lo.branch_to(test, yes, next).try();
+            lo.start(yes);
+            known = lo.variant_value(ty, v.name.text, None, span).try();
+            held  = open.match({
+                true  => Ok(known),
+                false => lo.variant_value(ret, "Ok", Ok(known), span),
+            }).try();
+            lo.add(Instruction.Copy(Move(
+                out: out.slot,
+                source: held.slot
+            ))).try();
+            lo.jump(done).try();
+            lo.start(next);
+        });
+    });
+    fallback = shape.value.variants.find(
+        (v) { v.is_discriminant_catch_all() }
+    ).match({
+        Ok(v) => lo.variant_value(ty, v.name.text, Ok(raw), span),
+        None  => lo.variant_value(ret, "None", None, span),
+    }).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: fallback.slot))).try();
+    lo.enter(done).try();
+    Ok(out)
+}
+
 // A std bound by name, with its program-wide implementors.
 bound_named = (lo :: Lowerer, name: str, span: Span) Res<Bound, LowerError> {
     defs ::= lo.alloc.Vec<Def>();
@@ -402,6 +568,22 @@ bound_named = (lo :: Lowerer, name: str, span: Span) Res<Bound, LowerError> {
         args
     ).try(LowerError.OutOfMemory);
     Ok(Bound(decl: d.id, ty: ty, implementors: lo.implementors(d.id).try()))
+}
+
+// A bodiless `fmt(out :: Sink, fmt: str, args: ...)` declared outside
+// std.text formats into its receiver the same way.
+format_door* = (lo :: Lowerer, f: Function) bool {
+    f.name.text.eq("fmt") && (f.params.len == 3)
+        && f.body.match({ Ok(_) => false, None => true })
+        && f.params.get(2).match({
+            Ok(p) => p.type.match({
+                Ok(t) => lo.tree.type_at(
+                    t
+                ).kind.match({ Variadic => true, _ => false }),
+                None  => false,
+            }),
+            None  => false,
+        })
 }
 
 variadic* = (lo :: Lowerer, f: Function) bool {

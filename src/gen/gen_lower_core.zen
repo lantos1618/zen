@@ -996,8 +996,20 @@ Lowerer* = {
             Ok(value) => Ok(value),
             None      => {
                 self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
-                value         = self.expr(id).try();
-                self.coerce(value, ty)
+                e             = self.tree.expr_at(self.unwrapped(id));
+                // Each arm meets the wanted type itself; sema's join of the
+                // arms may be a type one of them only lifts into.
+                e.kind.match({
+                    Match(m) => self.match_at(m, e.span, ty),
+                    Block(b) => {
+                        value = self.block_as(b, true, Ok(ty)).try();
+                        self.coerce(value, ty)
+                    },
+                    _        => {
+                        value = self.expr(id).try();
+                        self.coerce(value, ty)
+                    },
+                })
             },
         })
     }
@@ -2527,6 +2539,7 @@ Lowerer* = {
         e = self.tree.expr_at(self.unwrapped(id));
         e.kind.match({
             Match(m) => self.match_at(m, e.span, self.unit_ty),
+            Block(b) => self.block_as(b, false, Ok(self.unit_ty)),
             _        => self.expr(id),
         })
     }
@@ -2565,7 +2578,10 @@ Lowerer* = {
                 subject,
                 read
             ).try();
-            value = self.expr_as(arm.body, ty).try();
+            value = (ty == self.unit_ty).match({
+                true  => { self.discarded(arm.body).try(); self.unit() },
+                false => self.expr_as(arm.body, ty),
+            }).try();
             self.add(Instruction.Copy(Move(
                 out: out.slot,
                 source: value.slot

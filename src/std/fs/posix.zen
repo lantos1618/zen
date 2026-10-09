@@ -89,6 +89,19 @@ Descriptor* = {
         end.to_usize().ok_or(FileError.SeekFailed)
     }
 
+    // Seekable files only: the next read starts at byte `at`.
+    seek* = (self: @Self, at: usize) Res<FileError> {
+        // No checked u64-to-i64 conversion: rebuild the offset from halves.
+        high = (at / 2147483648).to_u64().to_i32().ok_or(
+            FileError.SeekFailed
+        ).try();
+        low  = (at % 2147483648).to_u64().to_i32().ok_or(
+            FileError.SeekFailed
+        ).try();
+        to   = high.to_i64() * 2147483648 + low.to_i64();
+        (Native.lseek(self.fd, to, Native.SEEK_SET) == to).ensure(FileError.SeekFailed)
+    }
+
     // Do not retry close after EINTR: some systems have already released fd.
     close* = (self: @Self) Res<FileError> {
         (Native.close(self.fd) == 0).ensure(FileError.CloseFailed)

@@ -105,7 +105,9 @@ td.r,th.r{text-align:right}
 // One event per line: index ns kind from to message (see docs/ACTOR_RUNTIME.md).
 const K = {SEND:1,PARK:2,RELEASE:3,REFUSE:4,TAKE:5,BREAK:6,BLOCK:7,UNBLOCK:8,SLEEP:9,WAKE:10,CLOSED:11,WAIT:12,SPAWN:13,DONE:14,FAIL:15,STOP:16,DROP:17};
 // took[i]: for a send or park, when its message was taken (0 while queued).
-const T = {n:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null};
+// base: how many earlier events were trimmed off the front (see trim).
+const T = {n:0, base:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null};
+const KEEP = 4000000;
 const queued = new Map();
 const meta = {workers:0, bound:256, names:new Map(), ended:false, lost:0};
 let offset = 0;
@@ -129,9 +131,22 @@ function ingest(text){
     const i = T.n++;
     T.ns[i] = +f[1]; T.kind[i] = +f[2]; T.from[i] = +f[3]; T.to[i] = +f[4]; T.msg[i] = +f[5]; T.took[i] = 0;
     const k = T.kind[i];
-    if (k === K.SEND || k === K.PARK) queued.set(T.msg[i], i);
-    else if (k === K.TAKE || k === K.REFUSE || k === K.CLOSED || k === K.DROP){ const s = queued.get(T.msg[i]); if (s !== undefined){ T.took[s] = T.ns[i]; queued.delete(T.msg[i]); } }
+    if (k === K.SEND || k === K.PARK) queued.set(T.msg[i], T.base + i);
+    else if (k === K.TAKE || k === K.REFUSE || k === K.CLOSED || k === K.DROP){ const s = queued.get(T.msg[i]); if (s !== undefined){ if (s >= T.base) T.took[s - T.base] = T.ns[i]; queued.delete(T.msg[i]); } }
   }
+  if (T.n > KEEP * 1.5) trim(T.n - KEEP);
+}
+
+// A long trace keeps only its last KEEP events for scrubbing, playback,
+// dots and flame. The d events falling off the front are folded into
+// `base`, the model as of the first kept event, so per-actor counts,
+// failures and the tree still cover the whole run.
+let base = null;
+function trim(d){
+  const cur = M; M = base || fresh(); apply(d); base = M; M = cur;
+  for (const k of ["ns", "kind", "from", "to", "msg", "took"]) T[k].copyWithin(0, d, T.n);
+  T.n -= d; T.base += d; base.upto = 0;
+  if (M){ M.upto -= d; if (M.upto < 0) M = null; }
 }
 
 function header(line){
@@ -241,7 +256,7 @@ function startNs(){ return T.n ? T.ns[0] : 0; }
 function indexAt(ns){ let lo = 0, hi = T.n; while (lo < hi){ const mid = (lo + hi) >> 1; if (T.ns[mid] <= ns) lo = mid + 1; else hi = mid; } return lo; }
 function sync(){
   const upto = live ? T.n : indexAt(cursorNs);
-  if (!M || upto < M.upto) M = fresh();
+  if (!M || upto < M.upto) M = base ? structuredClone(base) : fresh();
   apply(upto);
   if (live) cursorNs = lastActivity();
 }
@@ -287,7 +302,7 @@ function renderHeader(){
   $("sBlocked").textContent = acts.filter(a => a.blocked).length;
   $("sFail").textContent = acts.filter(a => a.failed).length;
   $("sFail").className = acts.some(a => a.failed) ? "bad" : "";
-  $("sEvents").textContent = T.n.toLocaleString() + (meta.lost ? " (" + meta.lost + " lost)" : "");
+  $("sEvents").textContent = (T.base + T.n).toLocaleString() + (T.base ? " · last " + (T.n / 1e6).toFixed(1) + "M kept" : "") + (meta.lost ? " (" + meta.lost + " lost)" : "");
   const step = Math.max(endNs() / 40, 1e6), rates = [], lats = [];
   for (let i = 39; i >= 0; i--){ const t = now - i * step; rates.push(windowRate(t, step));
     const qs = M.latency.filter(l => l.t > t - step && l.t <= t).map(l => l.q); lats.push(qs.length ? pct(qs, .95) : 0); }
@@ -654,16 +669,18 @@ $("flame").onclick = e => { const b = e.target.getBoundingClientRect(), x = e.cl
 // ---------------------------------------------------------------- polling
 let dirty = true, polling = false;
 async function poll(){
-  if (polling) return; polling = true;
+  if (polling) return; polling = true; let more = false;
   try {
     const r = await fetch("/trace?from=" + offset, {cache:"no-store"});
     const start = +(r.headers.get("X-Trace-Start") || 0), text = await r.text();
-    if (start !== offset){ T.n = 0; queued.clear(); offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
-    if (text.length){ ingest(text); offset += new TextEncoder().encode(text).length; dirty = true; }
+    if (start !== offset){ T.n = 0; T.base = 0; base = null; queued.clear(); offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
+    if (text.length){ more = text.length > 1048576; ingest(text); offset += new TextEncoder().encode(text).length; dirty = true; }
     $("liveDot").classList.toggle("on", !meta.ended);
     $("liveText").textContent = meta.ended ? "program exited" : "running";
   } catch (e) { $("liveDot").classList.remove("on"); $("liveText").textContent = "server gone"; }
   polling = false;
+  // Still behind a long trace: fetch the next chunk now, not in 400 ms.
+  if (more) poll();
 }
 setInterval(poll, 400); poll();
 (function frame(){

@@ -250,7 +250,7 @@ function apply(upto){
       const p = M.pending.get(m); M.pending.delete(m);
       const q = p ? t - p.t : 0;
       const parent = M.cause.get(m); M.cause.delete(m);
-      M.running.set(from, {t, actor:to, q, src:p ? p.from : 0, id:++M.turnId, parent:parent || null, depth:parent ? parent.depth + 1 : 0});
+      M.running.set(from, {t, actor:to, q, src:p ? p.from : 0, id:++M.turnId, depth:parent ? parent.depth + 1 : 0});
       keep(a.q, q, SAMPLE); keep(M.latency, {t, q}, 4096);
       worker(from).busyFrom = t; break; }
     case K.DONE: case K.FAIL: {

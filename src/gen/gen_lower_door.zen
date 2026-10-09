@@ -1,0 +1,222 @@
+// Type-directed doors on the IR path: `value.to_json(a)` and std.cli's
+// `outcome<T>(env, a, argv)`. Neither has a body: each is expanded at its
+// call, where the type is concrete, into calls of the ordinary std
+// functions that do the work. Every helper that can fail answers a Res; a
+// failure is copied into the door's answer and ends the expansion.
+
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, Err, None } = std.core
+{ ExprId } = std.ast
+{ Span } = std.source
+{ TyId, TyNamed, Inst, decl_at } = sema.sema
+{ Instruction, Move } = gen.gen_ir
+{ LowerError, unsupported } = gen.gen_lower
+{ Lowerer, Value, Place, Callee } = gen.gen_lower_core
+{ Source, real_call } = gen.gen_lower_call
+{ succeeded, ok_payload } = gen.gen_lower_thread
+{ variant_index, shape } = gen.gen_lower_shape
+
+JSON_MODULE: str = "std.json.json_meta"
+
+// Where a door's answer goes, and the block every early exit joins.
+Exit* = { out*: Value, done*: usize }
+
+// `value.to_json(a)`: an empty String, then one std.json writer per
+// primitive, String or field name, walking records field by field.
+json_door* = (lo :: Lowerer, id: ExprId, sources: Vec<Source>, span: Span)
+             Res<Value, LowerError> {
+    ret   = lo.type_of(id).try();
+    value = lo.source_value(sources.get(0).value_or(Source.Absent), span).try();
+    alloc ::= lo.alloc.Vec<Source>();
+    alloc.add(sources.get(1).value_or(Source.Absent)).try(LowerError.OutOfMemory);
+    empty = lo.module_function("std.text.text_string", "String", 1, span).try();
+    made  = lo.real_call(empty, alloc, span).try();
+    exit  = Exit(out: lo.temp(ret).try(), done: lo.label().try());
+    lo.fail_unless_ok(made, exit, span).try();
+    buffer = lo.spill(lo.copy_value(lo.ok_payload(made).try()).try());
+    lo.json_value(buffer, exit, value, span).try();
+    lo.answer_ok(exit, lo.read(buffer).try(), span)
+}
+
+json_value = (
+    lo     :: Lowerer,
+    buffer : Place,
+    exit   : Exit,
+    value  : Value,
+    span   : Span
+)
+             Res<LowerError> {
+    lo.check.types.at(value.ty).match({
+        Prim(p)  => json_writer(p.name).match({
+            Ok(writer) => lo.json_write(buffer, exit, writer, value, span),
+            None       => Err(unsupported(
+                span,
+                "a value that cannot be encoded as JSON"
+            )),
+        }),
+        Named(n) => is_string(lo, n).match({
+            true  => lo.json_write(buffer, exit, "write_string", value, span),
+            false => lo.json_record(buffer, exit, value, span),
+        }),
+        _        => Err(unsupported(
+            span,
+            "a value that cannot be encoded as JSON"
+        )),
+    })
+}
+
+json_record = (
+    lo     :: Lowerer,
+    buffer : Place,
+    exit   : Exit,
+    value  : Value,
+    span   : Span
+)
+              Res<LowerError> {
+    fields = lo.shape(value.ty).try().form.match({
+        Record(f) => Ok(f),
+        _         => None,
+    }).ok_or(unsupported(span, "a value that cannot be encoded as JSON")).try();
+    whole  = lo.spill(lo.copy_value(value).try());
+    lo.json_raw(buffer, exit, "{", span).try();
+    fields.loop((h, i, f) {
+        key ::= lo.alloc.String().try(LowerError.OutOfMemory);
+        (i > 0).then(() { key.add(',').try(LowerError.OutOfMemory); });
+        key.fmt("\"{}\":", f.name).try(LowerError.OutOfMemory);
+        lo.json_raw(buffer, exit, key.view(), span).try();
+        field = lo.read(lo.field_place(whole, f.name, span).try()).try();
+        lo.json_value(buffer, exit, field, span).try();
+    });
+    lo.json_raw(buffer, exit, "}", span)
+}
+
+json_raw = (lo :: Lowerer, buffer: Place, exit: Exit, text: str, span: Span)
+           Res<LowerError> {
+    value = lo.string(text, lo.prim("str").try()).try();
+    lo.json_write(buffer, exit, "write_raw", value, span)
+}
+
+json_write = (
+    lo     :: Lowerer,
+    buffer : Place,
+    exit   : Exit,
+    writer : str,
+    value  : Value,
+    span   : Span
+) Res<LowerError> {
+    args ::= lo.alloc.Vec<Source>();
+    args.add(Source.Located(buffer)).try(LowerError.OutOfMemory);
+    args.add(Source.Computed(value)).try(LowerError.OutOfMemory);
+    wrote = lo.real_call(
+        lo.module_function(JSON_MODULE, writer, 2, span).try(),
+        args,
+        span
+    ).try();
+    lo.fail_unless_ok(wrote, exit, span)
+}
+
+json_writer = (name: str) Res<str> {
+    name.match({
+        "str"   => Ok("write_str"),
+        "bool"  => Ok("write_bool"),
+        "i8"    => Ok("write_i8"),
+        "i16"   => Ok("write_i16"),
+        "i32"   => Ok("write_i32"),
+        "i64"   => Ok("write_i64"),
+        "u8"    => Ok("write_u8"),
+        "u16"   => Ok("write_u16"),
+        "u32"   => Ok("write_u32"),
+        "u64"   => Ok("write_u64"),
+        "usize" => Ok("write_usize"),
+        "f32"   => Ok("write_f32"),
+        "f64"   => Ok("write_f64"),
+        _       => None,
+    })
+}
+
+is_string = (lo :: Lowerer, n: TyNamed) bool {
+    n.name.eq("String") && lo.check.world.module_name(n.decl).eq("std.text.text_string")
+}
+
+// ---------------------------------------------------------------------
+// shared
+// ---------------------------------------------------------------------
+
+// Unless `res` holds Ok, the answer is Err of its error and the door ends.
+fail_unless_ok* = (lo :: Lowerer, res: Value, exit: Exit, span: Span)
+                  Res<LowerError> {
+    ok      = lo.succeeded(res).try();
+    go_on   = lo.label().try();
+    stopped = lo.label().try();
+    lo.branch_to(ok, go_on, stopped).try();
+    lo.start(stopped);
+    variants = lo.variants_of(res.ty).try();
+    err      = variant_index(variants, "Err").ok_or(unsupported(span, "a Res without Err")).try();
+    reason   = lo.payload_of(res, err).try();
+    failed   = lo.variant_value(exit.out.ty, "Err", Ok(reason), span).try();
+    lo.add(Instruction.Copy(Move(
+        out: exit.out.slot,
+        source: failed.slot
+    ))).try();
+    lo.jump(exit.done).try();
+    lo.start(go_on);
+}
+
+// The answer is Ok(value); the door's blocks join after it.
+answer_ok* = (lo :: Lowerer, exit: Exit, value: Value, span: Span)
+             Res<Value, LowerError> {
+    done = lo.variant_value(exit.out.ty, "Ok", Ok(value), span).try();
+    lo.add(Instruction.Copy(Move(out: exit.out.slot, source: done.slot))).try();
+    lo.enter(exit.done).try();
+    Ok(exit.out)
+}
+
+source_value* = (
+    lo     :: Lowerer,
+    source : Source,
+    span   : Span
+) Res<Value, LowerError> {
+    source.match({
+        Given(e)    => lo.expr(e),
+        Computed(v) => Ok(v),
+        Located(p)  => lo.read(p),
+        Absent      => Err(unsupported(span, "a door without its argument")),
+    })
+}
+
+// The function `name` of `module` with `arity` parameters and a body.
+module_function* = (
+    lo     :: Lowerer,
+    module : str,
+    name   : str,
+    arity  : usize,
+    span   : Span
+) Res<Callee, LowerError> {
+    index = lo.check.world.index_of(module).ok_or(unsupported(span, "a missing runtime module")).try();
+    table = lo.check.world.table_at(index).ok_or(unsupported(span, "a missing runtime module table")).try();
+    found :: Res<Callee> = None;
+    seen  ::= false;
+    table.defs.loop((d) {
+        (d.name.eq(name) && !seen).then(() {
+            decl_at(lo.tree, d.id).when_ok((decl) {
+                decl.kind.match({
+                    Function(f) => (f.params.len == arity && f.body.match({ Ok(_) => true, None => false })).then(() {
+                        seen  = true;
+                        found = Ok(Callee(
+                            f: f,
+                            owner: d.id,
+                            member: None,
+                            module: index,
+                            inst: lo.alloc.Inst(),
+                            self_ty: None,
+                            generic_owner: None
+                        ));
+                    }),
+                    _           => (),
+                });
+            });
+        });
+    });
+    found.ok_or(unsupported(span, "a missing runtime function"))
+}

@@ -1447,6 +1447,7 @@ field_default = (
     });
     written.match({
         Ok(e) => {
+            lo.pure_default(e).ensure(unsupported(lo.tree.expr_at(e).span, "a field default that names a function or reads a frame")).try();
             inst  = lo.check.types.at(ty).match({
                 Named(n) => lo.check.inst_of_named(
                     n
@@ -3860,4 +3861,52 @@ break_fits = (lo :: Lowerer, value: ExprId, payload: TyId, span: Span)
     got = lo.type_of(value).try();
     lo.check.assignable(got, payload).ensure(unsupported(span, "h.break(v) is not free to choose its type")).try();
     (!lo.check.literal_overflows(value, payload)).ensure(unsupported(lo.tree.expr_at(value).span, "h.break(v) is not free to choose its type"))
+}
+
+// A default is written at every construction that omits it, so it may call
+// no function; `null_ptr<T>()` and constructions of pure values remain.
+pure_default = (lo :: Lowerer, id: ExprId) bool {
+    lo.tree.expr_at(id).kind.match({
+        Literal(_)    => true,
+        Unit          => true,
+        Name(_)       => true,
+        Paren(p)      => lo.pure_default(p.inner),
+        Unary(u)      => lo.pure_default(u.operand),
+        Binary(b)     => lo.pure_default(b.lhs) && lo.pure_default(b.rhs),
+        Access(a)     => lo.pure_default(a.base),
+        Array(a)      => lo.pure_defaults(a.elems),
+        FixedArray(a) => lo.pure_defaults(a.elems),
+        Call(c)       => !lo.calls_function(id) && lo.pure_args(c),
+        _             => false,
+    })
+}
+
+pure_defaults = (lo :: Lowerer, elems: Vec<ExprId>) bool {
+    elems.find((e) { !lo.pure_default(e) }).match({
+        Ok(_) => false,
+        None  => true,
+    })
+}
+
+pure_args = (lo :: Lowerer, c: Call) bool {
+    c.args.find((a) { !lo.pure_default(a.value) }).match({
+        Ok(_) => false,
+        None  => true,
+    })
+}
+
+calls_function = (lo :: Lowerer, id: ExprId) bool {
+    lo.check.checked_call(id).match({
+        None    => false,
+        Ok(sel) => sel.declaration.match({
+            None  => false,
+            Ok(d) => decl_at(lo.tree, d).match({
+                None    => false,
+                Ok(def) => def.kind.match({
+                    Function(f) => !f.name.text.eq("null_ptr"),
+                    _           => false,
+                }),
+            }),
+        }),
+    })
 }

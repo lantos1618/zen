@@ -32,8 +32,6 @@ tests/corpus/actor/try_send_answers_full_instead_of_waiting # UNSUPPORTED: error
 tests/corpus/actor/waiting_sender_of_a_stopped_receiver_is_refused # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/watch_races_stop_and_timers # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/watch_reports_how_an_actor_ended # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
-tests/corpus/ast/structural_walk_handles_deep_trees # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
-tests/corpus/ast/structural_walk_preserves_owners # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
 tests/corpus/backends/c_ir_pilot/main # UNSUPPORTED: main.zen:4:22: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
 tests/corpus/bitwise/bars_still_declare_enums_and_unions # UNSUPPORTED: bars_still_declare_enums_and_unions.zen:25:25: error: unsupported by this backend: a member without 
 tests/corpus/bitwise/expected_type_settles_literal_width # UNSUPPORTED: expected_type_settles_literal_width.zen:27:26: error: unsupported by this backend: a field of a valu
@@ -230,7 +228,6 @@ tests/corpus/parse/parser_spans # UNSUPPORTED: parser_spans.zen:50:5: error: uns
 tests/corpus/parse/parser_trivia # UNSUPPORTED: parser_trivia.zen:61:5: error: unsupported by this backend: a value conversion this backend does not
 tests/corpus/parse/represented_enum_discriminants # UNSUPPORTED: represented_enum_discriminants.zen:22:5: error: unsupported by this backend: a value conversion this
 tests/corpus/parse/trivia_attachment_corners # UNSUPPORTED: trivia_attachment_corners.zen:134:5: error: unsupported by this backend: a value conversion this bac
-tests/corpus/parse/trivia_every_comment_is_owned # UNSUPPORTED: trivia_every_comment_is_owned.zen:101:5: error: unsupported by this backend: a value conversion this
 tests/corpus/parse_zen/positions_are_exact/main # UNSUPPORTED: main.zen:68:5: error: unsupported by this backend: a value conversion this backend does not model (`
 tests/corpus/printing/floats_print_only_through_f64/main # UNSUPPORTED: :0:0: error: unsupported by this backend: f32 values
 tests/corpus/proc_run/allocation_failure_frees_captures/main # UNSUPPORTED: std/proc/proc.zen:222:27: error: unsupported by this backend: a call without successful semantic che
@@ -238,7 +235,6 @@ tests/corpus/proc_run/creation_mask/main # UNSUPPORTED: main.zen:5:23: error: un
 tests/corpus/proc_run/hello_world/main # UNSUPPORTED: std/proc/proc.zen:241:16: error: unsupported by this backend: the compiler-provided operation `std.p
 tests/corpus/proc_run/large_streams/main # UNSUPPORTED: std/proc/proc.zen:222:27: error: unsupported by this backend: a call without successful semantic che
 tests/corpus/ptr/comparisons_preserve_element_types # UNSUPPORTED: comparisons_preserve_element_types.zen:40:17: error: unsupported by this backend: an expression with
-tests/corpus/sema/a_callback_body_settles_a_generic_result # UNSUPPORTED: a_callback_body_settles_a_generic_result.zen:31:5: error: unsupported by this backend: a value conve
 tests/corpus/sema/bound_third_module/ # UNSUPPORTED: boxy/boxy.zen:8:35: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/checked_calls_survive_contextual_rechecking # UNSUPPORTED: checked_calls_survive_contextual_rechecking.zen:3:16: nothing is at that path: tried `sema/sema_chec
 tests/corpus/sema/computed_field_read # UNSUPPORTED: computed_field_read.zen:26:19: error: unsupported by this backend: a field of a value without record
@@ -294,12 +290,9 @@ tests/corpus/std/simd_features # UNSUPPORTED: simd_features.zen:93:25: error: un
 tests/corpus/std/simd_sha # UNSUPPORTED: std/simd.zen:229:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_vectors # UNSUPPORTED: simd_vectors.zen:43:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements # UNSUPPORTED: std/math/math.zen:14:28: error: unsupported by this backend: alternatives of a value without them (`
-tests/corpus/std/str_count_and_replace_once # UNSUPPORTED: std/text/text_str.zen:104:17: error: unsupported by this backend: a value conversion this backend do
 tests/corpus/std/test_suite_runs_after_assertion_failure # UNSUPPORTED: std/test/test.zen:72:9: error: unsupported by this backend: alternatives of a value without them (`(
 tests/corpus/std/volatile_and_inline # UNSUPPORTED: volatile_and_inline.zen:15:28: error: unsupported by this backend: this pointer operation
 tests/corpus/std/wide_integers # UNSUPPORTED: wide_integers.zen:16:15: error: unsupported by this backend: the machine primitive mul_wide (64x64 -
 tests/corpus/string-basic/a_float_fits_the_buffer/main # UNSUPPORTED: main.zen:39:25: error: unsupported by this backend: formatting an f64 into text
-tests/corpus/string-basic/str_find_split_trim_serve_a_csv/main # UNSUPPORTED: main.zen:88:5: error: unsupported by this backend: a value conversion this backend does not model (`
-tests/corpus/string-basic/str_search_members_edge_cases/main # UNSUPPORTED: main.zen:56:5: error: unsupported by this backend: a value conversion this backend does not model (`
 tests/corpus/trait-bound/computed_fields_recompute_and_own_storage_wins/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/traps/simd_lane_out_of_bounds # UNSUPPORTED: simd_lane_out_of_bounds.zen:7:12: error: unsupported by this backend: the std.simd operation splat_*

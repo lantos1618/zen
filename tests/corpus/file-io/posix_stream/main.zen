@@ -29,14 +29,14 @@ interrupted = (number: i32) {}
 main = (env: Env) Res<i32, AllocError | FileError | FsError | Failure> {
     a    = env.mem.alloc();
     temp = create_temporary(a, "./stream-XXXXXX.bin", 4).try();
-    @scope.defer(() { env.fs.remove(temp.path); });
-    @scope.defer(() { temp.file.close(); });
+    @scope.defer(() { env.fs.remove(temp.path).ignore(); });
+    @scope.defer(() { temp.file.close().ignore(); });
     temp.file.write_all("abcdef").try();
     (temp.file.size().try() == 6).ensure(Failure.Check).try();
     temp.file.write_all("gh").try();
     (temp.file.size().try() == 8).ensure(Failure.Check).try();
     reader = open_read(a, temp.path).try();
-    @scope.defer(() { reader.close(); });
+    @scope.defer(() { reader.close().ignore(); });
     bytes = a.realloc<u8>(null_ptr<u8>(), 9).try();
     reader.read_exact(bytes, 2).try();
     (reader.size().try() == 8).ensure(Failure.Check).try();
@@ -84,7 +84,7 @@ main = (env: Env) Res<i32, AllocError | FileError | FsError | Failure> {
     });
     Native.close(fds.read(1));
     pipe = Descriptor(fd: fds.read(0));
-    @scope.defer(() { pipe.close(); });
+    @scope.defer(() { pipe.close().ignore(); });
     @scope.defer(() { Wait.waitpid(pid, null_ptr<i32>(), 0); });
     old = Signals.signal(Signals.SIGALRM, callback(interrupted));
     @scope.defer(() { Native.alarm(0); Signals.signal(Signals.SIGALRM, old); });

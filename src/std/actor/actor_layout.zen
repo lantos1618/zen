@@ -108,6 +108,8 @@ GLOBALS_BYTES*: usize = 8896
 G_TRACE_FD*: usize = 1104    // trace file descriptor + 1 (0 when not open)
 G_TRACE_OUT*: usize = 1105   // the trace writer's text buffer
 G_TRACE_OUT_N*: usize = 1106 // bytes pending in it
+G_FAULTS*: usize = 1107      // ZEN_ACTOR_FAULTS: 1 in n chances fail (0 when off)
+G_FAULT_RNG*: usize = 1108   // the faults' own xorshift state, from the seed
 
 // Statistics, as word indices after G_STATS.
 S_QUEUED*: usize = 0         // sends that waited in an outbox

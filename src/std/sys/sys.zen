@@ -99,6 +99,33 @@ mprotect* = (addr: usize, len: usize, prot: i32) i64
 // Advice about a mapping (Linux: MADV_HUGEPAGE asks for huge pages).
 madvise* = (addr: usize, len: usize, advice: i32) i64
 flock* = (fd: i32, op: i32) i64
+// Linux: the length written, including the NUL. macOS: the buffer's address,
+// or 0 when it is too small.
+getcwd* = (buf: Ptr<u8>, len: usize) i64
+mkdirat* = (dir: i32, path: Ptr<u8>, mode: u32) i64
+unlinkat* = (dir: i32, path: Ptr<u8>, flags: i32) i64
+pipe2* = (fds: Ptr<i32>, flags: i32) i64
+fork* = (
+    flags  : usize,
+    stack  : usize,
+    parent : usize,
+    child  : usize,
+    tls    : usize
+) i64
+execve* = (path: Ptr<u8>, argv: Ptr<Ptr<u8>>, env: Ptr<Ptr<u8>>) i64
+dup3* = (from: i32, to: i32, flags: i32) i64
+chdir* = (path: Ptr<u8>) i64
+wait4* = (pid: i32, status: Ptr<i32>, options: i32, usage: usize) i64
+kill* = (pid: i32, signal: i32) i64
+ppoll* = (
+    fds      : Ptr<u8>,
+    count    : usize,
+    timeout  : usize,
+    mask     : usize,
+    mask_len : usize
+) i64
+poll* = (fds: Ptr<u8>, count: usize, timeout: i32) i64
+ioctl* = (fd: i32, request: usize) i64
 
 // Child processes. Darwin spells these pipe, dup2 and poll, which ignore the
 // trailing argument; ppoll's third is a timeout pointer on Linux (0 waits

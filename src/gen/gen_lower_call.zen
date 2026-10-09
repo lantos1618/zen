@@ -35,7 +35,7 @@
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
 { variant_index, size_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
-{ json_door } = gen.gen_lower_door
+{ json_door, outcome_door } = gen.gen_lower_door
 
 // One argument position after binding names and the receiver.
 Source* = { Given: ExprId | Absent | Computed: Value | Located: Place }
@@ -1446,6 +1446,13 @@ intrinsic = (
                     sources,
                     span
                 ),
+                "std.cli.cli_derive"      => name.eq("outcome").match({
+                    true  => lo.outcome_door(id, sources, span),
+                    false => Err(unsupported(
+                        span,
+                        "this command line operation"
+                    )),
+                }),
                 "std.json.json_meta"      => name.eq("to_json").match({
                     true  => lo.json_door(id, sources, span),
                     false => Err(unsupported(span, "this JSON operation")),

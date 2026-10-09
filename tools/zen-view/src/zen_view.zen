@@ -8,7 +8,8 @@
 // when the file was rewritten by a new run. One request at a time; each
 // gets its own arena.
 { Res, Ok, Err, None, loop } = std.core
-{ Alloc, AllocError } = std.mem
+{ Alloc, AllocError, null_ptr } = std.mem
+{ open_read, FileError } = std.fs.posix
 { str, str_at } = std.text
 { Env } = std.env
 { println } = std.io
@@ -67,7 +68,7 @@ answer = (env: Env, a: Alloc, cli: Cli, stream: TcpStream) Res<AllocError> {
     got  = stream.read(buf, REQUEST_MAX).match({ Ok(n) => n, Err(_) => 0 });
     path = target(str_at(buf.ptr(), got));
     path.starts_with("/trace").match({
-        true  => tail(env, a, cli, path, stream),
+        true  => tail(a, cli, path, stream),
         false => (path.eq("/") || path.eq("/index.html")).match({
             true  => page(env, a, cli, stream),
             false => reply(
@@ -115,30 +116,40 @@ page = (env: Env, a: Alloc, cli: Cli, stream: TcpStream) Res<AllocError> {
     })
 }
 
-tail = (env: Env, a: Alloc, cli: Cli, path: str, stream: TcpStream)
-       Res<AllocError> {
+tail = (a: Alloc, cli: Cli, path: str, stream: TcpStream) Res<AllocError> {
     from = path.find("from=").match({
         Ok(at) => path.slice(at + 5, path.len).parse_u64().value_or(0).to_usize().value_or(0),
         None   => 0,
     });
-    env.fs.read(a, cli.trace).match({
+    chunk(a, cli.trace, from).match({
         // Not written yet: nothing new.
-        Err(_)   => reply(a, stream, "200 OK", "text/plain", "", from),
-        Ok(text) => {
-            all   = text.view();
-            start = (from <= all.len).match({ true => from, false => 0 });
-            stop  = (all.len - start > CHUNK_MAX).match({ true => start + CHUNK_MAX, false => all.len });
-            rest  = all.slice(start, stop);
-            reply(
-                a,
-                stream,
-                "200 OK",
-                "text/plain",
-                rest.slice(0, whole_lines(rest)),
-                start
-            )
-        },
+        Err(_)  => reply(a, stream, "200 OK", "text/plain", "", from),
+        Ok(got) => reply(
+            a,
+            stream,
+            "200 OK",
+            "text/plain",
+            got.text.slice(0, whole_lines(got.text)),
+            got.start
+        ),
     })
+}
+
+Chunk = { start: usize, text: str }
+
+// At most CHUNK_MAX bytes of the trace from byte `from`, or from 0 when the
+// file is now shorter (a new run rewrote it). Only that range is read, so a
+// poll costs the same on a multi-gigabyte trace as on a small one.
+chunk = (a: Alloc, trace: str, from: usize) Res<Chunk, AllocError | FileError> {
+    file = open_read(a, trace).try();
+    @scope.defer(() { file.close(); });
+    size  = file.size().try();
+    start = (from <= size).match({ true => from, false => 0 });
+    n     = (size - start > CHUNK_MAX).match({ true => CHUNK_MAX, false => size - start });
+    bytes = a.realloc<u8>(null_ptr<u8>(), n + 1).try();
+    file.seek(start).try();
+    file.read_exact(bytes, n).try();
+    Ok(Chunk(start: start, text: str_at(bytes, n)))
 }
 
 // Bytes up to and including the last newline: a line still being written

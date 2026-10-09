@@ -4,10 +4,10 @@
 // instantiations recorded there types the body again with its arguments,
 // so an operation the arguments do not support is reported by sema rather
 // than by a backend. That covers free functions and the members a generic
-// type's body declares. The answers are discarded; lowering still reads
-// the declaration pass.
+// type's body declares. Each instance's answers are published for the
+// lowering under `instance_key_of`.
 
-{ Function, BlockId, TParam } = std.ast
+{ Function, BlockId, TParam, ExprId } = std.ast
 { AllocError } = std.mem
 { Vec, Map } = std.collections
 { str, String } = std.text
@@ -153,7 +153,8 @@ check_instance = (c :: Checker, f: Function, body: BlockId, e: InstEdge)
         c.instance_ctx(mi, ret_now, poison, false),
         settled
     ).try();
-    c.close_scratch(scratch)
+    key = c.instance_key_of(body, None, e.args, settled, ret_now).try();
+    c.close_scratch(scratch, key, inst)
 }
 
 // A member's body typed with its type's parameters bound to the receiver's
@@ -259,42 +260,93 @@ check_member_instance = (
     mi      = n.decl.module.to_usize();
     scratch = c.open_scratch();
     poison  = c.types.unknown().try();
+    inst ::= c.alloc.Inst();
     c.tree.decl_at(n.decl).match({
         Ok(d) => d.kind.match({
-            Struct(s) => c.bind_type_tparams(s.tparams, n.args, mi),
-            Enum(en)  => c.bind_type_tparams(en.tparams, n.args, mi),
+            Struct(s) => c.bind_type_tparams(
+                s.name.text,
+                s.tparams,
+                n.args,
+                mi,
+                inst
+            ),
+            Enum(en)  => c.bind_type_tparams(
+                en.name.text,
+                en.tparams,
+                n.args,
+                mi,
+                inst
+            ),
             _         => Ok,
         }),
         None  => Ok,
     }).try();
     owner = c.owner_of(mi, f.name.text).try();
+    targs ::= c.alloc.Vec<TyId>();
     f.tparams.loop((h, tp) {
         v = c.types.var(tp.name.text, owner).try();
         c.bind_tvar(tp.name.text, e.inst.arg_for(v)).try();
+        inst.bind(v, e.inst.arg_for(v)).try();
+        targs.add(e.inst.arg_for(v)).try();
     });
     f.tparams.loop((h, tp) { c.push_bounds(tp, Ctx(mi, poison)).try() });
-    c.types.at(e.sig).match({
-        Fn(sig) => c.typed_instance(
-            f,
-            body,
-            c.instance_ctx(mi, sig.ret, e.self_ty, true),
-            sig.params
-        ),
-        _       => Ok,
-    }).try();
-    c.close_scratch(scratch)
+    key = c.types.at(e.sig).match({
+        Fn(sig) => {
+            c.typed_instance(
+                f,
+                body,
+                c.instance_ctx(mi, sig.ret, e.self_ty, true),
+                sig.params
+            ).try();
+            c.instance_key_of(
+                body,
+                Ok(e.self_ty),
+                targs,
+                sig.params,
+                sig.ret
+            ).try()
+        },
+        _       => "",
+    });
+    c.close_scratch(scratch, key, inst)
+}
+
+// The identity an instance's answers are published under, shared with the
+// lowering: the body, Self, the function's own type arguments (a type
+// parameter used only inside the body changes nothing else), and the
+// settled signature.
+instance_key_of* = (
+    c       :: Checker,
+    body    : BlockId,
+    self_ty : Res<TyId>,
+    targs   : Vec<TyId>,
+    params  : Vec<TyId>,
+    ret     : TyId
+) Res<str, AllocError> {
+    out ::= c.alloc.String("b{}", body.index).try();
+    self_ty.when_ok((t) { out.fmt("@{}", c.types.key_at(t)).try() });
+    targs.loop((h, t) { out.fmt("<{}", c.types.key_at(t)).try() });
+    params.loop((h, t) { out.fmt(",{}", c.types.key_at(t)).try() });
+    out.fmt("->{}", c.types.key_at(ret)).try();
+    Ok(out.view());
 }
 
 bind_type_tparams = (
     c       :: Checker,
+    name    : str,
     tparams : Vec<TParam>,
     args    : Vec<TyId>,
-    mi      : usize
+    mi      : usize,
+    inst    :: Inst
 ) Res<AllocError> {
     poison = c.types.unknown().try();
+    owner  = c.owner_of(mi, name).try();
     Range(0, tparams.len).loop((h, i) {
         tparams.get(i).when_ok((tp) {
-            args.get(i).when_ok((ty) { c.bind_tvar(tp.name.text, ty).try() });
+            args.get(i).when_ok((ty) {
+                c.bind_tvar(tp.name.text, ty).try();
+                inst.bind(c.types.var(tp.name.text, owner).try(), ty).try();
+            });
         });
     });
     tparams.loop((h, tp) { c.push_bounds(tp, Ctx(mi, poison)).try() });
@@ -364,9 +416,18 @@ open_scratch = (c :: Checker) Scratch {
     )
 }
 
-close_scratch = (c :: Checker, s: Scratch) Res<AllocError> {
+// The instance's answers, settled by `inst`, are published under `key` as the declaration
+// pass's are restored.
+close_scratch = (c :: Checker, s: Scratch, key: str, inst: Inst)
+                Res<AllocError> {
     c.release_raised(s.rmark);
-    c.swap_memos(s.was);
+    typed    ::= c.swap_memos(s.was);
+    concrete ::= c.alloc.Map<ExprId, TyId>();
+    typed.expr_memo.pairs((h, id, t) {
+        concrete.set(id, c.subst(t, inst).try()).try();
+    });
+    typed.settle(concrete);
+    c.publish_instance(key, typed).try();
     c.release_bounds(s.bmark).try();
     c.release_tvars(s.tmark).try();
     c.release(s.smark).try();

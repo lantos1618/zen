@@ -318,9 +318,9 @@ C = {
                     false => {
                         self.layouts.add(layout).try();
                         self.head.fmt(
-                            "typedef struct {{ _Alignas({}) unsigned char b[{}]; }} zb{}_{};\n",
-                            at_least_one(layout.align),
+                            "typedef struct {{ unsigned char b[{}]; }} __attribute__((aligned({}))) zb{}_{};\n",
                             at_least_one(layout.size),
+                            at_least_one(layout.align),
                             layout.size,
                             layout.align
                         )
@@ -342,18 +342,17 @@ C = {
         });
         self.survey(function).try();
         self.copies = 0;
-        // The verifier has proved every read follows a write. Zeroed scalars
-        // keep C's flow analysis quiet at no cost; zeroing every aggregate
-        // would clear the whole frame on each call.
+        // The verifier has proved every read follows a write, so zeroing is
+        // only a hint: an optimizer folds the zeroed scalars well, while an
+        // unoptimized build would store each one on every call (ZR_Z).
         Range(function.parameters, function.slots.len).loop((i) {
             ty = slot_ty(function, i);
             self.need(ty).try();
             self.out.add("  ZR_U ").try();
             self.out.ctype(ty).try();
-            self.out.fmt(" v{}", i).try();
             is_block(ty).match({
-                true  => self.out.add(";\n"),
-                false => self.out.add(" = 0;\n"),
+                true  => self.out.fmt(" v{};\n", i),
+                false => self.out.fmt(" v{} ZR_Z;\n", i),
             }).try();
         });
         self.labels.clear();
@@ -1118,15 +1117,20 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("#include <sys/syscall.h>\n").try();
     out.add("#endif\n").try();
     out.add("#define ZR_U __attribute__((unused))\n").try();
+    out.add(
+        "#ifdef __OPTIMIZE__\n#define ZR_Z = 0\n#else\n#define ZR_Z\n#endif\n"
+    ).try();
     out.add("static uint64_t zr_argc, zr_argv, zr_envp;\n").try();
-    out.add("static _Alignas(16) uint64_t zr_globals[32];\n").try();
+    out.add(
+        "static uint64_t zr_globals[32] __attribute__((aligned(16)));\n"
+    ).try();
     out.add("static unsigned char zr_out_buf[65536];\n").try();
     out.add("static size_t zr_out_len;\n").try();
     out.add(
         "static pthread_mutex_t zr_out_lock = PTHREAD_MUTEX_INITIALIZER;\n"
     ).try();
-    out.add("static _Thread_local uint64_t zr_word;\n").try();
-    out.add("static _Thread_local jmp_buf *zr_guard;\n").try();
+    out.add("static __thread uint64_t zr_word;\n").try();
+    out.add("static __thread jmp_buf *zr_guard;\n").try();
     out.add(
         "static inline void zr_write_all(int fd, const unsigned char *p, size_t n) {\n"
     ).try();
@@ -1183,14 +1187,16 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  zr_text(fd, b, (size_t)n);\n").try();
     out.add("}\n").try();
     out.add(
-        "static inline _Noreturn void zr_trap(const char *where, size_t n) {\n"
+        "static inline __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {\n"
     ).try();
     out.add("  zr_flush();\n").try();
     out.add("  zr_write_all(2, (const unsigned char *)where, n);\n").try();
     out.add("  if (zr_guard) longjmp(*zr_guard, 1);\n").try();
     out.add("  _exit(134);\n").try();
     out.add("}\n").try();
-    out.add("static inline _Noreturn void zr_exit(int status) {\n").try();
+    out.add(
+        "static inline __attribute__((noreturn)) void zr_exit(int status) {\n"
+    ).try();
     out.add(
         "  if (zr_globals[0]) ((void (*)(void))(uintptr_t)zr_globals[0])();\n"
     ).try();

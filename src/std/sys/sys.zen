@@ -86,6 +86,11 @@ mprotect* = (addr: usize, len: usize, prot: i32) i64
 // Advice about a mapping (Linux: MADV_HUGEPAGE asks for huge pages).
 madvise* = (addr: usize, len: usize, advice: i32) i64
 flock* = (fd: i32, op: i32) i64
+// Linux: the length written, including the NUL. macOS: the buffer's address,
+// or 0 when it is too small.
+getcwd* = (buf: Ptr<u8>, len: usize) i64
+mkdirat* = (dir: i32, path: Ptr<u8>, mode: u32) i64
+unlinkat* = (dir: i32, path: Ptr<u8>, flags: i32) i64
 
 // Threads. std.sys.sys_thread builds its portable API on these; programs
 // use that (or Env) rather than calling them directly.

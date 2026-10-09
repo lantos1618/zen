@@ -1509,6 +1509,9 @@ sys_name = (call: Sys) str {
         ExitGroup    => "exit_group",
         ClockGettime => "clock_gettime",
         Getrandom    => "getrandom",
+        Getcwd       => "getcwd",
+        Mkdirat      => "mkdirat",
+        Unlinkat     => "unlinkat",
         _            => "unsupported",
     })
 }

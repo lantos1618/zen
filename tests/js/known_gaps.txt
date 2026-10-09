@@ -95,7 +95,6 @@ tests/corpus/env/threads_spawn_joins_two_bodies # UNSUPPORTED: error: unsupporte
 tests/corpus/env/threads_spawn_many_and_join_in_order # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/errors-res/a_union_of_errors_is_an_error # UNSUPPORTED: a_union_of_errors_is_an_error.zen:24:14: error: unsupported by this backend: a value conversion this backend does not model (`
 tests/corpus/errors-try/fallible_inline_helper_in_thread/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
-tests/corpus/errors-try/try_on_an_all_ok_match_never_widens/ # UNSUPPORTED: main.zen:20:5: error: unsupported by this backend: an unknown variant (`Res!i32,main.Fail|main.Kind|
 tests/corpus/file-io/posix_stream/main # UNSUPPORTED: main.zen:29:23: error: unsupported by this backend: a call without successful semantic checking
 tests/corpus/fmt/a_comment_between_items_stays_put # UNSUPPORTED: a_comment_between_items_stays_put.zen:15:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/f
 tests/corpus/fmt/a_file_that_does_not_parse_is_left_alone # UNSUPPORTED: a_file_that_does_not_parse_is_left_alone.zen:14:10: nothing is at that path: tried `fmt/fmt.zen` and
@@ -233,7 +232,6 @@ tests/corpus/sema/type_observations_are_indexed_and_monotone # UNSUPPORTED: type
 tests/corpus/sema/type_observations_survive_unknown_context # UNSUPPORTED: type_observations_survive_unknown_context.zen:3:16: nothing is at that path: tried `sema/sema_check.
 tests/corpus/sema/usage_report/main # UNSUPPORTED: main.zen:4:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
 tests/corpus/sema/widening_conversions_are_bounds # UNSUPPORTED: :0:0: error: unsupported by this backend: f32 values
-tests/corpus/sema/zero_array_count_is_valid # UNSUPPORTED: compiler error: invalid IR at function 0 (main), block 1: slot is read before initialization on a re
 tests/corpus/sema_zen/a_core_declaration_of_a_primitive_is_that_primitive/main # UNSUPPORTED: main.zen:30:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/a_cursor_position_finds_its_node/main # UNSUPPORTED: main.zen:9:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
 tests/corpus/sema_zen/a_declaration_is_read_with_its_own_scope/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check

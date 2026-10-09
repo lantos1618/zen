@@ -1,0 +1,146 @@
+// A small trading pipeline to look at in zen-view: a market spawns its risk
+// and execution actors and three feeds, each feed spawns its own strategy,
+// and prices flow feed > strategy > risk > exec. Strategy 2 divides by zero
+// at tick 900, so it fails and the prices still sent to it are dropped.
+//
+//   ZEN_ACTOR_TRACE=market.trace ./market
+{ Res, Ok, Err, None, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+TICKS: u64 = 3000
+
+Exec = { filled :: u64 = 0 }
+
+Exec.impl(Actor, {
+    order = (self :: @Self, ctx: Context, strategy: u64, price: u64) {
+        self.filled = self.filled + 1;
+        ctx.env.threads.sleep(0);
+    }
+
+    stopped = (self :: @Self, ctx: Context) { println(
+        "exec filled {}",
+        self.filled
+    ); }
+})
+
+Risk = { exec: Ref<Exec>, checked :: u64 = 0 }
+
+Risk.impl(Actor, {
+    check = (self :: @Self, ctx: Context, strategy: u64, price: u64) {
+        self.checked = self.checked + 1;
+        (price % 3 != 0).match({
+            true  => self.exec.order(strategy, price).ignore(),
+            false => (),
+        });
+    }
+})
+
+Strategy = { id: u64, risk: Ref<Risk>, seen :: u64 = 0, zero :: u64 = 0 }
+
+Strategy.impl(Actor, {
+    signal = (self :: @Self, ctx: Context, price: u64) {
+        self.seen = self.seen + 1;
+        // Strategy 2 has a bug: at tick 900 it divides by zero.
+        (self.id == 2 && price == 900).match({
+            true  => { println("strategy 2: {}", price / self.zero); },
+            false => (),
+        });
+        (price % 4 == self.id).match({
+            true  => self.risk.check(self.id, price).ignore(),
+            false => (),
+        });
+    }
+})
+
+Feed = { id: u64, risk: Ref<Risk>, strategy :: Res<Ref<Strategy>> = None }
+
+Feed.impl(Actor, {
+    started = (self :: @Self, ctx: Context) {
+        self.strategy = ctx.env.spawn(Strategy(
+            id: self.id,
+            risk: self.risk
+        )).match({
+            Ok(s)  => Ok(s),
+            Err(_) => None,
+        });
+    }
+
+    price = (self :: @Self, ctx: Context, p: u64) {
+        self.strategy.match({ Ok(s) => s.signal(p).ignore(), None => () });
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        self.strategy.match({ Ok(s) => { s.stop(); s.join(); }, None => () });
+    }
+})
+
+Market = {
+    risk :: Res<Ref<Risk>> = None,
+    exec :: Res<Ref<Exec>> = None,
+    feed0 :: Res<Ref<Feed>> = None,
+    feed1 :: Res<Ref<Feed>> = None,
+    feed2 :: Res<Ref<Feed>> = None,
+}
+
+Market.impl(Actor, {
+    started = (self :: @Self, ctx: Context) {
+        ctx.env.spawn(Exec()).match({
+            Ok(exec) => {
+                self.exec = Ok(exec);
+                ctx.env.spawn(Risk(exec: exec)).match({
+                    Ok(risk) => {
+                        self.risk  = Ok(risk);
+                        self.feed0 = feed(ctx, 0, risk);
+                        self.feed1 = feed(ctx, 1, risk);
+                        self.feed2 = feed(ctx, 2, risk);
+                    },
+                    Err(_)   => (),
+                });
+            },
+            Err(_)   => (),
+        });
+    }
+
+    tick = (self :: @Self, ctx: Context, p: u64) {
+        send(self.feed0, p);
+        send(self.feed1, p);
+        send(self.feed2, p);
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        close(self.feed0);
+        close(self.feed1);
+        close(self.feed2);
+        self.risk.match({ Ok(r) => { r.stop(); r.join(); }, None => () });
+        self.exec.match({ Ok(e) => { e.stop(); e.join(); }, None => () });
+    }
+})
+
+feed = (ctx: Context, id: u64, risk: Ref<Risk>) Res<Ref<Feed>> {
+    ctx.env.spawn(Feed(id: id, risk: risk)).match({ Ok(f) => Ok(f), Err(_) => None })
+}
+
+send = (f: Res<Ref<Feed>>, p: u64) { f.match({ Ok(r) => r.price(
+    p
+).ignore(), None => () }); }
+
+close = (
+    f : Res<Ref<Feed>>
+) { f.match({ Ok(r) => { r.stop(); r.join(); }, None => () }); }
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    market = env.spawn(Market()).try();
+    p :: u64 = 0;
+    loop(() { p < TICKS }, (h) {
+        market.tick(p).try();
+        p = p + 1;
+        (p % 50 == 0).match({ true => env.threads.sleep(1), false => () });
+    });
+    market.stop();
+    market.join();
+    Ok(0)
+}

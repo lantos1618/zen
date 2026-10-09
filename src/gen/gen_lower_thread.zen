@@ -28,7 +28,7 @@
 { Lowerer, Value, Place, Base, Callee, Frame, LocalKind, LambdaRef, Local } = gen.gen_lower_core
 { to_i64_bits, LoopTarget, Cleanup, DropEntry, DeferEntry, NameFinder } = gen.gen_lower_core
 { size_of, align_of, round_up, class_of, variant_index } = gen.gen_lower_shape
-{ ActorEntry, actor_function } = gen.gen_lower_actor
+{ ActorEntry, actor_function, names_function } = gen.gen_lower_actor
 { Source, argument_value, argument_place, sys_env_call, closure_of } = gen.gen_lower_call
 { pointee_of, payload_type } = gen.gen_lower_member
 { real_call } = gen.gen_lower_call
@@ -236,7 +236,9 @@ element = (
 // A function instance with no declaration of its own. It occupies a slot in
 // `Lowerer.pending` like any instance (so calls and code addresses name it
 // by index) and is lowered from this description instead of a Function.
-Synth* = { Lifted: LiftedBody | Actor: ActorEntry }
+Synth* = { Lifted: LiftedBody | Actor: ActorEntry | Names }
+// A turn's source name, `Type.behaviour`, for the trace's name table.
+TurnName* = { index*: usize, name*: String }
 SynthAt* = { index*: usize, synth*: Synth }
 
 // A pending instance: synthesized, or an ordinary function.
@@ -250,6 +252,7 @@ lower_pending* = (
         Ok(at) => at.synth.match({
             Lifted(body)   => lo.lifted_function(body),
             Actor(routine) => lo.actor_function(routine),
+            Names          => lo.names_function(),
         }),
         None   => lo.function(callee, entry),
     })

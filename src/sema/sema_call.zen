@@ -30,7 +30,7 @@
 { check_literal } = sema.sema_trap
 { check_arms, check_arms_agree, hoist_at, one_value, tail_expr } = sema.sema_hoist
 { check_dropped_tail, note_lambda_tail } = sema.sema_effect
-{ bound_declares } = sema.sema_supply
+{ bound_declares, prim_named } = sema.sema_supply
 { type_of, block_type } = sema.sema_type
 { push_tparams, module_name } = sema.sema_inst
 { param_type, type_from_ast } = sema.sema_denote
@@ -593,7 +593,11 @@ CallCheck = {
                 _        => (),
             });
         });
-        self.body = c.member_fn(f.decl_owner, ac.name.text, f.decl_span).match({
+        self.body = c.member_fn(
+            f.decl_owner,
+            ac.name.text,
+            f.decl_span
+        ).try().match({
             None => None, Ok(fn) => fn.body,
         });
         ty        = self.written_found(c, ac, f, off).try();
@@ -628,7 +632,7 @@ CallCheck = {
     // `env.args<Cli>()`; ordinary arguments infer nested uses too.
     written_found = (self :: @Self, c :: Checker, ac: Access, f: Found,
                      off: usize) Res<TyId, AllocError> {
-        c.member_fn(f.decl_owner, ac.name.text, f.decl_span).match({
+        c.member_fn(f.decl_owner, ac.name.text, f.decl_span).try().match({
             None   => (self.call.targs.len > 0).match({
                 true  => self.invalid_member_instantiation(c, ac.name.text),
                 false => Ok(f.ty),
@@ -2064,9 +2068,15 @@ ambiguous = (c :: Checker, name: str, a: Cand, b: Cand) Res<AllocError> {
 
 // The function a struct or enum body declares under `name`, for its
 // parameter list.
-member_fn* = (c: Checker, ty: TyId, name: str, at: Span) Res<Function> {
-    c.types.at(ty).match({
-        Named(n) => c.tree.decl_at(n.decl).match({
+member_fn* = (c :: Checker, ty: TyId, name: str, at: Span)
+             Res<Res<Function>, AllocError> {
+    owner: Res<DeclId> = c.types.at(ty).match({
+        Named(n) => Ok(n.decl),
+        Prim(p)  => c.prim_named(p).try().match({ Ok(pn) => Ok(pn.decl), None => None }),
+        _        => None,
+    });
+    Ok(owner.match({
+        Ok(decl_id) => c.tree.decl_at(decl_id).match({
             Ok(decl) => decl.body_members().match({
                 Ok(members) => members.find((m) {
                     m.named(name) && member_span_eq(m.span, at)
@@ -2081,8 +2091,8 @@ member_fn* = (c: Checker, ty: TyId, name: str, at: Span) Res<Function> {
             }),
             None     => None,
         }),
-        _        => None,
-    })
+        None        => None,
+    }))
 }
 
 member_span_eq = (a: Span, b: Span) bool {

@@ -1,0 +1,46 @@
+// A trap names the actor and the message it ran, then the chain of turns
+// that sent it, from the flight recorder: Fragile's message was sent by
+// Router's turn, whose message was sent by Client's turn, whose message
+// came from main.
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context, Ref } = std.actor
+{ println } = std.io
+
+Fragile = { divisor :: u64 = 0 }
+
+Fragile.impl(Actor, {
+    divide = (self :: @Self, ctx: Context, n: u64) {
+        q = n / self.divisor;
+        println("{} / {} = {}", n, self.divisor, q);
+    }
+})
+
+Router = { next: Ref<Fragile> }
+
+Router.impl(Actor, {
+    route = (self :: @Self, ctx: Context, n: u64) { self.next.divide(
+        n + 1
+    ).ignore(); }
+})
+
+Client = { next: Ref<Router> }
+
+Client.impl(Actor, {
+    go = (self :: @Self, ctx: Context, n: u64) { self.next.route(
+        n * 2
+    ).ignore(); }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    fragile = env.spawn(Fragile()).try();
+    router  = env.spawn(Router(next: fragile)).try();
+    client  = env.spawn(Client(next: router)).try();
+    client.go(5).try();
+    fragile.join();
+    println("fragile joined");
+    Ok(0)
+}

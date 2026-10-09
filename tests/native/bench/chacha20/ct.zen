@@ -1,0 +1,45 @@
+// Keep both AEAD entry points reachable for the optimized assembly audit.
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ chacha20poly1305_seal, chacha20poly1305_open } = chacha20poly1305
+
+main = (env: Env) Res<i32, AllocError> {
+    a       = env.mem.alloc();
+    message = a.raw(64, 16).try();
+    sealed  = a.raw(80, 16).try();
+    plain   = a.raw(64, 16).try();
+    aad     = a.raw(16, 16).try();
+    key     = a.raw(32, 16).try();
+    nonce   = a.raw(12, 16).try();
+    scratch = a.raw(40 * 8, 16).try().to<u64>();
+    Range<usize>(0, 64).loop((i) { message.write(i, (i % 251).to_u8().value_or(0)); });
+    Range<usize>(0, 16).loop((i) { aad.write(i, i.to_u8().value_or(0)); });
+    Range<usize>(0, 32).loop((i) { key.write(i, i.to_u8().value_or(0)); });
+    Range<usize>(0, 12).loop((i) { nonce.write(i, i.to_u8().value_or(0)); });
+    sealed_ok = chacha20poly1305_seal(
+        sealed,
+        80,
+        message,
+        64,
+        aad,
+        16,
+        key,
+        nonce,
+        scratch,
+        40
+    );
+    opened_ok = chacha20poly1305_open(
+        plain,
+        64,
+        sealed,
+        80,
+        aad,
+        16,
+        key,
+        nonce,
+        scratch,
+        40
+    );
+    Ok((sealed_ok && opened_ok).match({ true => 0, false => 1 }))
+}

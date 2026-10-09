@@ -28,6 +28,7 @@ tests/corpus/actor/stop_runs_stopped_then_drops_state_once # UNSUPPORTED: error:
 tests/corpus/actor/surface_is_usable # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/task_summary/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/trap_ends_only_that_actor # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/trap_reports_the_chain_of_causes # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/try_send_answers_full_instead_of_waiting # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/waiting_sender_of_a_stopped_receiver_is_refused # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/watch_races_stop_and_timers # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
@@ -303,3 +304,7 @@ tests/corpus/string-basic/str_find_split_trim_serve_a_csv/main # UNSUPPORTED: ma
 tests/corpus/string-basic/str_search_members_edge_cases/main # UNSUPPORTED: main.zen:56:5: error: unsupported by this backend: a value conversion this backend does not model (`
 tests/corpus/trait-bound/computed_fields_recompute_and_own_storage_wins/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/traps/simd_lane_out_of_bounds # UNSUPPORTED: simd_lane_out_of_bounds.zen:7:12: error: unsupported by this backend: the std.simd operation splat_*
+tests/corpus/actor/seed_1_fixes_the_order # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/seed_2_fixes_the_order # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/seed_runs_timers_on_virtual_time # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/seed_reports_a_deadlock # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma

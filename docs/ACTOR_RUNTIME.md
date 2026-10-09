@@ -60,8 +60,10 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
 - Watchdog: when every worker has been asleep for `ZEN_ACTOR_WATCHDOG_MS`
   (default 1000; 0 turns it off; needs sysmon) while actors are blocked, or
   when actors are still wedged at exit, the runtime prints the wait-for graph
-  on stderr: each blocked actor's registry index, mailbox depth and the actor
-  it waits on, then the cycles. Nothing can block or unblock while every
+  on stderr: each blocked actor (`Name#index`: its type's name and registry
+  index), its mailbox depth and the actor it waits on, then the cycles. For
+  the first few blocked actors it also prints the turn whose send is waiting
+  and that turn's chain of causes from the flight recorder. Nothing can block or unblock while every
   worker sleeps, so the registry is walked once per quiet spell, when it
   reaches the limit, not on every sysmon tick.
 - Message trace: `ZEN_ACTOR_TRACE=<file>` records each message's path, an
@@ -75,13 +77,15 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   (default 100), so the file grows while the program runs; an event that
   finds the ring full of unwritten events is counted lost. The file is
   text: `#` lines for the header, `# name <code> <Type.behaviour>` for each
-  turn the C backend generated (the asm backend lists none yet), then one
-  line per event, `index ns kind from to message`, and `# end events N
+  turn the compiler generated, then one
+  line per event, `index ns kind from to message id cause`, and `# end events N
   lost L` at `actor_shutdown`. `from` and `to` are registry indices (0 for
   a thread that is no actor; the worker for take, done, fail, drop, sleep
   and wake; the spawner for spawn), and the message is its block's
   address, unique while it lives. A take and the next done or fail on the
-  same worker bracket one turn. With the variable unset each trace point
+  same worker bracket one turn. On a take, `id` is the message's flight-recorder id and
+  `cause` the id of the message whose turn sent it (0: none); other events
+  have 0 in both. With the variable unset each trace point
   is one load and a branch.
 - Viewing it: `tools/zen-view` serves a dashboard over the file — actor
   tree by spawner, topology with messages per second, mailbox fill, queue
@@ -92,6 +96,38 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   flight are dots on their edges, and the flame tab stacks each turn on the
   turn whose send caused it. `tools/zen-view/demo/market.zen` is a nested
   pipeline, one strategy of which fails, to try it on.
+- Flight recorder, on unless `ZEN_ACTOR_RECORDER=0`: every message carries
+  `M_CAUSE`, the id of the message whose turn sent it (0 from main or any
+  other thread outside a turn). Each thread that runs turns keeps a ring of
+  its last 256 takes (id, cause, actor Ref, the actor type's name), 8 KiB,
+  written with plain stores when a message is taken; that take gives the
+  message its id, `m<thread>.<n>` (the thread's ring tag and its count), so
+  no shared counter is touched. A checked trap then prints, after the trap's
+  line, the actor and message (`Fragile#1 trapped handling m1.3`) and one
+  line per hop back: which actor's turn sent each message while handling
+  which earlier one, until a send from outside any turn or until the cause
+  has left its ring (`older history is not kept`), at most 16 hops. The
+  rings are read without locks: a report about a message still being
+  recorded may read a stale entry, which shows as history not kept.
+  Spawn passes the actor type's name to `actor_start` (`B_NAME`: the static
+  name's address and length in one word).
+
+- Seeded schedule, under `ZEN_ACTOR_SEED=n`: the runtime starts no worker,
+  sysmon or timer thread. A ready actor goes into one array (`G_READY`), and
+  turns run on whichever thread would otherwise wait: `join`, a send from
+  outside a turn to a full mailbox, and the exit hook's drain. Each step a
+  xorshift state seeded from `n` (`G_SIM`) picks the ready actor and the
+  turn's batch (1 to 32 messages), so the seed fixes the interleaving and
+  different seeds explore different ones; each sender's messages still
+  arrive in order. Timers read a virtual clock (`G_SIM_NOW`, also the trace
+  clock): when nothing is ready the clock jumps to the earliest deadline and
+  those timers fire, so a long `send_after` costs no real time. A wait with
+  nothing ready and no timer pending can never end: the runtime prints the
+  stuck report and `rerun with ZEN_ACTOR_SEED=n`, flushes standard output and
+  exits with status 3. Trap, stuck and cycle reports name the seed too.
+  Not covered: time the program reads itself (`monotonic_ns`, `sleep`), a
+  turn that never returns (there is no preemption), and plain threads, whose
+  sends still work but whose timing the seed does not fix.
 
 - Pages: everything the runtime keeps (globals, per-thread state, workers,
   the registry, 2 MiB spans of slabs, large messages, trace buffers) comes

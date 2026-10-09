@@ -25,7 +25,7 @@
 { has_body, decl_name, impl_member } = gen.gen_c.gen_c_impl
 { impl_bound_type } = sema.sema_supply
 { ctype, field_of, pointee, request_type } = gen.gen_c.gen_c_type
-{ expr, ty_of } = gen.gen_c.gen_c_expr
+{ expr, ty_of, write_c_literal } = gen.gen_c.gen_c_expr
 { recv_inst, sub } = gen.gen_c.gen_c_mono
 { temp, payload_type, write_assign_ok, write_assign_err } = gen.gen_c.gen_c_flow
 { call_symbol } = gen.gen_c.gen_c_sink
@@ -1550,14 +1550,25 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
         env.view(),
         actor.view()
     ).try();
+    // The type's name, for the runtime's reports.
+    type_name = be.types().at(
+        spawn.actor_ty
+    ).match({ Named(n) => n.name, _ => "actor" });
+    name ::= be.alloc.String().try();
+    name.add("(zg_str){ (unsigned char *)").try();
+    name.write_c_literal(type_name).try();
+    name.add(", ").try();
+    name.write_usize(type_name.len).try();
+    name.add("u }").try();
     be.fmt(
-        "int {} = {}({}, {}, (size_t)&{}, {});\n",
+        "int {} = {}({}, {}, (size_t)&{}, {}, {});\n",
         status.view(),
         start.view(),
         cell.view(),
         lifecycle.started,
         lifecycle.stopped,
-        lifecycle.receive
+        lifecycle.receive,
+        name.view()
     ).try();
     be.fmt("if ({} != 0) {{\n", status.view()).try();
     be.indent();

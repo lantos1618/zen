@@ -6,10 +6,10 @@
 { Env } = std.env
 { println } = std.io
 
-Opt<T> = { Some: T | None }
+Box<T> = { Full: T | Empty }
 
 main = (env: Env) Res<i32, AllocError> {
-    x = Opt.None;
-    println("{}", x.match({ Some(v) => 1, None => 0 }));
+    x = Box.Empty;
+    println("{}", x.match({ Full(v) => 1, Empty => 0 }));
     Ok(0);
 }

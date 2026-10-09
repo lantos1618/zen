@@ -58,13 +58,8 @@ tests/corpus/cli/project_backend_recipes/main # UNSUPPORTED: main.zen:1:19: noth
 tests/corpus/cli/project_commands_start_at_build_zen # UNSUPPORTED: project_commands_start_at_build_zen.zen:3:12: nothing is at that path: tried `zen.zen` and `zen/zen.
 tests/corpus/cli/project_test_targets/main # UNSUPPORTED: main.zen:1:19: nothing is at that path: tried `zen/zen_project.zen` and `zen/zen_project/zen_project
 tests/corpus/cli/value_flags_do_not_swallow_options # UNSUPPORTED: value_flags_do_not_swallow_options.zen:5:12: nothing is at that path: tried `zen.zen` and `zen/zen.z
-tests/corpus/closures-capture/a_mutation_before_defer_is_invisible/main # UNSUPPORTED: main.zen:17:46: error: unsupported by this backend: an expression without a checked type
-tests/corpus/closures-capture/b_two_writers_one_snapshot_each/main # UNSUPPORTED: main.zen:22:13: error: unsupported by this backend: an expression without a checked type
 tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main # UNSUPPORTED: main.zen:30:13: error: unsupported by this backend: this expression in a native executable
 tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main # UNSUPPORTED: main.zen:24:9: error: unsupported by this backend: alternatives of a value without them (`i64`)
-tests/corpus/closures-capture/e_shadowing_bind_is_not_a_capture/main # UNSUPPORTED: main.zen:9:34: error: unsupported by this backend: an expression without a checked type
-tests/corpus/closures-capture/g_inner_block_snapshot_outer_frame/main # UNSUPPORTED: main.zen:23:53: error: unsupported by this backend: an expression without a checked type
-tests/corpus/closures-capture/h_lambda_argument_reads_the_live_binding/main # UNSUPPORTED: main.zen:24:46: error: unsupported by this backend: an expression without a checked type
 tests/corpus/closures-capture/i_local_function_reads_the_live_frame/main # UNSUPPORTED: main.zen:16:5: error: unsupported by this backend: nested declarations
 tests/corpus/closures-capture/j_local_function_try_returns_from_its_writer/main # UNSUPPORTED: main.zen:31:5: error: unsupported by this backend: nested declarations
 tests/corpus/codegen/a_recorded_call_never_falls_back_to_another_declaration # UNSUPPORTED: a_recorded_call_never_falls_back_to_another_declaration.zen:4:45: nothing is at that path: tried `se
@@ -74,7 +69,6 @@ tests/corpus/codegen/c_abi_integer_spelling # UNSUPPORTED: c_abi_integer_spellin
 tests/corpus/codegen/call_effect_summaries_reuse_completed_subtrees # UNSUPPORTED: call_effect_summaries_reuse_completed_subtrees.zen:4:15: nothing is at that path: tried `gen/gen_c/g
 tests/corpus/codegen/field_defaults # UNSUPPORTED: field_defaults.zen:100:29: error: unsupported by this backend: a variant of a type without alternati
 tests/corpus/codegen/forward_types # UNSUPPORTED: forward_types.zen:61:16: error: unsupported by this backend: an expression without a checked type
-tests/corpus/codegen/named_call_dispatch_keeps_its_precedence # UNSUPPORTED: named_call_dispatch_keeps_its_precedence.zen:17:5: error: unsupported by this backend: alternatives 
 tests/corpus/codegen/native_constants_in_different_functions_keep_their_own_values # UNSUPPORTED: native_constants_in_different_functions_keep_their_own_values.zen:17:18: error: unsupported by this 
 tests/corpus/codegen/nested_capability_receiver_dispatches/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/codegen/struct_return_behavior # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
@@ -103,7 +97,6 @@ tests/corpus/env/threads_spawn_joins_two_bodies # UNSUPPORTED: error: unsupporte
 tests/corpus/env/threads_spawn_many_and_join_in_order # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/errors-res/a_union_of_errors_is_an_error # UNSUPPORTED: a_union_of_errors_is_an_error.zen:24:14: error: unsupported by this backend: a value conversion this backend does not model (`
 tests/corpus/errors-try/fallible_inline_helper_in_thread/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
-tests/corpus/errors-try/inlined_helpers_keep_lexical_returns/main # UNSUPPORTED: main.zen:96:9: error: unsupported by this backend: an expression without a checked type
 tests/corpus/errors-try/try_on_an_all_ok_match_never_widens/ # UNSUPPORTED: main.zen:20:5: error: unsupported by this backend: an unknown variant (`Res!i32,main.Fail|main.Kind|
 tests/corpus/file-io/posix_stream/main # UNSUPPORTED: main.zen:29:23: error: unsupported by this backend: a call without successful semantic checking
 tests/corpus/fmt/a_comment_between_items_stays_put # UNSUPPORTED: a_comment_between_items_stays_put.zen:15:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/f
@@ -267,8 +260,6 @@ tests/corpus/std/cli_derive_fields_take_their_shape_from_types # UNSUPPORTED: cl
 tests/corpus/std/cli_derive_parse_prints_help_and_exits_zero # UNSUPPORTED: std/cli/cli_derive.zen:69:5: error: unsupported by this backend: the compiler-provided operation `st
 tests/corpus/std/cli_derive_parse_refuses_with_status_two # UNSUPPORTED: std/cli/cli_derive.zen:69:5: error: unsupported by this backend: the compiler-provided operation `st
 tests/corpus/std/cli_nested_commands_and_trailing_args # UNSUPPORTED: cli_nested_commands_and_trailing_args.zen:35:9: error: unsupported by this backend: a value conversi
-tests/corpus/std/console_bound_println_reaches_the_same_floor # UNSUPPORTED: console_bound_println_reaches_the_same_floor.zen:21:5: error: unsupported by this backend: alternati
-tests/corpus/std/console_errorln_is_the_other_stream # UNSUPPORTED: console_errorln_is_the_other_stream.zen:16:5: error: unsupported by this backend: alternatives of a 
 tests/corpus/std/constant_time # UNSUPPORTED: constant_time.zen:50:18: error: unsupported by this backend: the machine primitive truncate_*
 tests/corpus/std/create_allocates_a_whole_element # UNSUPPORTED: create_allocates_a_whole_element.zen:27:16: error: unsupported by this backend: a variant of a type 
 tests/corpus/std/display_allocating_overload_picked_by_argument # UNSUPPORTED: display_allocating_overload_picked_by_argument.zen:29:13: error: unsupported by this backend: a valu
@@ -281,7 +272,6 @@ tests/corpus/std/simd_features # UNSUPPORTED: simd_features.zen:93:25: error: un
 tests/corpus/std/simd_sha # UNSUPPORTED: std/simd.zen:229:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_vectors # UNSUPPORTED: simd_vectors.zen:43:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements # UNSUPPORTED: std/math/math.zen:14:28: error: unsupported by this backend: alternatives of a value without them (`
-tests/corpus/std/test_suite_runs_after_assertion_failure # UNSUPPORTED: std/test/test.zen:72:9: error: unsupported by this backend: alternatives of a value without them (`(
 tests/corpus/std/volatile_and_inline # UNSUPPORTED: volatile_and_inline.zen:15:28: error: unsupported by this backend: this pointer operation
 tests/corpus/std/wide_integers # UNSUPPORTED: wide_integers.zen:16:15: error: unsupported by this backend: the machine primitive mul_wide (64x64 -
 tests/corpus/string-basic/a_float_fits_the_buffer/main # UNSUPPORTED: main.zen:39:25: error: unsupported by this backend: formatting an f64 into text

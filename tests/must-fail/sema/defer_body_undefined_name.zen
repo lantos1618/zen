@@ -1,0 +1,10 @@
+// A closure handed to `@scope.defer` is an argument like any other, so its
+// body is checked like any other. `@scope` was typed as nothing, so the
+// call on it resolved to nothing and the deferred body was never looked
+// at: a misspelled name inside it compiled clean.
+//
+// position: the name that resolves to nothing.
+
+main* = () {
+    @scope.defer(() { nowhere(); });
+}

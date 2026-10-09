@@ -1460,6 +1460,12 @@ intrinsic = (
                     },
                     false => js_runtime_call(lo, id, name, sources, span),
                 }),
+                "std.json.json_meta"      => lo.json_call(
+                    id,
+                    name,
+                    sources,
+                    span
+                ),
                 "std.text.text_string"    => lo.string_call(
                     id,
                     name,
@@ -2191,6 +2197,209 @@ sys_env_call* = (
         generic_owner: None
     );
     lo.invoke(id, callee, sources, c, span)
+}
+
+// A function of a std module, by name and parameter count.
+std_fn = (
+    lo          :: Lowerer,
+    module_name : str,
+    name        : str,
+    arity       : usize,
+    span        : Span
+)
+         Res<Callee, LowerError> {
+    module = lo.check.world.index_of(module_name).ok_or(unsupported(span, module_name)).try();
+    table  = lo.check.world.table_at(module).ok_or(unsupported(span, module_name)).try();
+    found  = table.defs.find((d) {
+        d.name.eq(name) && decl_at(lo.tree, d.id).match({
+            Ok(decl) => decl.kind.match({
+                Function(f) => f.params.len == arity,
+                _           => false,
+            }),
+            None     => false,
+        })
+    }).ok_or(unsupported(span, name)).try();
+    decl   = decl_at(lo.tree, found.id).ok_or(unsupported(span, name)).try();
+    f      = decl.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(unsupported(span, name)).try();
+    Ok(Callee(
+        f: f,
+        owner: found.id,
+        member: None,
+        module: module,
+        inst: lo.alloc.Inst(),
+        self_ty: None,
+        generic_owner: None
+    ))
+}
+
+// ---------------------------------------------------------------------
+// to_json
+// ---------------------------------------------------------------------
+
+// Where `to_json` writes: one String place, and the result a failed write
+// lands in before leaving through `done`.
+JsonWalk = { out: Place, result: Value, done: usize, span: Span }
+
+// `value.to_json(a)`: the receiver's type is concrete here, so its fields
+// are walked now and each piece is one std.json.json_meta writer call.
+json_call = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    name    : str,
+    sources : Vec<Source>,
+    span    : Span
+)
+            Res<Value, LowerError> {
+    name.eq("to_json").ensure(unsupported(span, "this std.json operation")).try();
+    receiver = source_expr(sources, 0, span).try();
+    value    = lo.argument_value(
+        Source.Given(receiver),
+        lo.type_of(receiver).try(),
+        span
+    ).try();
+    ret      = lo.type_of(id).try();
+    result   = lo.temp(ret).try();
+    done     = lo.label().try();
+    alloc ::= lo.alloc.Vec<Source>();
+    alloc.add(sources.get(1).value_or(Source.Absent)).try(LowerError.OutOfMemory);
+    made = lo.real_call(
+        lo.std_fn("std.text.text_string", "String", 1, span).try(),
+        alloc,
+        span
+    ).try();
+    lo.add(Instruction.Copy(Move(out: result.slot, source: made.slot))).try();
+    ok_tag = variant_index(lo.variants_of(ret).try(), "Ok").ok_or(unsupported(span, "to_json without Ok")).try();
+    is_ok  = lo.tag_test(made, ok_tag).try();
+    good   = lo.label().try();
+    lo.branch_to(is_ok, good, done).try();
+    lo.start(good);
+    text = lo.payload_of(made, ok_tag).try();
+    walk = JsonWalk(
+        out: lo.spill(text),
+        result: result,
+        done: done,
+        span: span
+    );
+    lo.json_value(walk, value).try();
+    encoded  = lo.read(walk.out).try();
+    finished = lo.variant_value(ret, "Ok", Ok(encoded), span).try();
+    lo.add(Instruction.Copy(Move(
+        out: result.slot,
+        source: finished.slot
+    ))).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok(result)
+}
+
+json_value = (lo :: Lowerer, walk: JsonWalk, value: Value) Res<LowerError> {
+    lo.check.types.at(value.ty).match({
+        Prim(p)  => {
+            writer = json_writer(p.name);
+            writer.is_empty().match({
+                true  => Err(unsupported(
+                    walk.span,
+                    "a value that cannot be encoded as JSON"
+                )),
+                false => lo.json_write(walk, writer, value),
+            })
+        },
+        Named(n) => (n.name.eq("String") && lo.check.world.module_name(n.decl).eq("std.text.text_string")).match({
+            true  => lo.json_write(walk, "write_string", value),
+            false => lo.json_record(walk, value),
+        }),
+        _        => Err(unsupported(
+            walk.span,
+            "a value that cannot be encoded as JSON"
+        )),
+    })
+}
+
+json_writer = (name: str) str {
+    name.match({
+        "str"   => "write_str",
+        "bool"  => "write_bool",
+        "i8"    => "write_i8",
+        "i16"   => "write_i16",
+        "i32"   => "write_i32",
+        "i64"   => "write_i64",
+        "u8"    => "write_u8",
+        "u16"   => "write_u16",
+        "u32"   => "write_u32",
+        "u64"   => "write_u64",
+        "usize" => "write_usize",
+        "f32"   => "write_f32",
+        "f64"   => "write_f64",
+        _       => "",
+    })
+}
+
+json_record = (lo :: Lowerer, walk: JsonWalk, value: Value) Res<LowerError> {
+    fields: Res<Vec<FieldAt>> = lo.shape(value.ty).try().form.match({
+        Record(f) => Ok(f),
+        _         => None,
+    });
+    record                    = fields.ok_or(unsupported(
+        walk.span,
+        "a value that cannot be encoded as JSON"
+    )).try();
+    at                        = lo.spill(value);
+    lo.json_raw(walk, "{").try();
+    record.loop((h, i, f) {
+        key ::= lo.alloc.String().try(LowerError.OutOfMemory);
+        (i > 0).then(() { key.add(',').try(LowerError.OutOfMemory); });
+        key.fmt("\"{}\":", f.name).try(LowerError.OutOfMemory);
+        lo.json_raw(walk, key.view()).try();
+        field = lo.read(Place(
+            base: at.base,
+            offset: at.offset + f.offset,
+            ty: f.ty
+        )).try();
+        lo.json_value(walk, field).try();
+    });
+    lo.json_raw(walk, "}")
+}
+
+json_raw = (lo :: Lowerer, walk: JsonWalk, text: str) Res<LowerError> {
+    lo.json_write(
+        walk,
+        "write_raw",
+        lo.string(text, lo.prim("str").try()).try()
+    )
+}
+
+// One writer call; its failure becomes the result's Err.
+json_write = (lo :: Lowerer, walk: JsonWalk, writer: str, value: Value)
+             Res<LowerError> {
+    args ::= lo.alloc.Vec<Source>();
+    args.add(Source.Located(walk.out)).try(LowerError.OutOfMemory);
+    args.add(Source.Computed(value)).try(LowerError.OutOfMemory);
+    wrote    = lo.real_call(
+        lo.std_fn("std.json.json_meta", writer, 2, walk.span).try(),
+        args,
+        walk.span
+    ).try();
+    variants = lo.variants_of(wrote.ty).try();
+    ok_tag   = variant_index(variants, "Ok").ok_or(unsupported(walk.span, "a writer without Ok")).try();
+    err_tag  = variant_index(variants, "Err").ok_or(unsupported(walk.span, "a writer without Err")).try();
+    is_ok    = lo.tag_test(wrote, ok_tag).try();
+    good     = lo.label().try();
+    bad      = lo.label().try();
+    lo.branch_to(is_ok, good, bad).try();
+    lo.start(bad);
+    reason = lo.payload_of(wrote, err_tag).try();
+    failed = lo.variant_value(
+        walk.result.ty,
+        "Err",
+        Ok(reason),
+        walk.span
+    ).try();
+    lo.add(Instruction.Copy(Move(
+        out: walk.result.slot,
+        source: failed.slot
+    ))).try();
+    lo.jump(walk.done).try();
+    lo.start(good);
 }
 
 // ---------------------------------------------------------------------

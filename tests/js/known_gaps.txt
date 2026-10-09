@@ -161,7 +161,6 @@ tests/corpus/gen_zen/unit_pointer_has_no_void_element_c/main # UNSUPPORTED: main
 tests/corpus/generics/inline_method_keeps_its_type_arguments/main # UNSUPPORTED: main.zen:8:20: error: unsupported by this backend: a construction of a non-record type
 tests/corpus/impl-traits/dispatch_picks_each_type_own_impl/main # UNSUPPORTED: main.zen:18:42: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/imports/imported_constant_folds_through_both_spellings/main # UNSUPPORTED: main.zen:8:19: error: unsupported by this backend: a variant of a type without alternatives (`u64`)
-tests/corpus/json/typed_record_to_json # UNSUPPORTED: typed_record_to_json.zen:19:15: error: unsupported by this backend: the compiler-provided operation 
 tests/corpus/lex/long_single_line # UNSUPPORTED: 
 tests/corpus/lsp/a_build_zen_marks_the_root/main # UNSUPPORTED: main.zen:38:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
 tests/corpus/lsp/a_missing_module_is_named/main # UNSUPPORTED: main.zen:33:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`

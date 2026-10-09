@@ -29,6 +29,8 @@
 // Checker state and type agreement.
 { Checker*, Ctx*, Binding* }                 = sema.sema_check
 { CheckedCall*, CallSignature*, CallResolution* } = sema.sema_check
+{ Memos* }                                   = sema.sema_check
+{ instance_key_of* }                         = sema.sema_instance
 { is_prim*, is_integer*, is_float* }         = sema.sema_ty
 
 // Expression and written-type queries.

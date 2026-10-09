@@ -109,6 +109,9 @@ Memos* = {
     bound_views* :: Map<ExprId, bool>,
     statement_tails* :: Map<ExprId, bool>,
     lambda_failures* :: Map<ExprId, Dropped>,
+
+    // An instance's expression types, once settled by its instantiation.
+    settle* = (self :: @Self, types: Map<ExprId, TyId>) { self.expr_memo = types; }
 }
 
 Checker* = {
@@ -208,6 +211,10 @@ Checker* = {
     // Member calls on settled receivers, for `sema_instance.zen`.
     member_edges :: Vec<MemberEdge>,
 
+    // Each settled generic instance's answers, by
+    // `sema_instance.instance_key_of`, for the lowering to read.
+    instances :: Map<str, Memos>,
+
     owner_now :: str = "",
 
     set_memo* :: Map<TyId, TyId>,
@@ -289,6 +296,16 @@ Checker* = {
             Checked(call) => Ok(call),
             _             => None,
         })
+    }
+
+    // The answers an instance check recorded for one instance's body.
+    instance_memos* = (self: @Self, key: str) Res<Memos> {
+        self.instances.get(key)
+    }
+
+    publish_instance* = (self :: @Self, key: str, memos: Memos)
+                        Res<AllocError> {
+        self.instances.set(key, memos)
     }
 
     record_call* = (self :: @Self, id: ExprId, resolution: CallResolution)
@@ -1076,6 +1093,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         carrier_memo: a.Map<TyId, bool>(),
         edges: a.Vec<InstEdge>(),
         member_edges: a.Vec<MemberEdge>(),
+        instances: a.Map<str, Memos>(),
         set_memo: a.Map<TyId, TyId>(),
         raised: a.Vec<TyId>(),
         locals: a.Vec<Binding>(),

@@ -17,13 +17,16 @@
 // into 64 KiB slabs aligned to 64 KiB, and a slab's first 64 bytes record
 // its class, so a block's class is found from its address. A request above
 // the largest class gets its own mapping, aligned the same way, whose
-// header says so; freeing it unmaps it.
+// header says so. Mappings up to 4 MiB are rounded to a power of two and,
+// once freed, kept in a per-size cache for the next large block, so a
+// stream of big messages costs no system calls (and no TLB shootdowns);
+// larger ones, and any beyond the cache's bound, are unmapped.
 
 { Ptr, null_ptr, Mem, Page } = std.mem
 { Res, Ok, Err, None, loop, Range } = std.core
 { mmap, munmap, madvise, map_private_anonymous, pointer_at, address_of, platform_darwin } = std.sys
 { atomic_load_usize, process_block } = std.sys
-{ PB_MEM } = std.actor.actor_layout
+{ PB_MEM, G_CENTRAL, G_LARGE } = std.actor.actor_layout
 { atomic_swap_u32, atomic_store_u32 } = std.sys
 
 // The address of word `i` of the block at `p`, and plain word access.
@@ -284,7 +287,7 @@ new_slab = (central: Ptr<u8>) Ptr<u8> {
 // Its contents are whatever the last user left.
 alloc* = (heap: Ptr<u8>, central: Ptr<u8>, bytes: usize) Ptr<u8> {
     (bytes > LARGEST || checked(central)).match({
-        true  => alloc_large(bytes),
+        true  => alloc_large(central, bytes),
         false => {
             c = class_of(bytes);
             n = heap_count(heap, c).read(0);
@@ -393,12 +396,24 @@ carve = (heap: Ptr<u8>, central: Ptr<u8>, c: usize) Ptr<u8> {
     })
 }
 
-alloc_large = (bytes: usize) Ptr<u8> {
+alloc_large = (central: Ptr<u8>, bytes: usize) Ptr<u8> {
     (bytes <= usize.MAX - SLAB_HEADER - SLAB_BYTES).match({
         false => null_ptr<u8>(),
         true  => {
-            total = (bytes + SLAB_HEADER + 4095) / 4096 * 4096;
-            base  = grab(total, SLAB_BYTES);
+            want  = (bytes + SLAB_HEADER + 4095) / 4096 * 4096;
+            bin   = large_bin(want);
+            total = (bin < LARGE_BINS).match({
+                true  => LARGE_MIN << bin,
+                false => want,
+            });
+            kept  = (bin < LARGE_BINS && !checked(central)).match({
+                true  => take_large(central, bin),
+                false => null_ptr<u8>(),
+            });
+            base  = kept.is_null().match({
+                true  => grab(total, SLAB_BYTES),
+                false => kept,
+            });
             base.is_null().match({
                 true  => base,
                 false => {
@@ -411,6 +426,62 @@ alloc_large = (bytes: usize) Ptr<u8> {
     })
 }
 
+// The large-block cache, inside the runtime's globals: per bin a lock
+// (u32), the newest kept mapping (linked through its header's third
+// word), and how many are kept. Bin b holds mappings of LARGE_MIN << b.
+LARGE_BINS: usize = 8
+LARGE_MIN: usize = 32768
+LARGE_KEEP: usize = 33554432
+
+large_word = (central: Ptr<u8>, bin: usize, i: usize) Ptr<usize> { word_at(
+    central.offset(G_LARGE - G_CENTRAL),
+    bin * 3 + i
+) }
+
+// The bin whose size holds `total` bytes; LARGE_BINS or more when none.
+large_bin = (total: usize) usize {
+    b :: usize = 0;
+    loop(() { b < LARGE_BINS && (LARGE_MIN << b) < total }, (h) { b = b + 1; });
+    b
+}
+
+take_large = (central: Ptr<u8>, bin: usize) Ptr<u8> {
+    lock(large_word(central, bin, 0).to<u32>());
+    head = pointer_at(large_word(central, bin, 1).read(0));
+    (!head.is_null()).then(() {
+        large_word(central, bin, 1).write(0, load(head, 2));
+        large_word(central, bin, 2).write(0, large_word(central, bin, 2).read(0) - 1);
+    });
+    unlock(large_word(central, bin, 0).to<u32>());
+    head
+}
+
+// Keep a freed large mapping for reuse; false when it is not a cached
+// size or its bin already holds LARGE_KEEP bytes (but at least four).
+keep_large = (central: Ptr<u8>, base: Ptr<u8>) bool {
+    total = load(base, 1);
+    bin   = large_bin(total);
+    (!checked(
+        central
+    ) && bin < LARGE_BINS && (LARGE_MIN << bin) == total).match({
+        false => false,
+        true  => keep_in(central, bin, base, total),
+    })
+}
+
+keep_in = (central: Ptr<u8>, bin: usize, base: Ptr<u8>, total: usize) bool {
+    lock(large_word(central, bin, 0).to<u32>());
+    n    = large_word(central, bin, 2).read(0);
+    room = n < 4 || (n + 1) * total <= LARGE_KEEP;
+    room.then(() {
+        store(base, 2, large_word(central, bin, 1).read(0));
+        large_word(central, bin, 1).write(0, address_of(base));
+        large_word(central, bin, 2).write(0, n + 1);
+    });
+    unlock(large_word(central, bin, 0).to<u32>());
+    room
+}
+
 // The slab, or large mapping, that `block` lies in.
 slab_of = (block: Ptr<u8>) Ptr<u8> {
     pointer_at(address_of(block) / SLAB_BYTES * SLAB_BYTES)
@@ -421,7 +492,9 @@ free* = (heap: Ptr<u8>, central: Ptr<u8>, block: Ptr<u8>) {
     slab = slab_of(block);
     c    = load(slab, 0);
     (c == LARGE).match({
-        true  => give_back(slab, load(slab, 1)),
+        true  => (!keep_large(central, slab)).then(() {
+            give_back(slab, load(slab, 1));
+        }),
         false => {
             full = heap_count(heap, c).read(0) == CAP && !give_batch(heap, central, c);
             // Out of memory for a batch array: the block is lost, not reused.

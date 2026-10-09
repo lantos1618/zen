@@ -102,8 +102,9 @@ G_THREAD_LIST*: usize = 5632 // started threads' handles, MAX_THREADS words
 G_TIMER_PARKER*: usize = 7168 // the timer thread waits here
 G_RINGS*: usize = 7296       // each thread's recorder ring, by tag, MAX_THREADS words
 G_TRACE_IO*: usize = 8832    // the trace writer's words, below
+G_LARGE*: usize = 8896       // std.actor.actor_pool's cache of large blocks
 MAX_THREADS*: usize = 192
-GLOBALS_BYTES*: usize = 8896
+GLOBALS_BYTES*: usize = 9152
 // The trace writer's words, as word indices into G_TRACE_IO.
 G_TRACE_FD*: usize = 1104    // trace file descriptor + 1 (0 when not open)
 G_TRACE_OUT*: usize = 1105   // the trace writer's text buffer

@@ -148,7 +148,6 @@ tests/corpus/gen_zen/unit_pointer_has_no_void_element_c/main # UNSUPPORTED: main
 tests/corpus/generics/inline_method_keeps_its_type_arguments/main # UNSUPPORTED: main.zen:8:20: error: unsupported by this backend: a construction of a non-record type
 tests/corpus/impl-traits/dispatch_picks_each_type_own_impl/main # UNSUPPORTED: main.zen:18:42: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/imports/imported_constant_folds_through_both_spellings/main # UNSUPPORTED: main.zen:8:19: error: unsupported by this backend: a variant of a type without alternatives (`u64`)
-tests/corpus/json/typed_record_to_json # UNSUPPORTED: typed_record_to_json.zen:19:15: error: unsupported by this backend: the compiler-provided operation 
 tests/corpus/lex/long_single_line # UNSUPPORTED: 
 tests/corpus/lsp/a_build_zen_marks_the_root/main # UNSUPPORTED: main.zen:38:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
 tests/corpus/lsp/a_missing_module_is_named/main # UNSUPPORTED: main.zen:33:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
@@ -253,12 +252,6 @@ tests/corpus/sema_zen/overload_resolution_reads_the_signature/main # UNSUPPORTED
 tests/corpus/sema_zen/type_of_is_memoized/main # UNSUPPORTED: main.zen:18:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/std/a_user_type_is_a_sink # UNSUPPORTED: a_user_type_is_a_sink.zen:73:5: error: unsupported by this backend: a member without a body this bac
 tests/corpus/std/carry_limbs # UNSUPPORTED: carry_limbs.zen:32:9: error: unsupported by this backend: the machine primitive add_carry
-tests/corpus/std/cli_derive_enums_are_subcommands # UNSUPPORTED: cli_derive_enums_are_subcommands.zen:66:5: error: unsupported by this backend: the compiler-provided
-tests/corpus/std/cli_derive_env_and_trailing_words # UNSUPPORTED: cli_derive_env_and_trailing_words.zen:39:5: error: unsupported by this backend: the compiler-provide
-tests/corpus/std/cli_derive_errors_come_from_the_types # UNSUPPORTED: cli_derive_errors_come_from_the_types.zen:40:5: error: unsupported by this backend: the compiler-pro
-tests/corpus/std/cli_derive_fields_take_their_shape_from_types # UNSUPPORTED: cli_derive_fields_take_their_shape_from_types.zen:50:5: error: unsupported by this backend: the comp
-tests/corpus/std/cli_derive_parse_prints_help_and_exits_zero # UNSUPPORTED: std/cli/cli_derive.zen:69:5: error: unsupported by this backend: the compiler-provided operation `st
-tests/corpus/std/cli_derive_parse_refuses_with_status_two # UNSUPPORTED: std/cli/cli_derive.zen:69:5: error: unsupported by this backend: the compiler-provided operation `st
 tests/corpus/std/cli_nested_commands_and_trailing_args # UNSUPPORTED: cli_nested_commands_and_trailing_args.zen:35:9: error: unsupported by this backend: a value conversi
 tests/corpus/std/constant_time # UNSUPPORTED: constant_time.zen:50:18: error: unsupported by this backend: the machine primitive truncate_*
 tests/corpus/std/create_allocates_a_whole_element # UNSUPPORTED: create_allocates_a_whole_element.zen:27:16: error: unsupported by this backend: a variant of a type 

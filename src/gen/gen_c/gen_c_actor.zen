@@ -458,7 +458,7 @@ name_turn = (be :: CBackend, turn: str, actor: TyId, behavior: str)
     }).try();
     line ::= be.alloc.String().try();
     line.fmt(
-        "    {}((size_t)&{}, (uint8_t *)\"{}.{}\", {});\n",
+        "    {}((size_t)&{}, (size_t)\"{}.{}\", {});\n",
         named.view(),
         turn,
         owner.view(),

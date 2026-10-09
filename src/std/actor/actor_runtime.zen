@@ -2358,7 +2358,7 @@ trace_dump = (g: Ptr<u8>) {
 
 // Called by the program's turn lister while the trace opens: a turn's code
 // address and its name in source.
-actor_name* = (turn: usize, name: Ptr<u8>, len: usize) {
+actor_name* = (turn: usize, name: usize, len: usize) {
     g   = globals();
     out = g.is_null().match({ true => null_ptr<u8>(), false => at(load(
         g,
@@ -2373,7 +2373,7 @@ actor_name* = (turn: usize, name: Ptr<u8>, len: usize) {
             out,
             n,
             str(
-                data: name,
+                data: at(name),
                 len: (len > TRACE_NAME_MAX).match({ true => TRACE_NAME_MAX, false => len })
             )
         );

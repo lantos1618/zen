@@ -28,13 +28,13 @@
 { Span, nowhere } = std.source
 { TyId, Def, DeclId, CheckedCall } = sema.sema
 { Scalar, Layout, Op, Move, Binary, Instruction, Store, Address, Convert } = gen.gen_ir
-{ CodeRef, Func, Pages, CopyMem, TrapKind } = gen.gen_ir
+{ CodeRef, Func, Pages, CopyMem, TrapKind, StaticBytes } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Lowerer, Value, Place, Base, Callee, to_i64_bits } = gen.gen_lower_core
 { Source, argument_value, param_type, real_call } = gen.gen_lower_call
 { resolve, handle_for_place, payload_type, pointee_of, bound_of, dispatch } = gen.gen_lower_member
 { size_of, align_of, round_up, class_of, FieldAt } = gen.gen_lower_shape
-{ Synth, std_call, std_function, enqueue_synth, begin_synth, finish_synth } = gen.gen_lower_thread
+{ Synth, TurnName, std_call, std_function, enqueue_synth, begin_synth, finish_synth } = gen.gen_lower_thread
 { succeeded, is_null, byte_pointer, ok_payload } = gen.gen_lower_thread
 { Inst } = sema.sema_inst
 { def_type } = sema.sema_type
@@ -189,11 +189,7 @@ spawn_actor* = (
     ))).try();
     new_args.more(worker).try();
     new_args.more(shutdown).try();
-    // No turn names on this path yet: the trace shows code addresses.
-    new_args.more(Source.Computed(Value(
-        slot: lo.word_const(Scalar.U64, 0).try(),
-        ty: lo.prim("usize").try()
-    ))).try();
+    new_args.more(lo.names_code(span).try()).try();
     cell      = lo.actor_call("actor_new", new_args, span).try();
     no_cell   = lo.label().try();
     have_cell = lo.label().try();
@@ -408,6 +404,13 @@ hook_code = (
                     buffers: lo.alloc.Vec<bool>()
                 ))
             ).try();
+            hook.when_ok(
+                (h) { lo.name_turn(
+                    index,
+                    layout.actor_ty,
+                    h.f.name.text
+                ).try(); }
+            );
             lo.code_of(index)
         },
     })
@@ -447,6 +450,7 @@ receive_code = (
                     buffers: buffers
                 ))
             ).try();
+            lo.name_turn(index, layout.actor_ty, "receive").try();
             lo.code_of(index)
         },
     })
@@ -869,9 +873,73 @@ send_turn = (
                     buffers: buffers
                 ))
             ).try();
+            lo.name_turn(index, actor_ty, h.f.name.text).try();
             lo.code_of(index)
         },
     })
+}
+
+name_turn = (
+    lo       :: Lowerer,
+    index    : usize,
+    actor_ty : TyId,
+    behavior : str
+) Res<LowerError> {
+    name ::= lo.alloc.String().try(LowerError.OutOfMemory);
+    name.fmt(
+        "{}.{}",
+        lo.type_name(actor_ty),
+        behavior
+    ).try(LowerError.OutOfMemory);
+    lo.turn_names.add(TurnName(
+        index: index,
+        name: name
+    )).try(LowerError.OutOfMemory);
+}
+
+// The program's name table, passed to actor_new: one function, lowered
+// after every turn, which the runtime calls once when the trace opens.
+names_code = (lo :: Lowerer, span: Span) Res<Source, LowerError> {
+    at = lo.names_at.match({
+        Ok(at) => at,
+        None   => {
+            at = lo.enqueue_synth(lo.stand_in(span).try(), Synth.Names).try();
+            lo.name_table_at(at);
+            at
+        },
+    });
+    lo.code_of(at)
+}
+
+// `(a: Ptr<u8>, b: Ptr<u8>) ()`: actor_name(turn, "Type.behaviour", len)
+// for each turn.
+names_function* = (lo :: Lowerer) Res<Func, LowerError> {
+    params ::= lo.alloc.Vec<Scalar>();
+    params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
+    params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
+    entry_block = lo.begin_synth(params).try();
+    lo.use_frame(
+        lo.push_frame(lo.alloc.Inst(), 0, lo.unit_ty, None, None).try()
+    );
+    word = lo.prim("usize").try();
+    lo.turn_names.loop((t) {
+        args ::= lo.one(lo.code_of(t.index).try()).try();
+        text = lo.slot_of(Scalar.Ptr).try();
+        lo.add(Instruction.Bytes(StaticBytes(
+            out: text,
+            bytes: t.name.view()
+        ))).try();
+        address = lo.slot_of(Scalar.U64).try();
+        lo.add(Instruction.Cast(Convert(out: address, input: text))).try();
+        args.more(Source.Computed(Value(slot: address, ty: word))).try();
+        args.more(Source.Computed(Value(
+            slot: lo.word_const(Scalar.U64, t.name.len().to_i64_bits()).try(),
+            ty: word
+        ))).try();
+        lo.actor_call("actor_name", args, nowhere()).try();
+    });
+    done = lo.unit().try();
+    lo.finish_synth("actor_names", entry_block, 2, done.slot, Scalar.Unit)
 }
 
 // When `status` is `code`, store Ok(()) or Err(reason) in `out` and leave.

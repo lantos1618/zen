@@ -69,6 +69,7 @@ write_sys = (be :: CBackend, out :: Emit) Res<AllocError> {
     out.say("#include <fcntl.h>").try();
     out.say("#include <pthread.h>").try();
     out.say("#include <sched.h>").try();
+    out.say("#include <stdio.h>").try();
     out.say("#include <string.h>").try();
     out.say("#include <time.h>").try();
     out.say("#include <unistd.h>").try();
@@ -84,14 +85,22 @@ write_sys = (be :: CBackend, out :: Emit) Res<AllocError> {
     out.say("#endif").try();
     out.say("extern uint64_t zg_sys_globals[32];").try();
     out.say("extern __thread uintptr_t zg_sys_word;").try();
-    out.say("static inline void *zg_sys_thread_main(void *raw) {").try();
-    out.say("    uint8_t *block = (uint8_t *)raw;").try();
-    out.say("    uintptr_t entry, arg;").try();
-    out.say("    memcpy(&entry, block + 8, sizeof entry);").try();
-    out.say("    memcpy(&arg, block + 16, sizeof arg);").try();
-    out.say("    ((void (*)(uint8_t *))entry)((uint8_t *)arg);").try();
-    out.say("    return NULL;").try();
-    out.say("}").try();
+    be.sys_ops.find((entry) { entry.name.view().eq("pthread_start") }).match({
+        None  => Ok,
+        Ok(_) => {
+            out.say(
+                "static inline void *zg_sys_thread_main(void *raw) {"
+            ).try();
+            out.say("    uint8_t *block = (uint8_t *)raw;").try();
+            out.say("    uintptr_t entry, arg;").try();
+            out.say("    memcpy(&entry, block + 8, sizeof entry);").try();
+            out.say("    memcpy(&arg, block + 16, sizeof arg);").try();
+            out.say("    ((void (*)(uint8_t *))entry)((uint8_t *)arg);").try();
+            out.say("    return NULL;").try();
+            out.say("}").try();
+            Ok
+        },
+    }).try();
     out.say(
         "static inline int64_t zg_sys_result(int64_t r) { return r < 0 ? -(int64_t)errno : r; }"
     ).try();
@@ -218,6 +227,9 @@ sys_body = (name: str) Res<str> {
         ),
         "flock"                      => Ok(
             "return zg_sys_result((int64_t)flock((int)a0, (int)a1));"
+        ),
+        "renameat"                   => Ok(
+            "return zg_sys_result((int64_t)renameat((int)a0, (const char *)(void *)a1, (int)a2, (const char *)(void *)a3));"
         ),
         "sched_getaffinity"          => Ok(
             "#if defined(__linux__)\n    return zg_sys_result((int64_t)syscall(SYS_sched_getaffinity, (int)a0, (size_t)a1, (void *)a2));\n#else\n    (void)a0; (void)a1; (void)a2; return -(int64_t)ENOSYS;\n#endif"

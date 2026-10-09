@@ -361,7 +361,6 @@ probe_test = (name: str) str {
 // stay the caller's.
 lower_write* = (
     be  :: CBackend,
-    id  : ExprId,
     c   : Call,
     ret : TyId,
     ctx : Ctx,
@@ -389,7 +388,6 @@ lower_write* = (
 // `rename`: one step, so a reader of `to` never sees a partial file.
 lower_rename* = (
     be  :: CBackend,
-    id  : ExprId,
     c   : Call,
     ret : TyId,
     ctx : Ctx,
@@ -499,7 +497,6 @@ arrow_field = (addr: str, name: str, out :: String)
 // its error chain starts at Denied rather than NotFound.
 lower_remove* = (
     be  :: CBackend,
-    id  : ExprId,
     c   : Call,
     ret : TyId,
     ctx : Ctx,
@@ -535,7 +532,6 @@ write_remove_call = (be :: CBackend, rc: str, yes: str, path: str)
 // its chain enters at 1.
 lower_mkdir* = (
     be  :: CBackend,
-    id  : ExprId,
     c   : Call,
     ret : TyId,
     ctx : Ctx,

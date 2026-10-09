@@ -964,7 +964,7 @@ C = {
 
     // One declaration per libSystem symbol, named through an asm label so
     // it cannot clash with the system headers' prototypes. `openat` and
-    // `fcntl` are variadic, which arm64 macOS passes on the stack.
+    // `ioctl` are variadic, which arm64 macOS passes on the stack.
     declare = (self :: @Self, call: SysCall, name: str) Res<(), AllocError> {
         known ::= false;
         self.symbols.loop((seen) { seen.eq(name).then(() { known = true; }); });
@@ -978,7 +978,7 @@ C = {
                 });
                 fixed = call.call.match({
                     Openat => 3,
-                    Fcntl  => 2,
+                    Ioctl  => 2,
                     _      => call.args.len,
                 });
                 result :: str = wide.match({ true => "int64_t", false => "int" });

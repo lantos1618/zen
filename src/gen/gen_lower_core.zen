@@ -24,7 +24,7 @@
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at } = sema.sema
 { subst, type_from_ast, is_prim, const_int, fits } = sema.sema
 { Memos, instance_key_of } = sema.sema
-{ Pat, PatReading, read_pattern } = sema.sema
+{ Pat, PatReading, read_pattern, value_agrees } = sema.sema
 { is_drop_type } = sema.sema_drop
 { Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
@@ -900,6 +900,33 @@ Lowerer* = {
         })
     }
 
+    // Zero the first `bytes` bytes of `value`'s storage, a word at a time.
+    zero_fill = (self :: @Self, value: Value, bytes: usize) Res<LowerError> {
+        at = self.slot_of(Scalar.Ptr).try();
+        self.add(Instruction.AddressOf(Address(
+            out: at,
+            slot: value.slot
+        ))).try();
+        word  = self.word_const(Scalar.U64, 0).try();
+        byte  = self.word_const(Scalar.U8, 0).try();
+        words = bytes / 8;
+        Range(0, words).loop((i) {
+            self.add(Instruction.StoreValue(Store(
+                base: at,
+                offset: i * 8,
+                value: word
+            ))).try();
+        });
+        Range(words * 8, bytes).loop((offset) {
+            self.add(Instruction.StoreValue(Store(
+                base: at,
+                offset: offset,
+                value: byte
+            ))).try();
+        });
+        Ok
+    }
+
     constant_unit_of = (self :: @Self, ty: TyId) Res<Value, LowerError> {
         self.constant(ty, 0)
     }
@@ -1645,7 +1672,7 @@ Lowerer* = {
                             }),
                         None  => self.expr(e.expr),
                     }),
-                    false => { self.discarded(e.expr).try(); self.unit() },
+                    false => { self.expr(e.expr).try(); self.unit() },
                 }),
                 Bind(b)     => { self.bind(b, s.span).try(); self.unit() },
                 Deferred(d) => { self.deferred(d, s.span).try(); self.unit() },
@@ -2234,7 +2261,15 @@ Lowerer* = {
                 "an array literal without a fixed array type"
             )).try();
         out      = self.temp(ty).try();
-        base     = self.slot_of(Scalar.Ptr).try();
+        // `[T, N]()` and short literals start zeroed, as on the C path.
+        (elems.len < elements.count).match({
+            true  => self.zero_fill(
+                out,
+                elements.count * elements.stride
+            ).try(),
+            false => (),
+        });
+        base = self.slot_of(Scalar.Ptr).try();
         elems.loop((h, i, elem) {
             value = self.expr_as(elem, elements.elem).try();
             self.add(Instruction.AddressOf(Address(
@@ -2365,20 +2400,13 @@ Lowerer* = {
     // decision, and the lowering only follows it. A case the reading names
     // that the lowered layout lacks is a compiler error, never a binder.
     match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
-        self.match_at(m, span, self.narrowed(id).try())
-    }
-
-    // A match whose value a statement drops joins nothing: its arms are
-    // lowered for their effects, whatever type sema joined them at.
-    discarded = (self :: @Self, id: ExprId) Res<Value, LowerError> {
-        e = self.tree.expr_at(self.unwrapped(id));
-        e.kind.match({
-            Match(m) => self.match_at(m, e.span, self.unit_ty),
-            _        => self.expr(id),
-        })
-    }
-
-    match_at = (self :: @Self, m: Match, span: Span, ty: TyId) Res<Value, LowerError> {
+        // Arms that disagree (`Named(n) => n.args.loop(..), Other => ()`)
+        // give no value: sema types the match by its first arm only, and the
+        // arms run for their effects.
+        ty         = self.check.value_agrees(id).match({
+            true  => self.narrowed(id).try(),
+            false => self.unit_ty,
+        });
         subject_ty = self.type_of(m.scrutinee).try();
         subject    = self.expr_as(m.scrutinee, subject_ty).try();
         out        = self.temp(ty).try();

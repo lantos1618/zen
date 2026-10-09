@@ -78,6 +78,15 @@ G_TIMER_N*: usize = 48       // timers not yet delivered
 G_TIMER_ON*: usize = 49      // timer thread: 0 none, 1 starting, 2 running
 G_REC_THREADS*: usize = 50   // threads given a flight-recorder ring
 G_REC_ON*: usize = 51        // 1 unless ZEN_ACTOR_RECORDER=0
+G_SIM*: usize = 52           // ZEN_ACTOR_SEED: the schedule's random state (0 when off)
+G_SIM_SEED*: usize = 53      // the seed, as given
+G_SIM_NOW*: usize = 54       // virtual time in ns, moved only by timers
+G_READY*: usize = 55         // address of the ready actors' array
+G_READY_N*: usize = 56       // actors ready to run
+G_READY_CAP*: usize = 57     // words the ready array holds
+G_SIM_LOCK*: usize = 58      // u32: the ready array and timer taking, for plain threads
+G_SIM_MAIN*: usize = 59      // local block of the first thread to use the seeded schedule
+G_SIM_SHARED*: usize = 60    // 1 once a second thread has used it
 // Regions, in bytes.
 G_CENTRAL*: usize = 512      // std.actor.actor_pool's central part
 G_CHUNKS*: usize = 1152      // the registry's chunk table, CHUNKS words

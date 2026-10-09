@@ -83,7 +83,7 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
 - Flight recorder, on unless `ZEN_ACTOR_RECORDER=0`: every message carries
   `M_CAUSE`, the id of the message whose turn sent it (0 from main or any
   other thread outside a turn). Each thread that runs turns keeps a ring of
-  its last 1024 takes (id, cause, actor Ref, the actor type's name), 32 KiB,
+  its last 256 takes (id, cause, actor Ref, the actor type's name), 8 KiB,
   written with plain stores when a message is taken; that take gives the
   message its id, `m<thread>.<n>` (the thread's ring tag and its count), so
   no shared counter is touched. A checked trap then prints, after the trap's
@@ -95,6 +95,23 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   recorded may read a stale entry, which shows as history not kept.
   Spawn passes the actor type's name to `actor_start` (`B_NAME`: the static
   name's address and length in one word).
+
+- Seeded schedule, under `ZEN_ACTOR_SEED=n`: the runtime starts no worker,
+  sysmon or timer thread. A ready actor goes into one array (`G_READY`), and
+  turns run on whichever thread would otherwise wait: `join`, a send from
+  outside a turn to a full mailbox, and the exit hook's drain. Each step a
+  xorshift state seeded from `n` (`G_SIM`) picks the ready actor and the
+  turn's batch (1 to 32 messages), so the seed fixes the interleaving and
+  different seeds explore different ones; each sender's messages still
+  arrive in order. Timers read a virtual clock (`G_SIM_NOW`, also the trace
+  clock): when nothing is ready the clock jumps to the earliest deadline and
+  those timers fire, so a long `send_after` costs no real time. A wait with
+  nothing ready and no timer pending can never end: the runtime prints the
+  stuck report and `rerun with ZEN_ACTOR_SEED=n`, flushes standard output and
+  exits with status 3. Trap, stuck and cycle reports name the seed too.
+  Not covered: time the program reads itself (`monotonic_ns`, `sleep`), a
+  turn that never returns (there is no preemption), and plain threads, whose
+  sends still work but whose timing the seed does not fix.
 
 - Pages: everything the runtime keeps (globals, per-thread state, workers,
   the registry, 2 MiB spans of slabs, large messages, trace buffers) comes

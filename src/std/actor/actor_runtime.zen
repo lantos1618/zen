@@ -40,13 +40,13 @@
 { atomic_swap_usize, atomic_load_u32, atomic_cas_u32, atomic_store_u32 } = std.sys
 { atomic_store_release_usize } = std.sys
 { thread_word, set_thread_word, process_block, call_entry, guarded_call, pointer_at, address_of } = std.sys
-{ cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, write_all } = std.sys
+{ cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, write_all, exit_group } = std.sys
 { openat, close, at_fdcwd, o_wronly, o_creat, o_trunc, o_cloexec } = std.sys
 { str } = std.text
 { thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
 { cond_wait, cond_signal, cond_broadcast, parker_init, park, park_for, unpark, park_clear } = std.sys.sys_thread
 { word_at, load, store, lock, unlock, alloc, free, set_checked } = std.actor.actor_pool
-{ grab, kernel, actor_mem } = std.actor.actor_pool
+{ grab, give_back, kernel, actor_mem } = std.actor.actor_pool
 { slot_at, slot_of_ref, take_slot, give_slot } = std.actor.actor_registry
 { MAX_MESSAGE_BYTES } = std.actor.actor_limits
 { PB_ONCE, PB_GLOBALS, PB_MEM, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND } = std.actor.actor_layout
@@ -55,6 +55,7 @@
 { G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
 { G_TRACE, G_TRACE_N, G_TRACE_CAP, G_TRACE_T0 } = std.actor.actor_layout
 { G_REC_THREADS, G_REC_ON, G_RINGS, REC_EVENTS, REC_MASK, REC_WORDS, ID_SHIFT } = std.actor.actor_layout
+{ G_SIM, G_SIM_SEED, G_SIM_NOW, G_READY, G_READY_N, G_READY_CAP, G_SIM_LOCK, G_SIM_MAIN, G_SIM_SHARED } = std.actor.actor_layout
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
 { G_WATCH_LOCK, G_TIMER_LOCK, G_TIMERS, G_TIMER_LAST, G_TIMER_N, G_TIMER_ON, G_TIMER_PARKER } = std.actor.actor_layout
@@ -180,11 +181,7 @@ trace_event = (
         i = aadd(g, G_TRACE_N, 1);
         (i < load(g, G_TRACE_CAP)).then(() {
             e = at(buf).offset(i * TRACE_WORDS * 8);
-            store(
-                e,
-                0,
-                monotonic_ns().to_usize().value_or(0) - load(g, G_TRACE_T0)
-            );
+            store(e, 0, clock(g) - load(g, G_TRACE_T0));
             store(e, 1, kind | (from << 8));
             store(e, 2, to);
             store(e, 3, m);
@@ -486,7 +483,10 @@ try_acquire = (slot: Ptr<u8>, gen: usize) bool {
 schedule = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>) {
     w = at(load(l, L_WORKER));
     w.is_null().match({
-        true  => { inject(g, a); wake_one(g); },
+        true  => (load(g, G_SIM) != 0).match({
+            true  => ready(g, l, a),
+            false => { inject(g, a); wake_one(g); },
+        }),
         false => {
             displaced = aswap(w, W_NEXT, addr(a));
             (displaced != 0).then(() {
@@ -629,7 +629,10 @@ deliver = (
                 outbox_put(g, l, me, r, m);
                 h.break(SEND_QUEUED);
             });
-            nanosleep_ns(2000).discard();
+            (load(g, G_SIM) != 0).match({
+                true  => sim_wait(g, l),
+                false => nanosleep_ns(2000).discard(),
+            });
         });
         (!full && acas(slot, S_LIFE, old, (old + 1) | SCHED) == old).then(() {
             trace(g, T_SEND, index_of(me), ref_index(r), addr(m));
@@ -944,6 +947,8 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
     mine = load(a, B_REF);
     slot = slot_of_ref(g, mine);
     gen  = ref_gen(mine);
+    // A seeded schedule runs turns with no worker published.
+    owner = load(l, L_WORKER);
     arel(w, W_PREEMPT, 0);
     arel(w, W_TURNS, load(w, W_TURNS) + 1);
     arel(w, W_IN_TURN, 1);
@@ -955,7 +960,8 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
         (load(slot, S_WAITING) != 0).then(() { astore(slot, S_WAITING, 0); });
         record = a.offset(B_RECORD);
         ring   = recorder(g, l);
-        loop(() { taken < TURN_BATCH }, (h) {
+        batch  = (load(g, G_SIM) != 0).match({ true => 1 + sim_random(g) % SIM_BATCH, false => TURN_BATCH });
+        loop(() { taken < batch }, (h) {
             m = mailbox_take(a);
             m.is_null().then(() { h.break(); });
             taken = taken + 1;
@@ -985,7 +991,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
             queued = aload(a, B_SIDE) != 0 && load(at(aload(a, B_SIDE)), D_OUT_N) > 0;
             // A queued send parks the turn (S: at its end); a preempted,
             // yielded or handed-off turn stops taking messages.
-            stop = queued || aload(w, W_PREEMPT) != 0 || load(l, L_YIELD) != 0 || load(l, L_WORKER) == 0;
+            stop = queued || aload(w, W_PREEMPT) != 0 || load(l, L_YIELD) != 0 || load(l, L_WORKER) != owner;
             stop.then(() { h.break(); });
         });
         (aload(a, B_SIDE) != 0 && load(at(aload(a, B_SIDE)), D_OUT_N) > 0).then(() {
@@ -1122,6 +1128,7 @@ blame = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, m: Ptr<u8>) {
         (id != 0).then(
             () { explain(g, buf, "actor-runtime:   ", id, load(m, M_CAUSE)); }
         );
+        seed_hint(g, buf);
         free_block(g, l, buf);
     });
 }
@@ -1174,11 +1181,16 @@ release = (
 // locally it would run again before anything waiting in the injector.
 requeue = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, yielded: bool) {
     w = at(load(l, L_WORKER));
-    (w.is_null() || yielded).match({
-        true  => inject(g, a),
-        false => ring_push(g, w, a),
+    (w.is_null() && load(g, G_SIM) != 0).match({
+        true  => ready(g, l, a),
+        false => {
+            (w.is_null() || yielded).match({
+                true  => inject(g, a),
+                false => ring_push(g, w, a),
+            });
+            wake_one(g);
+        },
     });
-    wake_one(g);
 }
 
 // The actor is stopped, drained and owned by this worker: retire its
@@ -1534,6 +1546,160 @@ sysmon = (g: Ptr<u8>) {
 }
 
 // ---------------------------------------------------------------------
+// the seeded schedule (ZEN_ACTOR_SEED)
+// ---------------------------------------------------------------------
+
+// With a seed the runtime starts no threads: turns run on whichever
+// thread would otherwise wait (a join, a send to a full mailbox, the exit
+// hook). The seed picks the next ready actor and how many messages its
+// turn takes, and timers move a virtual clock, so a seed is a schedule.
+
+SIM_BATCH: usize = 32
+SIM_READY: usize = 4096
+
+clock = (g: Ptr<u8>) usize {
+    (load(g, G_SIM) != 0).match({
+        true  => load(g, G_SIM_NOW),
+        false => monotonic_ns().to_usize().value_or(0),
+    })
+}
+
+sim_random = (g: Ptr<u8>) usize {
+    x ::= load(g, G_SIM);
+    x = x ^ (x << 13);
+    x = x ^ (x >> 7);
+    x = x ^ (x << 17);
+    store(g, G_SIM, x);
+    x
+}
+
+// The seeded schedule is single-threaded unless the program starts plain
+// threads; this lock keeps the ready set and the timer list whole then.
+sim_lock = (g: Ptr<u8>) Ptr<u32> { g.offset(G_SIM_LOCK * 8).to<u32>() }
+
+// Add `a` to the ready set, growing it when full.
+ready = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>) {
+    sim_thread(g, l);
+    lock(sim_lock(g));
+    n   = load(g, G_READY_N);
+    cap = load(g, G_READY_CAP);
+    (n == cap).then(() {
+        old  = at(load(g, G_READY));
+        more = map(cap * 16);
+        (!more.is_null()).then(() {
+            more.copy_from(old, cap * 8);
+            give_back(old, cap * 8);
+            store(g, G_READY, addr(more));
+            store(g, G_READY_CAP, cap * 2);
+        });
+    });
+    (n < load(g, G_READY_CAP)).then(() {
+        store(at(load(g, G_READY)), n, addr(a));
+        store(g, G_READY_N, n + 1);
+    });
+    unlock(sim_lock(g));
+}
+
+// Run one turn of a ready actor the seed picks, or else fire the earliest
+// timers, moving the clock to them. False when nothing can run.
+sim_step = (g: Ptr<u8>, l: Ptr<u8>) bool {
+    actor  = load(l, L_ACTOR);
+    msg    = load(l, L_MSG);
+    worker = load(l, L_WORKER);
+    lock(sim_lock(g));
+    n = load(g, G_READY_N);
+    a ::= null_ptr<u8>();
+    (n > 0).then(() {
+        list = at(load(g, G_READY));
+        i    = sim_random(g) % n;
+        a    = at(load(list, i));
+        store(list, i, load(list, n - 1));
+        store(g, G_READY_N, n - 1);
+    });
+    first ::= null_ptr<u8>();
+    (n == 0 && load(g, G_TIMERS) != 0).then(() {
+        first = at(load(g, G_TIMERS));
+        due   = load(first, E_AT);
+        now   = (due > load(g, G_SIM_NOW)).match({ true => due, false => load(g, G_SIM_NOW) });
+        store(g, G_SIM_NOW, now);
+        last ::= first;
+        cur  ::= at(load(first, E_NEXT));
+        loop(() { !cur.is_null() && load(cur, E_AT) <= now }, (h) {
+            last = cur;
+            cur  = at(load(cur, E_NEXT));
+        });
+        store(g, G_TIMERS, addr(cur));
+        cur.is_null().then(() { store(g, G_TIMER_LAST, 0); });
+        store(last, E_NEXT, 0);
+    });
+    unlock(sim_lock(g));
+    (!a.is_null()).match({
+        true  => {
+            store(l, L_WORKER, 0);
+            run(g, l, worker_at(g, 0), a);
+        },
+        false => (!first.is_null()).then(() {
+            store(l, L_ACTOR, 0);
+            store(l, L_MSG, 0);
+            fire(g, l, first);
+        }),
+    });
+    store(l, L_WORKER, worker);
+    store(l, L_ACTOR, actor);
+    store(l, L_MSG, msg);
+    !a.is_null() || !first.is_null() || load(g, G_READY_N) > 0
+}
+
+// Note a thread using the schedule. Once a second one has (a plain thread
+// sending or joining), an empty schedule may still be refilled by it.
+sim_thread = (g: Ptr<u8>, l: Ptr<u8>) {
+    first = acas(g, G_SIM_MAIN, 0, addr(l));
+    (first != 0 && first != addr(l) && load(g, G_SIM_SHARED) == 0).then(() {
+        astore(g, G_SIM_SHARED, 1);
+    });
+}
+
+SIM_GRACE: usize = 2000
+
+// Wait by running the schedule. Nothing left to run while something waits
+// is a deadlock: report it and end the process. With plain threads about,
+// one of them may yet send, so wait for that as the threaded runtime does;
+// before any has shown up, a short grace lets a starting one do so.
+sim_wait = (g: Ptr<u8>, l: Ptr<u8>) {
+    sim_thread(g, l);
+    (!sim_step(g, l)).then(() {
+        idle :: usize = 0;
+        loop(() {
+            aload(g, G_READY_N) == 0 && aload(g, G_TIMERS) == 0
+                && aload(g, G_SIM_SHARED) == 0 && idle < SIM_GRACE
+        }, (h) {
+            nanosleep_ns(50000).discard();
+            idle = idle + 1;
+        });
+        // The caller checks its own wait again: another thread may have
+        // ended it by running the turn that was missing here.
+        (aload(g, G_SIM_SHARED) != 0).then(() { nanosleep_ns(50000).discard(); });
+        (aload(g, G_READY_N) == 0 && aload(g, G_TIMERS) == 0 && aload(g, G_SIM_SHARED) == 0).then(() {
+            stall_report(g, "deadlock: a wait that nothing can end");
+            exit_group(3).discard();
+        });
+    });
+}
+
+seed_hint = (g: Ptr<u8>, buf: Ptr<u8>) {
+    (load(g, G_SIM) != 0).then(() {
+        k :: usize = put_text(
+            buf,
+            0,
+            "actor-runtime: rerun with ZEN_ACTOR_SEED="
+        );
+        k = put_number(buf, k, load(g, G_SIM_SEED));
+        k = put_text(buf, k, "\n");
+        write_all(2, str(data: buf, len: k)).ignore();
+    });
+}
+
+// ---------------------------------------------------------------------
 // starting the runtime
 // ---------------------------------------------------------------------
 
@@ -1588,7 +1754,9 @@ runtime = (entry: usize, exit: usize) Ptr<u8> {
             store(block, PB_GLOBALS, addr(g));
             atomic_store_usize(word_at(block, 0), exit);
             atomic_store_usize(word_at(block, PB_ONCE), 2);
-            Range(0, load(g, G_WORKERS)).loop((i) { start_thread(g, worker_at(g, i)).unused(); });
+            (load(g, G_SIM) == 0).then(() {
+                Range(0, load(g, G_WORKERS)).loop((i) { start_thread(g, worker_at(g, i)).unused(); });
+            });
             (load(g, G_SYSMON_NS) > 0).then(() { start_thread(g, g).unused(); });
         });
         (!ok).then(() { atomic_store_usize(word_at(block, PB_ONCE), 3); });
@@ -1648,9 +1816,31 @@ setup = (g: Ptr<u8>, entry: usize) bool {
     store(g, G_ENTRY, entry);
     // Slot 0 is never used, so Ref 0 names no actor.
     store(g, G_SLOT_FRESH, 1);
-    wanted = env_number("ZEN_ACTOR_WORKERS", cpu_count());
+    // ZEN_ACTOR_SEED=n: one thread, the order picked by the seed.
+    env_var("ZEN_ACTOR_SEED").match({
+        None     => (),
+        Ok(text) => {
+            seed = text.parse_i64().match({ Ok(n) => n.to_usize().value_or(
+                0
+            ), None => 0 });
+            store(g, G_SIM_SEED, seed);
+            store(g, G_SIM, (seed << 1) | 1);
+        },
+    });
+    sim    = load(g, G_SIM) != 0;
+    wanted = sim.match({ true => 1, false => env_number(
+        "ZEN_ACTOR_WORKERS",
+        cpu_count()
+    ) });
     n      = (wanted == 0).match({ true => 1, false => (wanted > MAX_WORKERS).match({ true => MAX_WORKERS, false => wanted }) });
-    store(g, G_SYSMON_NS, env_number("ZEN_ACTOR_SYSMON_US", 1000) * 1000);
+    store(
+        g,
+        G_SYSMON_NS,
+        sim.match({ true => 0, false => env_number(
+            "ZEN_ACTOR_SYSMON_US",
+            1000
+        ) * 1000 })
+    );
     // ZEN_ACTOR_CHECKED=1: one mapping per block, unmapped when freed.
     set_checked(central_of(g), env_number("ZEN_ACTOR_CHECKED", 0) != 0);
     // ZEN_ACTOR_RECORDER=0: no flight recorder, so no causes in reports.
@@ -1669,13 +1859,17 @@ setup = (g: Ptr<u8>, entry: usize) bool {
             buf = map(cap * TRACE_WORDS * 8);
             (!buf.is_null()).then(() {
                 store(g, G_TRACE_CAP, cap);
-                store(g, G_TRACE_T0, monotonic_ns().to_usize().value_or(0));
+                store(g, G_TRACE_T0, clock(g));
                 astore(g, G_TRACE, addr(buf));
             });
         },
     });
+    sim.then(() {
+        store(g, G_READY, addr(map(SIM_READY * 8)));
+        store(g, G_READY_CAP, SIM_READY);
+    });
     base = map(n * WORKER_BYTES);
-    ready ::= !base.is_null();
+    ready ::= !base.is_null() && (!sim || load(g, G_READY) != 0);
     ready.then(() {
         store(g, G_WORKERS, n);
         store(g, G_WORKER_BASE, addr(base));
@@ -2067,7 +2261,7 @@ MAX_DELAY_MS: u64 = 1099511627776
 
 timer_marker = (g: Ptr<u8>) Ptr<u8> { g.offset(16) }
 
-now_ns = () usize { monotonic_ns().to_usize().value_or(0) }
+now_ns = (g: Ptr<u8>) usize { clock(g) }
 
 // Deliver a message built from the payload to the actor `r` names after
 // `ms` milliseconds, past the bound. 0, 1 (Closed: `r` has already
@@ -2105,7 +2299,7 @@ actor_after* = (
                     store(
                         e,
                         E_AT,
-                        now_ns() + wait.to_usize().value_or(0) * 1000000
+                        now_ns(g) + wait.to_usize().value_or(0) * 1000000
                     );
                     store(e, E_MSG, addr(m));
                     timer_add(g, e);
@@ -2123,6 +2317,7 @@ live_ref = (g: Ptr<u8>, r: usize) bool {
 
 // Start the timer thread on first use; false when it cannot be started.
 timers_on = (g: Ptr<u8>) bool {
+    (load(g, G_SIM) != 0).then(() { astore(g, G_TIMER_ON, 2); });
     (acas(g, G_TIMER_ON, 0, 1) == 0).then(() {
         astore(
             g,
@@ -2176,7 +2371,7 @@ timers = (g: Ptr<u8>, l: Ptr<u8>) {
     word   = g.offset(G_TIMER_LOCK * 8).to<u32>();
     parker = g.offset(G_TIMER_PARKER);
     loop(() { aload(g, G_STATE) != 2 }, (h) {
-        now = now_ns();
+        now = now_ns(g);
         lock(word);
         first = at(load(g, G_TIMERS));
         last ::= null_ptr<u8>();
@@ -2262,7 +2457,14 @@ actor_join* = (r: u64) {
         gen  = ref_gen(rr);
         me   = at(load(l, L_ACTOR));
         own  = !me.is_null() && load(me, B_REF) == rr;
-        (!own && !slot.is_null() && gen_of(aload(slot, S_LIFE)) == gen).then(() {
+        sim  = load(g, G_SIM) != 0;
+        (sim && !own && !slot.is_null()).then(() {
+            loop(
+                () { gen_of(aload(slot, S_LIFE)) == gen },
+                (h) { sim_wait(g, l); }
+            );
+        });
+        (!sim && !own && !slot.is_null() && gen_of(aload(slot, S_LIFE)) == gen).then(() {
             (load(l, L_WORKER) != 0).then(() { detach(g, l); });
             aadd(g, G_JOINERS, 1);
             mutex_lock(g.offset(G_JOIN_LOCK));
@@ -2483,6 +2685,7 @@ stall_report = (g: Ptr<u8>, why: str) {
                 cycles = cycles + 1;
             });
         });
+        seed_hint(g, buf);
     });
 }
 
@@ -2544,7 +2747,10 @@ quiet = (g: Ptr<u8>) bool {
 }
 
 wait_quiet = (g: Ptr<u8>) {
-    loop(() { !quiet(g) }, (h) { park(g.offset(G_EXIT_PARKER)); });
+    (load(g, G_SIM) != 0).match({
+        true  => loop(() { sim_step(g, local()) }, (h) {}),
+        false => loop(() { !quiet(g) }, (h) { park(g.offset(G_EXIT_PARKER)); }),
+    });
 }
 
 discard = (code: i64) {}

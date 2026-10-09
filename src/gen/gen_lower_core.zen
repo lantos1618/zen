@@ -65,6 +65,22 @@ Local* = { name*: str, frame*: usize, kind*: LocalKind }
 
 Expected* = { id*: ExprId, ty*: TyId }
 
+// Where an operator's operands meet: the checked result, whether it
+// compares, and the type both sides lower at when `ahead`.
+Meet = { checked: TyId, compare: bool, early: TyId, ahead: bool }
+
+// One operator of a left spine, lowered after the spine below it; `outer`
+// is how the operator above wants this one's value.
+Rung = {
+    id: ExprId,
+    op: BinOp,
+    lhs: ExprId,
+    rhs: ExprId,
+    span: Span,
+    meet: Meet,
+    outer: Meet,
+}
+
 // What a block's value is written as, for deciding what it hands out.
 Tail = { Expression: ExprId | Nested: BlockId | Nothing }
 
@@ -1376,25 +1392,131 @@ Lowerer* = {
 
     arithmetic = (self :: @Self, id: ExprId, op: BinOp, lhs: ExprId, rhs: ExprId,
                   span: Span) Res<Value, LowerError> {
+        meet     = self.meet_of(id, op, lhs, rhs).try();
+        raw_left = self.left_spine(lhs, meet).try();
+        self.combine(id, op, raw_left, rhs, meet, span)
+    }
+
+    // The operands meet at the checked arithmetic type, else at whichever
+    // side is settled and not an open literal. When that is an integer type
+    // known before either side runs, both sides are lowered at it, so an
+    // open literal operand is a constant of that type rather than a widened
+    // one.
+    meet_of = (self :: @Self, id: ExprId, op: BinOp, lhs: ExprId, rhs: ExprId)
+              Res<Meet, LowerError> {
         checked = self.type_of(id).try();
         compare = op.match({
             Equal => true, NotEqual => true, Less => true, LessEq => true,
             Greater => true, GreaterEq => true, _ => false,
         });
-        // The operands meet at the checked arithmetic type, else at
-        // whichever side is settled and not an open literal. When that is
-        // an integer type known before either side runs, both sides are
-        // lowered at it, so an open literal operand is a constant of that
-        // type rather than a widened one.
-        early     = (!compare && self.settled(checked)).match({
+        early   = (!compare && self.settled(checked)).match({
             true  => checked,
             false => self.meeting(
                 self.type_of(lhs).try(),
                 self.type_of(rhs).try()
             ),
         });
-        ahead     = self.integer_type(early) && !self.prim_name(early).eq("int");
-        raw_left  = ahead.match({ true => self.expr_as(lhs, early), false => self.expr(lhs) }).try();
+        Ok(Meet(
+            checked: checked,
+            compare: compare,
+            early: early,
+            ahead: self.integer_type(early) && !self.prim_name(early).eq("int")
+        ))
+    }
+
+    // A left-associated chain (`0 + 1 + 1 + ..`, ten thousand terms on one
+    // line) walks down its left operands and folds back up, so compiler
+    // recursion is bounded by the nesting the source writes, not by the
+    // chain's length.
+    left_spine = (self :: @Self, lhs: ExprId, meet: Meet)
+                 Res<Value, LowerError> {
+        rungs ::= self.alloc.Vec<Rung>();
+        down  ::= lhs;
+        outer ::= meet;
+        going ::= true;
+        going.loop((h) {
+            self.rung_at(down, outer).try().match({
+                Ok(rung) => {
+                    rungs.add(rung).try(LowerError.OutOfMemory);
+                    down  = rung.lhs;
+                    outer = rung.meet;
+                },
+                None     => { going = false; },
+            });
+        });
+        value ::= self.spine_base(down, outer).try();
+        Range(0, rungs.len).loop((h, i) {
+            rung  = rungs.get(rungs.len - 1 - i).ok_or(LowerError.OutOfMemory).try();
+            made  = self.combine(
+                rung.id,
+                rung.op,
+                value,
+                rung.rhs,
+                rung.meet,
+                rung.span
+            ).try();
+            value = rung.outer.ahead.match({
+                true  => self.coerce(made, rung.outer.early).try(),
+                false => made,
+            });
+        });
+        Ok(value)
+    }
+
+    // The level below `id` when lowering it would reach `arithmetic` for
+    // an unfolded operator node; None names `id` as the spine's base.
+    rung_at = (self :: @Self, id: ExprId, outer: Meet)
+              Res<Res<Rung>, LowerError> {
+        inner    = self.unwrapped(id);
+        constant = outer.ahead.match({
+            true  => self.folded(
+                id,
+                outer.early
+            ).try().match({ Ok(_) => true, None => false }),
+            false => false,
+        });
+        constant.match({
+            true  => Ok(None),
+            false => self.tree.expr_at(inner).kind.match({
+                Binary(b) => (b.op.match({ And => false, Or => false, _ => true }) && !b.op.is_bitwise()).match({
+                    false => Ok(None),
+                    true  => {
+                        outer.ahead.then(() {
+                            self.expected = Ok(Expected(
+                                id: inner,
+                                ty: outer.early
+                            ));
+                        });
+                        meet = self.meet_of(inner, b.op, b.lhs, b.rhs).try();
+                        Ok(Ok(Rung(
+                            id: inner,
+                            op: b.op,
+                            lhs: b.lhs,
+                            rhs: b.rhs,
+                            span: b.op_span,
+                            meet: meet,
+                            outer: outer
+                        )))
+                    },
+                }),
+                _         => Ok(None),
+            }),
+        })
+    }
+
+    spine_base = (self :: @Self, id: ExprId, meet: Meet) Res<Value, LowerError> {
+        meet.ahead.match({
+            true  => self.expr_as(id, meet.early),
+            false => self.expr(id),
+        })
+    }
+
+    combine = (self :: @Self, id: ExprId, op: BinOp, raw_left: Value,
+               rhs: ExprId, meet: Meet, span: Span) Res<Value, LowerError> {
+        checked   = meet.checked;
+        compare   = meet.compare;
+        early     = meet.early;
+        ahead     = meet.ahead;
         raw_right = ahead.match({ true => self.expr_as(rhs, early), false => self.expr(rhs) }).try();
         operand   = ahead.match({
             true  => early,

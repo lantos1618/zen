@@ -35,6 +35,7 @@
 { push_tparams, module_name } = sema.sema_inst
 { param_type, type_from_ast } = sema.sema_denote
 { alias_module, module_not_a_value, module_named_by } = sema.sema_module
+{ is_scope_value } = sema.sema_scope
 { Cand, TBound, Actual, cands_of, exported_cands, core_cands } = sema.sema_cand
 { matches } = sema.sema_cand
 { ty_at, is_tvar, sig_fits, signature_matches } = sema.sema_cand
@@ -61,7 +62,12 @@ SignatureUse = {
 
     finish = (self: @Self, c :: Checker) Res<TyId, AllocError> {
         c.arg_literals(self.call.args, self.params, self.off, self.ctx).try();
-        c.arg_lambdas(self.call.args, self.params, self.off, self.ctx).try();
+        c.arg_lambdas(
+            self.call.args,
+            self.params,
+            self.off,
+            c.lambda_ctx(self.call, self.ctx)
+        ).try();
         c.sig_args_handle_check(
             self.node,
             self.call,
@@ -287,7 +293,7 @@ CallCheck = {
                         self.call.args,
                         params,
                         off,
-                        self.ctx
+                        c.lambda_ctx(self.call, self.ctx)
                     ),
                     true  => {
                         c.arg_lambdas_settling(
@@ -295,7 +301,7 @@ CallCheck = {
                             params,
                             k.params,
                             off,
-                            self.ctx,
+                            c.lambda_ctx(self.call, self.ctx),
                             self.inst
                         ).try();
                         params.clear();
@@ -1778,7 +1784,29 @@ sig_lambdas = (c :: Checker, call: Call, ty: TyId, off: usize, ctx: Ctx)
               Res<AllocError> {
     params ::= c.alloc.Vec<TyId>();
     c.fn_params(ty, params).try();
-    c.arg_lambdas(call.args, params, off, ctx)
+    c.arg_lambdas(call.args, params, off, c.lambda_ctx(call, ctx))
+}
+
+// A deferred closure runs while its block exits, so `.try()` inside it has
+// no enclosing return left to propagate to.
+lambda_ctx = (c :: Checker, call: Call, ctx: Ctx) Ctx {
+    c.defers_closure(call).match({
+        false => ctx,
+        true  => Ctx(
+            module: ctx.module,
+            ret: ctx.ret,
+            has_ret: false,
+            self_ty: ctx.self_ty,
+            has_self: ctx.has_self
+        ),
+    })
+}
+
+defers_closure = (c :: Checker, call: Call) bool {
+    c.tree.expr_at(call.callee).kind.match({
+        Access(a) => a.name.text.eq("defer") && c.is_scope_value(a.base),
+        _         => false,
+    })
 }
 
 fn_ret = (c :: Checker, node: Expr, ty: TyId) Res<TyId, AllocError> {

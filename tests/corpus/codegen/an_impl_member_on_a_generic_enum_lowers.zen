@@ -1,0 +1,30 @@
+// AN IMPL MEMBER SUPPLIED ON A GENERIC ENUM, called at two instantiations.
+// The old C backend mangled a generic enum's impl members by declaration
+// alone, so `Boxed<i64>.size` and `Boxed<u8>.size` would have shared one
+// symbol and it refused the call. The IR lowering keys each instance by its
+// own type, so each instantiation answers with its own body.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Boxed<T> = { Empty | Full: T }
+
+Sized* = { size* = (self: @Self) i64 }
+
+Boxed.impl(Sized, {
+    size = (self: @Self) i64 {
+        self.match({
+            Empty   => 0,
+            Full(_) => 1,
+        })
+    }
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    a: Boxed<i64> = Full(7);
+    b: Boxed<u8>  = Empty;
+    println("a={} b={}", a.size(), b.size());
+    Ok(0);
+}

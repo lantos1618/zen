@@ -13,6 +13,7 @@
 { Span } = std.source
 { Expr, Lambda, Access, Struct, Member, Impl } = std.ast
 { ImplId } = sema.sema
+{ literal_overflows } = sema.sema_trap
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed } = sema.sema
@@ -1847,7 +1848,8 @@ pointer_call = (
         _          => {
             receiver = lo.expr(sources.source_expr(0, span).try()).try();
             elem     = lo.pointee(receiver.ty).try();
-            stride   = lo.element_size(elem).try();
+            (!(lo.is_unit(elem) && moves_element(name))).ensure(unsupported(span, "reading, writing, or shifting a Ptr<()>")).try();
+            stride = lo.element_size(elem).try();
             name.match({
                 "read"      => {
                     at = lo.element_at(receiver, sources, stride, span).try();
@@ -3185,8 +3187,9 @@ handle_call = (lo :: Lowerer, loop_id: usize, name: str, c: Call, span: Span)
                     variants   = lo.variants_of(result.ty).try();
                     ok         = variant_index(variants, "Ok").ok_or(unsupported(span, "a loop result without Ok")).try();
                     payload_ty = variants.get(ok).ok_or(unsupported(span, "a missing variant")).try().payload.ok_or(unsupported(span, "a loop result without a payload")).try();
-                    value      = lo.expr_as(arg.value, payload_ty).try();
-                    made       = lo.variant_value(
+                    lo.break_fits(arg.value, payload_ty, span).try();
+                    value = lo.expr_as(arg.value, payload_ty).try();
+                    made  = lo.variant_value(
                         result.ty,
                         "Ok",
                         Ok(value),
@@ -3836,4 +3839,25 @@ raw_text = (
         Err(_) => Err(unsupported(span, "a malformed literal escape")),
     }).try();
     lo.text(decoded, to)
+}
+
+// Ptr<()> is an opaque address: there is no element to move or step over.
+moves_element = (name: str) bool {
+    name.match({
+        "read"   => true,
+        "take"   => true,
+        "write"  => true,
+        "offset" => true,
+        "back"   => true,
+        _        => false,
+    })
+}
+
+// `h.break(v)` takes the loop's own T: a value of another type, or a literal
+// that does not fit it, would truncate through the break slot.
+break_fits = (lo :: Lowerer, value: ExprId, payload: TyId, span: Span)
+             Res<LowerError> {
+    got = lo.type_of(value).try();
+    lo.check.assignable(got, payload).ensure(unsupported(span, "h.break(v) is not free to choose its type")).try();
+    (!lo.check.literal_overflows(value, payload)).ensure(unsupported(lo.tree.expr_at(value).span, "h.break(v) is not free to choose its type"))
 }

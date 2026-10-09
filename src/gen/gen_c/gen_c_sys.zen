@@ -69,6 +69,7 @@ write_sys = (be :: CBackend, out :: Emit) Res<AllocError> {
     out.say("#include <fcntl.h>").try();
     out.say("#include <pthread.h>").try();
     out.say("#include <sched.h>").try();
+    out.say("#include <stdio.h>").try();
     out.say("#include <string.h>").try();
     out.say("#include <time.h>").try();
     out.say("#include <unistd.h>").try();
@@ -218,6 +219,9 @@ sys_body = (name: str) Res<str> {
         ),
         "flock"                      => Ok(
             "return zg_sys_result((int64_t)flock((int)a0, (int)a1));"
+        ),
+        "renameat"                   => Ok(
+            "return zg_sys_result((int64_t)renameat((int)a0, (const char *)(void *)a1, (int)a2, (const char *)(void *)a3));"
         ),
         "sched_getaffinity"          => Ok(
             "#if defined(__linux__)\n    return zg_sys_result((int64_t)syscall(SYS_sched_getaffinity, (int)a0, (size_t)a1, (void *)a2));\n#else\n    (void)a0; (void)a1; (void)a2; return -(int64_t)ENOSYS;\n#endif"

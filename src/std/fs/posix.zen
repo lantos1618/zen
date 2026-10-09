@@ -4,6 +4,7 @@
 { Alloc, AllocError, Ptr } = std.mem
 { c_text, str_at } = std.text
 { Res, Ok, loop, Error } = std.core
+{ at_fdcwd, renameat } = std.sys
 
 Native = c.bind("unistd.h", {
     read = (fd: i32, bytes: Ptr<u8>, length: usize) i64
@@ -124,10 +125,6 @@ create_temporary* = (a: Alloc, template: str, suffix_bytes: usize) Res<Temporary
     ))
 }
 
-Renames = c.bind("stdio.h", {
-    rename = (from: Ptr<c_char>, to: Ptr<c_char>) i32
-})
-
 // Replace `to` with `from` in one step; both must be on one filesystem. A
 // reader of `to` sees either the old file or the new one, never a mix.
 rename* = (a: Alloc, from: str, to: str) Res<AllocError | FileError> {
@@ -135,6 +132,6 @@ rename* = (a: Alloc, from: str, to: str) Res<AllocError | FileError> {
         .ensure(FileError.InvalidPath).try();
     old = from.c_text(a).try();
     new = to.c_text(a).try();
-    (Renames.rename(old.ptr().to<c_char>(), new.ptr().to<c_char>()) == 0)
+    (renameat(at_fdcwd(), old.ptr(), at_fdcwd(), new.ptr()) == 0)
         .ensure(FileError.WriteFailed)
 }

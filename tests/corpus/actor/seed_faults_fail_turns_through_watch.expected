@@ -1,0 +1,7 @@
+worker 6 done
+worker 4 failed
+worker 1 done
+worker 3 failed
+worker 5 failed
+worker 2 done
+joined

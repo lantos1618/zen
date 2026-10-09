@@ -68,18 +68,34 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   reaches the limit, not on every sysmon tick.
 - Message trace: `ZEN_ACTOR_TRACE=<file>` records each message's path, an
   event every time it moves: sent into a mailbox, parked in the sender's
-  outbox, released into the mailbox, refused, taken by a worker, plus actors
-  blocking, unblocking and waiting on a receiver, workers sleeping and
-  waking, and loops broken. Events go into a fixed buffer
-  (`ZEN_ACTOR_TRACE_EVENTS`, default 1000000; later events are counted, not
-  kept) and are written at `actor_shutdown`, one line each:
-  `index ns kind from to message id cause`. `from` and `to` are registry
-  indices (0 for a thread that is no actor; the worker for take, sleep and
-  wake), and the message is its block's address, unique while it lives. On
-  a take, `id` is the message's flight-recorder id and `cause` the id of the
-  message whose turn sent it (0: none), so a viewer can draw causal arrows;
-  other events have 0 in both. With the variable unset each trace point is
-  one load and a branch.
+  outbox, released into the mailbox, refused, taken by a worker, run (with
+  the turn's code address, or failed), dropped by a failed actor, plus
+  actors spawned (with the spawner) and finalised, actors blocking,
+  unblocking and waiting on a receiver, workers sleeping and waking, and
+  loops broken. Events go into a ring of `ZEN_ACTOR_TRACE_EVENTS` (default
+  1000000) that a trace thread writes out every `ZEN_ACTOR_TRACE_FLUSH_MS`
+  (default 100), so the file grows while the program runs; an event that
+  finds the ring full of unwritten events is counted lost. The file is
+  text: `#` lines for the header, `# name <code> <Type.behaviour>` for each
+  turn the compiler generated, then one
+  line per event, `index ns kind from to message id cause`, and `# end events N
+  lost L` at `actor_shutdown`. `from` and `to` are registry indices (0 for
+  a thread that is no actor; the worker for take, done, fail, drop, sleep
+  and wake; the spawner for spawn), and the message is its block's
+  address, unique while it lives. A take and the next done or fail on the
+  same worker bracket one turn. On a take, `id` is the message's flight-recorder id and
+  `cause` the id of the message whose turn sent it (0: none); other events
+  have 0 in both. With the variable unset each trace point
+  is one load and a branch.
+- Viewing it: `tools/zen-view` serves a dashboard over the file — actor
+  tree by spawner, topology with messages per second, mailbox fill, queue
+  and turn latency, timeline, worker lanes and failures — following it
+  live. `./zen build tools/zen-view --std src`, then
+  `tools/zen-view/build/zen-view <file>` and open http://127.0.0.1:7878/.
+  The page plays the recorded trace back at a chosen speed. Messages in
+  flight are dots on their edges, and the flame tab stacks each turn on the
+  turn whose send caused it. `tools/zen-view/demo/market.zen` is a nested
+  pipeline, one strategy of which fails, to try it on.
 - Flight recorder, on unless `ZEN_ACTOR_RECORDER=0`: every message carries
   `M_CAUSE`, the id of the message whose turn sent it (0 from main or any
   other thread outside a turn). Each thread that runs turns keeps a ring of
@@ -113,6 +129,23 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   turn that never returns (there is no preemption), and plain threads, whose
   sends still work but whose timing the seed does not fix.
 
+- Seeded faults, under `ZEN_ACTOR_SEED=n ZEN_ACTOR_FAULTS=k` (ignored without
+  a seed): at each chance below, 1 in about `k` fails. The draws come from a
+  second xorshift state (`G_FAULT_RNG`, the seed mixed and warmed up), so the
+  seed and `k` replay the same faults every run. Each fault is an outcome the
+  program must already handle:
+  - a turn fails before its handler runs, through the trap path: watchers
+    get `failed`, and the report reads `Worker#3 failed (injected fault)
+    handling m1.8` with the message's cause chain;
+  - `try_send` to another actor answers `Full` with room left (the message
+    is not admitted; a self-send never answers `Full`);
+  - a `send_after(ms)` timer fires up to `ms` later, never earlier;
+  - `spawn` answers `OutOfMemory` (`actor_new` returns no record).
+  A fault never drops an admitted message or reorders one sender's
+  messages. Reports print `rerun with ZEN_ACTOR_SEED=n ZEN_ACTOR_FAULTS=k`.
+  Without a seed `G_FAULTS` is 0: workers skip the per-turn draw, and
+  `try_send`, `send_after` and `spawn` read one word.
+
 - Pages: everything the runtime keeps (globals, per-thread state, workers,
   the registry, 2 MiB spans of slabs, large messages, trace buffers) comes
   through `actor_pool.grab`/`give_back`. Without `env.actor_mem` that is
@@ -135,4 +168,5 @@ allocation checks. Stress scenarios and benchmarks are in `tests/bench/actors`.
 completed scalar spans without reading clocks, allocating, or performing I/O.
 Names are borrowed and must outlive the buffer; the owner must serialize access.
 `zen-otel` owns wire encoding and optional export, and copies names before they
-cross its actor boundary. Runtime-wide automatic tracing is not implemented.
+cross its actor boundary. Runtime-wide span tracing is not implemented; the
+actor message trace above is the runtime's own record.

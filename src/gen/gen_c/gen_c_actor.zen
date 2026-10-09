@@ -443,7 +443,56 @@ write_turn = (
     });
     body.add("));\n").try();
     be.add_function(name, proto, body).try();
+    be.name_turn(name.view(), actor_ty, hit.f.name.text).try();
     Ok(name)
+}
+
+// The trace names a turn `Type.behaviour`: one line of the name lister.
+name_turn = (be :: CBackend, turn: str, actor: TyId, behavior: str)
+            Res<AllocError> {
+    named = be.runtime_symbol("actor_name").try();
+    owner ::= be.alloc.String().try();
+    site_of(be, actor).try().match({
+        None  => owner.add("actor"),
+        Ok(s) => owner.add(be.decl_name_at(s)),
+    }).try();
+    line ::= be.alloc.String().try();
+    line.fmt(
+        "    {}((size_t)&{}, (size_t)\"{}.{}\", {});\n",
+        named.view(),
+        turn,
+        owner.view(),
+        behavior,
+        owner.len() + 1 + behavior.len
+    ).try();
+    be.add_actor_name(line)
+}
+
+// The program's name lister, passed to actor_new: the runtime calls it
+// once, when the trace opens. Emitted only when an actor is spawned.
+NAMES_SYMBOL: str = "zg_actor_names"
+
+write_actor_names* = (be :: CBackend) Res<AllocError> {
+    be.uses_actor_names().then(() {
+        name ::= be.alloc.String().try();
+        name.add(NAMES_SYMBOL).try();
+        proto ::= be.alloc.String().try();
+        proto.fmt(
+            "{}void {}(uint8_t *zg_a, uint8_t *zg_b)",
+            be.linkage(),
+            NAMES_SYMBOL
+        ).try();
+        body ::= be.alloc.String().try();
+        body.add("    (void)zg_a;\n    (void)zg_b;\n").try();
+        Range(0, be.actor_name_count()).loop((h, i) {
+            be.actor_name_at(i).match({
+                None     => Ok,
+                Ok(line) => body.add(line.view()),
+            }).try();
+        });
+        be.add_function(name, proto, body).try();
+    });
+    Ok
 }
 
 ActorSendEmission = {
@@ -1292,6 +1341,7 @@ write_started_callback = (be :: CBackend, n: usize, rec: str, actor: TyId)
             callback ::= be.alloc.String().try();
             sym_gen(callback, "actor_started", n).try();
             be.add_lifecycle_callback(callback, rec, actor, hit).try();
+            be.name_turn(callback.view(), actor, "started").try();
             entry ::= be.alloc.String().try();
             entry.fmt("(size_t)&{}", callback.view()).try();
             name = entry;
@@ -1439,7 +1489,8 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
     be.set_line(actor.view(), actor_code.view()).try();
     state_c ::= be.alloc.String().try();
     be.ctype(layout.state_ty, state_c).try();
-    new       = be.runtime_symbol("actor_new").try();
+    new = be.runtime_symbol("actor_new").try();
+    be.need_actor_names();
     record    = be.runtime_symbol("actor_record").try();
     discard   = be.runtime_symbol("actor_discard").try();
     start     = be.runtime_symbol("actor_start").try();
@@ -1451,12 +1502,13 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
     arena_state ::= be.fresh_name("actor_state").try();
     status      ::= be.fresh_name("actor_status").try();
     be.fmt(
-        "uint8_t *{} = {}(sizeof({}), (size_t)&{}, (size_t)&{});\n",
+        "uint8_t *{} = {}(sizeof({}), (size_t)&{}, (size_t)&{}, (size_t)&{});\n",
         cell.view(),
         new.view(),
         lifecycle.record,
         thread.view(),
-        shutdown.view()
+        shutdown.view(),
+        NAMES_SYMBOL
     ).try();
     dst = be.temp(spawn.result_ty, "t").try();
     be.fmt("if (!{}) {{\n", cell.view()).try();

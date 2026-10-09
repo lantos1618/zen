@@ -25,8 +25,12 @@ Native = c.bind("sys/socket.h", {
     MSG_NOSIGNAL: i32 = 0
     SO_NOSIGPIPE: i32 = 0
     SOL_SOCKET: i32
+    SO_REUSEADDR: i32
     socket = (domain: i32, kind: i32, protocol: i32) i32
     connect = (fd: i32, address: Ptr<()>, address_len: u32) i32
+    bind = (fd: i32, address: Ptr<()>, address_len: u32) i32
+    listen = (fd: i32, backlog: i32) i32
+    accept = (fd: i32, address: Ptr<()>, address_len: Ptr<u32>) i32
     send = (fd: i32, bytes: Ptr<u8>, len: usize, flags: i32) i64
     recv = (fd: i32, bytes: Ptr<u8>, len: usize, flags: i32) i64
     setsockopt = (fd: i32, level: i32, option: i32, value: Ptr<()>, len: u32) i32
@@ -51,7 +55,12 @@ with_flag = (flags: i32, bit: i32) i32 {
     (bit > 0 && (flags / bit) % 2 == 0).match({true => flags + bit, false => flags})
 }
 
-SocketFault* = { ConnectFault | WriteFault | ReadFault | PeerClosed }
+SocketFault* = { ConnectFault
+    | WriteFault
+    | ReadFault
+    | PeerClosed
+    | ListenFault
+    | AcceptFault }
 SocketFault.impl(Error, {})
 
 ResolvedAddr* = {
@@ -191,6 +200,34 @@ resolve_addr* = (a: Alloc, host: str) Res<ResolvedAddr, SocketFault> {
     })
 }
 
+// A socket for `info`, close-on-exec and (where the platform has it) not
+// raising SIGPIPE; -1 when it cannot be made. `option` holds one i32 1.
+//
+// Linux admits CLOEXEC atomically. Platforms without that socket flag set it
+// before publishing the descriptor; concurrent fork needs care.
+open_for = (info: AddrInfo, option: Vec<i32>) i32 {
+    candidate = Native.socket(
+        info.ai_family,
+        with_flag(info.ai_socktype, Native.SOCK_CLOEXEC),
+        info.ai_protocol
+    );
+    (candidate >= 0).match({
+        false => -1,
+        true  => protect(candidate, option).match({
+            true  => candidate,
+            false => {
+                Io.close(candidate);
+                -1
+            },
+        }),
+    })
+}
+
+protect = (fd: i32, option: Vec<i32>) bool {
+    prior = Descriptors.fcntl(fd, Descriptors.F_GETFD, 0);
+    prior >= 0 && Descriptors.fcntl(fd, Descriptors.F_SETFD, with_flag(prior, Descriptors.FD_CLOEXEC)) == 0 && (Native.SO_NOSIGPIPE == 0 || Native.setsockopt(fd, Native.SOL_SOCKET, Native.SO_NOSIGPIPE, option.ptr().to<()>(), 4) == 0)
+}
+
 Socket* = {
     raw: i32,
     open :: bool = true,
@@ -211,39 +248,14 @@ Socket* = {
         @scope.defer(() { Resolver.freeaddrinfo(head) });
 
         option ::= a.Vec<i32>();
-        (Native.SO_NOSIGPIPE > 0).then(
-            () { option.add(1).try(SocketFault.ConnectFault); }
-        );
-        // Linux admits CLOEXEC atomically. Platforms without that socket flag
-        // set it before publishing the descriptor; concurrent fork needs care.
+        option.add(1).try(SocketFault.ConnectFault);
         raw :: i32 = -1;
         at  ::= head;
         loop(() { !at.is_null() && raw < 0 }, (h) {
             info      = at.read(0);
-            candidate = Native.socket(
-                info.ai_family,
-                with_flag(info.ai_socktype, Native.SOCK_CLOEXEC),
-                info.ai_protocol
-            );
+            candidate = open_for(info, option);
             (candidate >= 0).then(() {
-                prior     = Descriptors.fcntl(
-                    candidate,
-                    Descriptors.F_GETFD,
-                    0
-                );
-                protected = prior >= 0 && Descriptors.fcntl(
-                    candidate,
-                    Descriptors.F_SETFD,
-                    with_flag(prior, Descriptors.FD_CLOEXEC)
-                ) == 0;
-                quiet     = Native.SO_NOSIGPIPE == 0 || Native.setsockopt(
-                    candidate,
-                    Native.SOL_SOCKET,
-                    Native.SO_NOSIGPIPE,
-                    option.ptr().to<()>(),
-                    4
-                ) == 0;
-                (protected && quiet && Native.connect(
+                (Native.connect(
                     candidate,
                     info.ai_addr,
                     info.ai_addrlen
@@ -257,6 +269,58 @@ Socket* = {
         (raw < 0).match({
             true  => Err(SocketFault.ConnectFault),
             false => Ok(Socket(raw: raw)),
+        })
+    }
+
+    // Listens on `host`:`port` (a numeric host such as "127.0.0.1" binds
+    // one interface), reusing an address a previous run left in TIME_WAIT.
+    tcp_listen* = (a: Alloc, host: str, port: u16, backlog: i32)
+                  Res<Socket, SocketFault> {
+        host_c ::= host.c_text(a).try(SocketFault.ListenFault);
+        port_text = a.String("{}", port).try(SocketFault.ListenFault);
+        port_c ::= port_text.view().c_text(a).try(SocketFault.ListenFault);
+        run    ::= addresses(
+            a,
+            host_c.ptr(),
+            port_c.ptr(),
+            SocketFault.ListenFault,
+            SocketFault.ListenFault
+        ).try();
+        head = run.ptr().read(0);
+        @scope.defer(() { Resolver.freeaddrinfo(head) });
+        option ::= a.Vec<i32>();
+        option.add(1).try(SocketFault.ListenFault);
+        raw :: i32 = -1;
+        at  ::= head;
+        loop(() { !at.is_null() && raw < 0 }, (h) {
+            info      = at.read(0);
+            candidate = open_for(info, option);
+            (candidate >= 0).then(() {
+                (Native.setsockopt(candidate, Native.SOL_SOCKET, Native.SO_REUSEADDR, option.ptr().to<()>(), 4) == 0 && Native.bind(candidate, info.ai_addr, info.ai_addrlen) == 0 && Native.listen(candidate, backlog) == 0).match({
+                    true  => { raw = candidate; },
+                    false => { Io.close(candidate); },
+                });
+            });
+            at = info.ai_next;
+        });
+        (raw < 0).match({
+            true  => Err(SocketFault.ListenFault),
+            false => Ok(Socket(raw: raw)),
+        })
+    }
+
+    // The next connection to a listening socket, waiting for one.
+    accept* = (self: @Self, a: Alloc) Res<Socket, SocketFault> {
+        self.open.ensure(SocketFault.AcceptFault).try();
+        option ::= a.Vec<i32>();
+        option.add(1).try(SocketFault.AcceptFault);
+        raw = Native.accept(self.raw, null_ptr<()>(), null_ptr<u32>());
+        (raw >= 0 && protect(raw, option)).match({
+            true  => Ok(Socket(raw: raw)),
+            false => {
+                (raw >= 0).then(() { Io.close(raw); });
+                Err(SocketFault.AcceptFault)
+            },
         })
     }
 

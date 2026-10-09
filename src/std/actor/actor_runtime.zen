@@ -53,9 +53,10 @@
 { G_STATE, G_WORKERS, G_WORKER_BASE, G_IDLE, G_SPINNING, G_SLEEPING, G_DETACHED } = std.actor.actor_layout
 { G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
 { G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
-{ G_TRACE, G_TRACE_N, G_TRACE_CAP, G_TRACE_T0 } = std.actor.actor_layout
+{ G_TRACE, G_TRACE_N, G_TRACE_CAP, G_TRACE_T0, G_TRACE_DONE, G_TRACE_LOST } = std.actor.actor_layout
+{ G_NAMES, G_TRACE_FD, G_TRACE_OUT, G_TRACE_OUT_N } = std.actor.actor_layout
 { G_REC_THREADS, G_REC_ON, G_RINGS, REC_EVENTS, REC_MASK, REC_WORDS, ID_SHIFT } = std.actor.actor_layout
-{ G_SIM, G_SIM_SEED, G_SIM_NOW, G_READY, G_READY_N, G_READY_CAP, G_SIM_LOCK, G_SIM_MAIN, G_SIM_SHARED } = std.actor.actor_layout
+{ G_SIM, G_SIM_SEED, G_SIM_NOW, G_READY, G_READY_N, G_READY_CAP, G_SIM_LOCK, G_SIM_MAIN, G_SIM_SHARED, G_FAULTS, G_FAULT_RNG } = std.actor.actor_layout
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
 { G_WATCH_LOCK, G_TIMER_LOCK, G_TIMERS, G_TIMER_LAST, G_TIMER_N, G_TIMER_ON, G_TIMER_PARKER } = std.actor.actor_layout
@@ -141,9 +142,10 @@ as_ref = (index: usize, gen: usize) usize { (gen << 32) | index }
 stat = (g: Ptr<u8>, which: usize) { aadd(g, G_STATS + which, 1); }
 
 // ZEN_ACTOR_TRACE=<file>: every message's path through the runtime, one
-// event each time it moves, written to <file> at exit. `from` and `to` are
-// registry indices (0: not an actor); for TAKE, SLEEP and WAKE `from` is
-// the worker. The message is its block's address, unique while it lives.
+// event each time it moves, written to <file> as the program runs (the
+// trace thread) and at exit. `from` and `to` are registry indices (0: not
+// an actor); for TAKE, SLEEP, WAKE, DONE, FAIL and DROP `from` is the
+// worker. The message is its block's address, unique while it lives.
 T_SEND: usize = 1      // into the receiver's mailbox
 T_PARK: usize = 2      // into the sender's outbox: the receiver is full
 T_RELEASE: usize = 3   // from the outbox into the mailbox
@@ -156,7 +158,12 @@ T_SLEEP: usize = 9
 T_WAKE: usize = 10
 T_CLOSED: usize = 11   // refused: the receiver is gone
 T_WAIT: usize = 12     // the blocked sender now waits on `to`
-TRACE_WORDS: usize = 6
+T_SPAWN: usize = 13    // `from` spawned `to`; the message is its started turn
+T_DONE: usize = 14     // the turn ran; the message is the turn's code
+T_FAIL: usize = 15     // the turn trapped; the message is the turn's code
+T_STOP: usize = 16     // `to` was finalised; the message is 1 if it failed
+T_DROP: usize = 17     // not run: the receiver had failed
+TRACE_WORDS: usize = 7
 
 trace = (g: Ptr<u8>, kind: usize, from: usize, to: usize, m: usize) { trace_event(
     g,
@@ -178,19 +185,33 @@ trace_event = (
 ) {
     buf = aload(g, G_TRACE);
     (buf != 0).then(() {
-        i = aadd(g, G_TRACE_N, 1);
-        (i < load(g, G_TRACE_CAP)).then(() {
-            e = at(buf).offset(i * TRACE_WORDS * 8);
-            store(e, 0, clock(g) - load(g, G_TRACE_T0));
-            store(e, 1, kind | (from << 8));
-            store(e, 2, to);
-            store(e, 3, m);
-            store(e, 4, id);
-            store(
-                e,
-                5,
-                (id == 0).match({ true => 0, false => load(at(m), M_CAUSE) })
-            );
+        cap = load(g, G_TRACE_CAP);
+        loop((h) {
+            i = aload(g, G_TRACE_N);
+            (i - aload(g, G_TRACE_DONE) >= cap).match({
+                true  => {
+                    aadd(g, G_TRACE_LOST, 1);
+                    h.break();
+                },
+                false => (acas(g, G_TRACE_N, i, i + 1) == i).then(() {
+                    e = at(buf).offset((i % cap) * TRACE_WORDS * 8);
+                    store(e, 0, clock(g) - load(g, G_TRACE_T0));
+                    store(e, 2, kind | (from << 8));
+                    store(e, 3, to);
+                    store(e, 4, m);
+                    store(e, 5, id);
+                    store(
+                        e,
+                        6,
+                        (id == 0).match({ true => 0, false => load(
+                            at(m),
+                            M_CAUSE
+                        ) })
+                    );
+                    astore(e, 1, i + 1);
+                    h.break();
+                }),
+            });
         });
     });
 }
@@ -613,7 +634,9 @@ deliver = (
             me
         ) && (!me.is_null() || !on_core);
         behind = waits && !me.is_null() && outbox_holds(me, r);
-        full ::= waits && (count_of(old) >= BOUND || behind);
+        full ::= waits && (
+            count_of(old) >= BOUND || behind || (mode == MODE_OFFER && fault(g))
+        );
         (full && !behind && !me.is_null() && cycle_through(g, me, r)).then(() {
             full = false;
             stat(g, S_BREAKS);
@@ -964,6 +987,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
             true  => TURN_BATCH,
             false => 1 + sim_random(g) % SIM_BATCH,
         });
+        faults = owner == 0 && load(g, G_FAULTS) != 0;
         loop(() { taken < batch }, (h) {
             m = mailbox_take(a);
             m.is_null().then(() { h.break(); });
@@ -976,19 +1000,39 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
             ), false => 0 });
             trace_event(g, T_TAKE, load(w, W_ID), ref_index(mine), addr(m), id);
             // A failed actor's remaining messages are dropped, not run.
-            (load(a, B_FAILED) == 0).then(() {
-                // A send through a message-typed Ref names no turn: it runs
-                // the receive turn the actor started with.
-                turn    = load(m, M_TURN);
-                trapped = guarded_call(
-                    (turn == 0).match({ true => load(
+            (load(a, B_FAILED) == 0).match({
+                true  => {
+                    // A send through a message-typed Ref names no turn: it
+                    // runs the receive turn the actor started with.
+                    turn     = load(m, M_TURN);
+                    code     = (turn == 0).match({ true => load(
                         a,
                         B_RECEIVE
-                    ), false => turn }),
-                    record,
-                    m.offset(M_PAYLOAD)
-                ) != 0;
-                trapped.then(() { fail(g, l, a, slot); blame(g, l, a, m); });
+                    ), false => turn });
+                    injected = faults && fault(g);
+                    trapped  = injected || guarded_call(
+                        code,
+                        record,
+                        m.offset(M_PAYLOAD)
+                    ) != 0;
+                    trace(
+                        g,
+                        trapped.match({ true => T_FAIL, false => T_DONE }),
+                        load(w, W_ID),
+                        ref_index(load(a, B_REF)),
+                        code
+                    );
+                    trapped.then(
+                        () { fail(g, l, a, slot); blame(g, l, a, m, injected); }
+                    );
+                },
+                false => trace(
+                    g,
+                    T_DROP,
+                    load(w, W_ID),
+                    ref_index(load(a, B_REF)),
+                    addr(m)
+                ),
             });
             free_block(g, l, m);
             queued = aload(a, B_SIDE) != 0 && load(at(aload(a, B_SIDE)), D_OUT_N) > 0;
@@ -1116,13 +1160,17 @@ explain = (g: Ptr<u8>, buf: Ptr<u8>, lead: str, id: usize, cause: usize) {
 
 // A trap's report on stderr, after the trap's own line: the actor, the
 // message its turn ran, and the chain of turns that sent it.
-blame = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, m: Ptr<u8>) {
+blame = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, m: Ptr<u8>, injected: bool) {
     buf = new_block(g, l, 512);
     (!buf.is_null()).then(() {
         id = load(l, L_MSG);
         n ::= put_text(buf, 0, "actor-runtime: ");
         n = put_actor(buf, n, ref_index(load(a, B_REF)), load(a, B_NAME));
-        n = put_text(buf, n, " trapped");
+        n = put_text(
+            buf,
+            n,
+            injected.match({ true => " failed (injected fault)", false => " trapped" })
+        );
         (id != 0).then(
             () { n = put_text(buf, n, " handling "); n = put_id(buf, n, id); }
         );
@@ -1215,6 +1263,13 @@ finalize = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, slot: Ptr<u8>, v: usize) bool {
             // failed actor: a non-null second argument), then drops.
             stopped = load(a, B_STOPPED);
             failed  = load(a, B_FAILED) != 0;
+            trace(
+                g,
+                T_STOP,
+                0,
+                ref_index(load(a, B_REF)),
+                failed.match({ true => 1, false => 0 })
+            );
             (stopped != 0).then(() {
                 marker = failed.match({ true => a, false => null_ptr<u8>() });
                 guarded_call(
@@ -1567,13 +1622,22 @@ clock = (g: Ptr<u8>) usize {
     })
 }
 
-sim_random = (g: Ptr<u8>) usize {
-    x ::= load(g, G_SIM);
+sim_random = (g: Ptr<u8>) usize { xorshift(g, G_SIM) }
+
+// One step of the xorshift generator kept in word `w` of the globals.
+xorshift = (g: Ptr<u8>, w: usize) usize {
+    x ::= load(g, w);
     x = x ^ (x << 13);
     x = x ^ (x >> 7);
     x = x ^ (x << 17);
-    store(g, G_SIM, x);
+    store(g, w, x);
     x
+}
+
+// A seeded fault: 1 in n of the chances to fail one does fail.
+fault = (g: Ptr<u8>) bool {
+    n = load(g, G_FAULTS);
+    n != 0 && xorshift(g, G_FAULT_RNG) % n == 0
 }
 
 // The seeded schedule is single-threaded unless the program starts plain
@@ -1697,6 +1761,10 @@ seed_hint = (g: Ptr<u8>, buf: Ptr<u8>) {
             "actor-runtime: rerun with ZEN_ACTOR_SEED="
         );
         k = put_number(buf, k, load(g, G_SIM_SEED));
+        (load(g, G_FAULTS) != 0).then(() {
+            k = put_text(buf, k, " ZEN_ACTOR_FAULTS=");
+            k = put_number(buf, k, load(g, G_FAULTS));
+        });
         k = put_text(buf, k, "\n");
         write_all(2, str(data: buf, len: k)).ignore();
     });
@@ -1723,26 +1791,29 @@ start_thread = (g: Ptr<u8>, arg: Ptr<u8>) bool {
 }
 
 // The body of every thread the runtime starts: a worker's driver, sysmon,
-// the timer thread, or a spare waiting for a handed-off worker.
+// the timer thread, the trace thread, or a spare waiting for a handed-off worker.
 actor_thread* = (arg: Ptr<u8>) {
     g = globals();
     l = local();
-    arg.same(g).match({
-        true  => sysmon(g),
-        false => arg.same(timer_marker(g)).match({ true => timers(g, l), false => {
-            (!arg.same(spare_marker(g))).then(() {
-                drive(g, l, arg);
-                reattach(g, l);
-            });
-            spare_loop(g, l);
-        } }),
+    arg.same(trace_marker(g)).match({
+        true  => trace_loop(g),
+        false => arg.same(g).match({
+            true  => sysmon(g),
+            false => arg.same(timer_marker(g)).match({ true => timers(g, l), false => {
+                (!arg.same(spare_marker(g))).then(() {
+                    drive(g, l, arg);
+                    reattach(g, l);
+                });
+                spare_loop(g, l);
+            } }),
+        }),
     });
 }
 
 // The runtime, made by the first spawn; the others wait for it. `entry` is
 // the code address of `actor_thread`, `exit` that of `actor_shutdown`,
 // which becomes the process's exit hook. Null when it cannot be made.
-runtime = (entry: usize, exit: usize) Ptr<u8> {
+runtime = (entry: usize, exit: usize, names: usize) Ptr<u8> {
     block = process_block();
     // 4 is an `env.actor_mem` in progress on another thread: wait it out.
     seen: Res<usize> = loop<usize>((h) {
@@ -1752,7 +1823,7 @@ runtime = (entry: usize, exit: usize) Ptr<u8> {
     });
     (seen.value_or(1) == 0).then(() {
         g  = map(GLOBALS_BYTES);
-        ok = !g.is_null() && setup(g, entry);
+        ok = !g.is_null() && setup(g, entry, names);
         ok.then(() {
             store(block, PB_GLOBALS, addr(g));
             atomic_store_usize(word_at(block, 0), exit);
@@ -1761,6 +1832,7 @@ runtime = (entry: usize, exit: usize) Ptr<u8> {
                 Range(0, load(g, G_WORKERS)).loop((i) { start_thread(g, worker_at(g, i)).unused(); });
             });
             (load(g, G_SYSMON_NS) > 0).then(() { start_thread(g, g).unused(); });
+            (load(g, G_TRACE) != 0).then(() { start_thread(g, trace_marker(g)).unused(); });
         });
         (!ok).then(() { atomic_store_usize(word_at(block, PB_ONCE), 3); });
     });
@@ -1812,11 +1884,12 @@ env_number = (name: str, fallback: usize) usize {
 // Workers: one per CPU the process may use (ZEN_ACTOR_WORKERS overrides),
 // at most MAX_WORKERS. Sysmon's tick: ZEN_ACTOR_SYSMON_US microseconds,
 // default 1000; 0 turns preemption off.
-setup = (g: Ptr<u8>, entry: usize) bool {
+setup = (g: Ptr<u8>, entry: usize, names: usize) bool {
     stub = stub_node(g);
     astore(g, G_INJ_HEAD, stub);
     astore(g, G_INJ_TAIL, stub);
     store(g, G_ENTRY, entry);
+    store(g, G_NAMES, names);
     // Slot 0 is never used, so Ref 0 names no actor.
     store(g, G_SLOT_FRESH, 1);
     // ZEN_ACTOR_SEED=n: one thread, the order picked by the seed.
@@ -1828,6 +1901,12 @@ setup = (g: Ptr<u8>, entry: usize) bool {
             ), None => 0 });
             store(g, G_SIM_SEED, seed);
             store(g, G_SIM, (seed << 1) | 1);
+            // ZEN_ACTOR_FAULTS=n: the seed also fails 1 in n chances.
+            // Faults draw from their own stream, so turning them on keeps
+            // the schedule's draws; mixing spreads nearby seeds apart.
+            store(g, G_FAULTS, env_number("ZEN_ACTOR_FAULTS", 0));
+            store(g, G_FAULT_RNG, seed ^ 0x9E3779B97F4A7C15);
+            Range<usize>(0, 8).loop((i) { xorshift(g, G_FAULT_RNG).ignore_word(); });
         },
     });
     sim    = load(g, G_SIM) != 0;
@@ -1913,14 +1992,21 @@ setup = (g: Ptr<u8>, entry: usize) bool {
 // A zeroed body for an actor whose compiler-made record is `record_bytes`,
 // starting the runtime on first use; null when memory or the runtime
 // cannot be had. `entry` and `exit` are the code addresses of
-// `actor_thread` and `actor_shutdown`.
-actor_new* = (record_bytes: usize, entry: usize, exit: usize) Ptr<u8> {
-    g = runtime(entry, exit);
+// `actor_thread` and `actor_shutdown`; `names`, when not 0, is the
+// program's turn lister, which calls `actor_name` once per turn.
+actor_new* = (
+    record_bytes : usize,
+    entry        : usize,
+    exit         : usize,
+    names        : usize
+) Ptr<u8> {
+    g = runtime(entry, exit, names);
     g.is_null().match({
         true  => g,
         false => {
             bytes = (B_RECORD + record_bytes + 7) / 8 * 8;
-            a     = new_block(g, local(), bytes);
+            // A seeded fault refuses the spawn as if memory ran out.
+            a = fault(g).match({ true => null_ptr<u8>(), false => new_block(g, local(), bytes) });
             (!a.is_null()).then(() { zero(a, bytes); });
             a
         },
@@ -1969,6 +2055,13 @@ actor_start* = (
             slot = slot_at(g, index);
             gen  = gen_of(aload(slot, S_LIFE));
             store(cell, B_REF, as_ref(index, gen));
+            trace(
+                g,
+                T_SPAWN,
+                index_of(at(load(local(), L_ACTOR))),
+                index,
+                started
+            );
             store(cell, B_STOPPED, stopped);
             store(cell, B_RECEIVE, receive);
             store(cell, B_NAME, name_word(name));
@@ -2297,7 +2390,12 @@ actor_after* = (
                     SEND_FULL
                 },
                 false => {
-                    wait = (ms > MAX_DELAY_MS).match({ true => MAX_DELAY_MS, false => ms });
+                    asked = (ms > MAX_DELAY_MS).match({ true => MAX_DELAY_MS, false => ms });
+                    // A seeded fault fires it late, by up to as long again.
+                    wait = (asked > 0 && fault(g)).match({
+                        true  => asked + (xorshift(g, G_FAULT_RNG) % (asked.to_usize().value_or(0) + 1)).to_u64(),
+                        false => asked,
+                    });
                     store(e, E_TO, rr);
                     store(
                         e,
@@ -2520,12 +2618,31 @@ actor_shutdown* = () {
     });
 }
 
-// The trace as text, one event per line, oldest first.
+// The trace as text, one event per line, oldest first: `#` lines first
+// (the header, then `# name <code> <Type.behaviour>` per turn), events as
+// the trace thread writes them out, and `# end` at exit.
 TRACE_OUT: usize = 65536
+TRACE_NAME_MAX: usize = 1024
 
-trace_dump = (g: Ptr<u8>) {
-    buf = aload(g, G_TRACE);
-    out = (buf != 0).match({ true => map(TRACE_OUT), false => null_ptr<u8>() });
+trace_marker = (g: Ptr<u8>) Ptr<u8> { g.offset(24) }
+
+// The trace thread: writes the ring out every ZEN_ACTOR_TRACE_FLUSH_MS
+// (default 100) so a viewer can follow the file while the program runs.
+trace_loop = (g: Ptr<u8>) {
+    ticks = env_number("ZEN_ACTOR_TRACE_FLUSH_MS", 100) / 10 + 1;
+    k :: usize = 0;
+    loop(() { aload(g, G_STATE) != 2 }, (h) {
+        nanosleep_ns(10000000).discard();
+        k = k + 1;
+        (k >= ticks).then(() {
+            k = 0;
+            trace_flush(g);
+        });
+    });
+}
+
+trace_open = (g: Ptr<u8>) {
+    out = map(TRACE_OUT);
     (!out.is_null()).then(() {
         env_var("ZEN_ACTOR_TRACE").match({
             None     => (),
@@ -2538,62 +2655,146 @@ trace_dump = (g: Ptr<u8>) {
                     o_wronly() + o_creat() + o_trunc() + o_cloexec(),
                     420
                 );
-                (fd >= 0).then(() {
-                    f       = fd.to_i32().value_or(-1);
-                    claimed = aload(g, G_TRACE_N);
-                    cap     = load(g, G_TRACE_CAP);
-                    kept    = (claimed < cap).match({ true => claimed, false => cap });
-                    n       = put_text(
-                        out,
-                        0,
-                        "# zen actor trace: index ns kind from to message id cause\n"
-                    );
-                    n       = put_text(
-                        out,
-                        n,
-                        "# kinds: 1 send 2 park 3 release 4 refuse 5 take 6 break 7 block 8 unblock 9 sleep 10 wake 11 closed 12 wait\n"
-                    );
-                    n       = put_text(
-                        out,
-                        n,
-                        "# a take's id is the message's flight-recorder id, its cause the id whose turn sent it (0: none)\n"
-                    );
-                    n       = put_text(out, n, "# workers ");
-                    n       = put_number(out, n, load(g, G_WORKERS));
-                    n       = put_text(out, n, " events ");
-                    n       = put_number(out, n, claimed);
-                    n       = put_text(out, n, " kept ");
-                    n       = put_number(out, n, kept);
-                    n       = put_text(out, n, "\n");
-                    Range(0, kept).loop((i) {
-                        e    = at(buf).offset(i * TRACE_WORDS * 8);
-                        word = load(e, 1);
-                        n    = put_number(out, n, i);
-                        n    = put_text(out, n, " ");
-                        n    = put_number(out, n, load(e, 0));
-                        n    = put_text(out, n, " ");
-                        n    = put_number(out, n, word & 255);
-                        n    = put_text(out, n, " ");
-                        n    = put_number(out, n, word >> 8);
-                        n    = put_text(out, n, " ");
-                        n    = put_number(out, n, load(e, 2));
-                        n    = put_text(out, n, " ");
-                        n    = put_number(out, n, load(e, 3));
-                        n    = put_text(out, n, " ");
-                        n    = put_number(out, n, load(e, 4));
-                        n    = put_text(out, n, " ");
-                        n    = put_number(out, n, load(e, 5));
-                        n    = put_text(out, n, "\n");
-                        (n > TRACE_OUT - 160).then(() {
-                            write_all(f, str(data: out, len: n)).ignore();
-                            n = 0;
-                        });
-                    });
-                    write_all(f, str(data: out, len: n)).ignore();
-                    close(f).discard();
-                });
+                (fd >= 0).then(
+                    () { store(g, G_TRACE_FD, fd.to_usize().value_or(0) + 1); }
+                );
+                n = put_text(
+                    out,
+                    0,
+                    "# zen actor trace 2: index ns kind from to message id cause\n"
+                );
+                n = put_text(
+                    out,
+                    n,
+                    "# kinds: 1 send 2 park 3 release 4 refuse 5 take 6 break 7 block 8 unblock 9 sleep 10 wake 11 closed 12 wait 13 spawn 14 done 15 fail 16 stop 17 drop\n"
+                );
+                n = put_text(
+                    out,
+                    n,
+                    "# a take's id is the message's flight-recorder id, its cause the id whose turn sent it (0: none)\n"
+                );
+                n = put_text(out, n, "# workers ");
+                n = put_number(out, n, load(g, G_WORKERS));
+                n = put_text(out, n, " bound ");
+                n = put_number(out, n, BOUND);
+                n = put_text(out, n, " ring ");
+                n = put_number(out, n, load(g, G_TRACE_CAP));
+                n = put_text(out, n, "\n");
+                store(g, G_TRACE_OUT_N, n);
             },
         });
+        // Set even when the file could not be opened, so it is tried once.
+        store(g, G_TRACE_OUT, addr(out));
+        names = load(g, G_NAMES);
+        (names != 0).then(
+            () { call_entry(names, null_ptr<u8>(), null_ptr<u8>()); }
+        );
+    });
+}
+
+trace_write = (g: Ptr<u8>, out: Ptr<u8>, n: usize) {
+    fd = load(g, G_TRACE_FD);
+    (fd != 0 && n > 0).then(() {
+        write_all(
+            (fd - 1).to_u64().to_i32().value_or(-1),
+            str(data: out, len: n)
+        ).ignore();
+    });
+}
+
+// Room for one more line (a name is at most TRACE_NAME_MAX bytes).
+trace_spill = (g: Ptr<u8>, out: Ptr<u8>, n: usize) usize {
+    (n > TRACE_OUT - TRACE_NAME_MAX - 256).match({
+        true  => {
+            trace_write(g, out, n);
+            0
+        },
+        false => n,
+    })
+}
+
+// Writes out the published events not yet written; only the trace thread,
+// or the exit after it is joined, calls it.
+trace_flush = (g: Ptr<u8>) {
+    buf = aload(g, G_TRACE);
+    (buf != 0 && load(g, G_TRACE_OUT) == 0).then(() { trace_open(g); });
+    out = (buf != 0).match({ true => at(load(
+        g,
+        G_TRACE_OUT
+    )), false => null_ptr<u8>() });
+    (!out.is_null()).then(() {
+        cap = load(g, G_TRACE_CAP);
+        end = aload(g, G_TRACE_N);
+        n ::= load(g, G_TRACE_OUT_N);
+        i ::= aload(g, G_TRACE_DONE);
+        loop(() { i < end }, (h) {
+            e = at(buf).offset((i % cap) * TRACE_WORDS * 8);
+            (aload(e, 1) != i + 1).then(() { h.break(); });
+            word = load(e, 2);
+            n    = trace_spill(g, out, n);
+            n    = put_number(out, n, i);
+            n    = put_text(out, n, " ");
+            n    = put_number(out, n, load(e, 0));
+            n    = put_text(out, n, " ");
+            n    = put_number(out, n, word & 255);
+            n    = put_text(out, n, " ");
+            n    = put_number(out, n, word >> 8);
+            n    = put_text(out, n, " ");
+            n    = put_number(out, n, load(e, 3));
+            n    = put_text(out, n, " ");
+            n    = put_number(out, n, load(e, 4));
+            n    = put_text(out, n, " ");
+            n    = put_number(out, n, load(e, 5));
+            n    = put_text(out, n, " ");
+            n    = put_number(out, n, load(e, 6));
+            n    = put_text(out, n, "\n");
+            i    = i + 1;
+        });
+        astore(g, G_TRACE_DONE, i);
+        trace_write(g, out, n);
+        store(g, G_TRACE_OUT_N, 0);
+    });
+}
+
+trace_dump = (g: Ptr<u8>) {
+    trace_flush(g);
+    fd = load(g, G_TRACE_FD);
+    (aload(g, G_TRACE) != 0 && fd != 0).then(() {
+        out = at(load(g, G_TRACE_OUT));
+        n ::= put_text(out, 0, "# end events ");
+        n = put_number(out, n, aload(g, G_TRACE_N));
+        n = put_text(out, n, " lost ");
+        n = put_number(out, n, aload(g, G_TRACE_LOST));
+        n = put_text(out, n, "\n");
+        trace_write(g, out, n);
+        close((fd - 1).to_u64().to_i32().value_or(-1)).discard();
+        store(g, G_TRACE_FD, 0);
+    });
+}
+
+// Called by the program's turn lister while the trace opens: a turn's code
+// address and its name in source.
+actor_name* = (turn: usize, name: usize, len: usize) {
+    g   = globals();
+    out = g.is_null().match({ true => null_ptr<u8>(), false => at(load(
+        g,
+        G_TRACE_OUT
+    )) });
+    (!out.is_null()).then(() {
+        n ::= trace_spill(g, out, load(g, G_TRACE_OUT_N));
+        n = put_text(out, n, "# name ");
+        n = put_number(out, n, turn);
+        n = put_text(out, n, " ");
+        n = put_text(
+            out,
+            n,
+            str(
+                data: at(name),
+                len: (len > TRACE_NAME_MAX).match({ true => TRACE_NAME_MAX, false => len })
+            )
+        );
+        n = put_text(out, n, "\n");
+        store(g, G_TRACE_OUT_N, n);
     });
 }
 

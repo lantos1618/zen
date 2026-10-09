@@ -1572,7 +1572,8 @@ Lowerer* = {
             Ok(want) => (want.id == id && self.settled(want.ty) && (!self.settled(own)
                 || (self.prim_name(own).eq("int") && !self.prim_name(want.ty).eq("int")
                     && self.integer_type(want.ty))
-                || (self.is_res(want.ty) && !self.is_res(own)))).match({
+                || (self.is_res(want.ty) && !self.is_res(own))
+                || (self.is_res(want.ty) && self.open_res(own)))).match({
                 true  => Ok(want.ty),
                 false => None,
             }),
@@ -2826,7 +2827,7 @@ Lowerer* = {
     // the expression, converting the failure to that frame's result type.
     try_expr = (self :: @Self, id: ExprId, operand: ExprId, error: Res<ExprId>, span: Span)
                Res<Value, LowerError> {
-        value    = self.expr(operand).try();
+        value    = self.try_operand(operand).try();
         variants = self.variants_of(value.ty).try();
         ok_tag   = variant_index(variants, "Ok").ok_or(unsupported(span, "try on a value without Ok")).try();
         is_ok    = self.tag_test(value, ok_tag).try();
@@ -2853,6 +2854,40 @@ Lowerer* = {
         ty      = self.type_of(id).try();
         payload = self.payload_of(value, ok_tag).try();
         self.coerce(payload, ty)
+    }
+
+    // A `match` whose arms are bare `Ok` leaves its error open (`Res~(),?`);
+    // it fails as the frame's result does, so it is lowered at that form.
+    try_operand = (self :: @Self, operand: ExprId) Res<Value, LowerError> {
+        own  = self.type_of(operand).try();
+        ret  = self.here().ret_ty;
+        want = self.check.types.at(own).match({
+            Res(r) => self.open_res(own).match({
+                true  => self.check.types.at(ret).match({
+                    Res(f) => Ok(f.form.match({
+                        Failure => self.check.types.res_failure(
+                            r.value,
+                            f.error
+                        ),
+                        _       => self.check.types.res_absence(r.value),
+                    }).try(LowerError.OutOfMemory)),
+                    _      => None,
+                }),
+                false => None,
+            }),
+            _      => None,
+        });
+        want.match({
+            Ok(ty) => self.expr_as(operand, ty),
+            None   => self.expr(operand),
+        })
+    }
+
+    open_res = (self :: @Self, ty: TyId) bool {
+        self.check.types.at(ty).match({
+            Res(r) => r.form.match({ Open => true, _ => false }),
+            _      => false,
+        })
     }
 
     // The frame's result for a failed operand: None stays None; an error

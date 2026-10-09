@@ -279,7 +279,11 @@ SysConstant* = { AtFdcwd
     // 1 on Darwin, 0 on Linux: which thread primitives std.sys builds on.
     | IsDarwin
     // 1 where threads go through pthreads (Darwin), 0 on native Linux.
-    | PthreadThreads }
+    | PthreadThreads
+    // The C compiler's predefined target macros, 1 or 0.
+    | IsLinux
+    | IsX86_64
+    | IsArm64 }
 
 // The operating systems and architectures with constant tables.
 Platform* = { LinuxX86_64 | LinuxArm64 | Darwin }
@@ -306,6 +310,21 @@ constant_value* = (name: SysConstant, platform: Platform) i64 {
         MapPrivateAnonymous => linux.match({ true => 34, false => 4098 }),
         IsDarwin            => linux.match({ true => 0, false => 1 }),
         PthreadThreads      => linux.match({ true => 0, false => 1 }),
+        IsLinux             => linux.match({ true => 1, false => 0 }),
+        IsX86_64            => platform.match({ LinuxX86_64 => 1, _ => 0 }),
+        IsArm64             => platform.match({ LinuxX86_64 => 0, _ => 1 }),
+    })
+}
+
+// The target macro a C compiler predefines under this name, whose value a
+// native target knows without reading any header.
+predefined_constant* = (name: str) Res<SysConstant> {
+    name.match({
+        "__APPLE__"   => Ok(SysConstant.IsDarwin),
+        "__linux__"   => Ok(SysConstant.IsLinux),
+        "__x86_64__"  => Ok(SysConstant.IsX86_64),
+        "__aarch64__" => Ok(SysConstant.IsArm64),
+        _             => None,
     })
 }
 

@@ -29,7 +29,8 @@
 { Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
-{ Guards, TagGuard, PayloadRead } = gen.gen_ir
+{ Guards, TagGuard, PayloadRead, SysValue } = gen.gen_ir
+{ predefined_constant } = gen.gen_sys
 { word, integer, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
@@ -2048,8 +2049,45 @@ Lowerer* = {
         ty = self.type_of(id).try();
         is_prim(type_name).match({
             true  => self.prim_constant(ty, type_name, member, span),
-            false => self.variant_value(ty, member, None, span),
+            false => self.names_native_constants(type_name).match({
+                true  => self.native_constant(ty, member, span),
+                false => self.variant_value(ty, member, None, span),
+            }),
         })
+    }
+
+    // A `c.bind` header record, whose fields read C macros.
+    names_native_constants = (self :: @Self, name: str) bool {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(self.here().module, name, defs).ignore();
+        defs.find(
+            (d) { d.kind.match({ StructDef => true, _ => false }) }
+        ).match({
+            None  => false,
+            Ok(d) => decl_at(self.tree, d.id).match({
+                None    => false,
+                Ok(def) => def.kind.match({
+                    Struct(s) => s.native_header.match({
+                        Ok(_) => !s.native_record && !s.native_host,
+                        None  => false,
+                    }),
+                    _         => false,
+                }),
+            }),
+        })
+    }
+
+    // A native target knows the C compiler's predefined target macros; any
+    // other macro's value lives in a header it does not read.
+    native_constant = (self :: @Self, ty: TyId, member: str, span: Span)
+                      Res<Value, LowerError> {
+        name = predefined_constant(member).ok_or(unsupported(span, "a native constant whose value lives in a C header")).try();
+        out  = self.temp(ty).try();
+        self.add(Instruction.SysConst(SysValue(
+            out: out.slot,
+            name: name
+        ))).try();
+        Ok(out)
     }
 
     // Each primitive's width is named, never defaulted: a missing name is

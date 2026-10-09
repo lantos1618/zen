@@ -1512,6 +1512,16 @@ sys_name = (call: Sys) str {
         Getcwd       => "getcwd",
         Mkdirat      => "mkdirat",
         Unlinkat     => "unlinkat",
+        Pipe2        => "pipe2",
+        Fork         => "fork",
+        Execve       => "execve",
+        Dup3         => "dup3",
+        Chdir        => "chdir",
+        Wait4        => "wait4",
+        Kill         => "kill",
+        Ppoll        => "ppoll",
+        Poll         => "poll",
+        Ioctl        => "ioctl",
         _            => "unsupported",
     })
 }

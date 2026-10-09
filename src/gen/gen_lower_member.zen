@@ -1282,8 +1282,13 @@ sys_call* = (
                     )).try(),
                 });
             });
-            // Buffered output goes out before the process ends.
-            op.match({ ExitGroup => lo.add(Instruction.Flush).try(), _ => () });
+            // Buffered output goes out before the process ends, and before a
+            // fork, so the child does not inherit it and write it again.
+            op.match({
+                ExitGroup => lo.add(Instruction.Flush).try(),
+                Fork      => lo.add(Instruction.Flush).try(),
+                _         => (),
+            });
             // The kernel answers a word; an operation declared with another
             // result (a usize thread word, a unit store) takes it from there.
             word = lo.slot_of(Scalar.I64).try();

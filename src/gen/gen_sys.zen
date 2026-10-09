@@ -38,6 +38,18 @@ Sys* = { Read
     | Getcwd
     | Mkdirat
     | Unlinkat
+    // Processes: `fork` is clone(SIGCHLD) on Linux and libSystem's fork on
+    // Darwin, whose `pipe` and `dup2` stand in for pipe2 and dup3.
+    | Pipe2
+    | Fork
+    | Execve
+    | Dup3
+    | Chdir
+    | Wait4
+    | Kill
+    | Ppoll
+    | Poll
+    | Ioctl
     // Threads. `ThreadSelf` reads the calling thread's pointer: the thread
     // control block the runtime installed as TLS on Linux, `pthread_self()`
     // on Darwin. `CloneThread` starts a Linux thread on a caller-built stack
@@ -101,6 +113,16 @@ arity* = (call: Sys) usize {
         Getcwd           => 2,
         Mkdirat          => 3,
         Unlinkat         => 3,
+        Pipe2            => 2,
+        Fork             => 5,
+        Execve           => 3,
+        Dup3             => 3,
+        Chdir            => 1,
+        Wait4            => 4,
+        Kill             => 2,
+        Ppoll            => 5,
+        Poll             => 3,
+        Ioctl            => 2,
         ThreadSelf       => 0,
         CloneThread      => 3,
         PthreadStart     => 1,
@@ -153,6 +175,16 @@ linux_x86_64* = (call: Sys) Res<usize> {
         Getcwd           => Ok(79),
         Mkdirat          => Ok(258),
         Unlinkat         => Ok(263),
+        Pipe2            => Ok(293),
+        Fork             => Ok(56),
+        Execve           => Ok(59),
+        Dup3             => Ok(292),
+        Chdir            => Ok(80),
+        Wait4            => Ok(61),
+        Kill             => Ok(62),
+        Ppoll            => Ok(271),
+        Poll             => Ok(7),
+        Ioctl            => Ok(16),
         SchedGetaffinity => Ok(204),
         _                => None,
     })
@@ -189,6 +221,16 @@ linux_arm64* = (call: Sys) Res<usize> {
         Getcwd           => Ok(17),
         Mkdirat          => Ok(34),
         Unlinkat         => Ok(35),
+        Pipe2            => Ok(59),
+        Fork             => Ok(220),
+        Execve           => Ok(221),
+        Dup3             => Ok(24),
+        Chdir            => Ok(49),
+        Wait4            => Ok(260),
+        Kill             => Ok(129),
+        Ppoll            => Ok(73),
+        Poll             => None,
+        Ioctl            => Ok(29),
         SchedGetaffinity => Ok(123),
         _                => None,
     })
@@ -232,6 +274,16 @@ darwin_symbol* = (call: Sys) Res<str> {
         Getcwd           => Ok("getcwd"),
         Mkdirat          => Ok("mkdirat"),
         Unlinkat         => Ok("unlinkat"),
+        Pipe2            => Ok("pipe"),
+        Fork             => Ok("fork"),
+        Execve           => Ok("execve"),
+        Dup3             => Ok("dup2"),
+        Chdir            => Ok("chdir"),
+        Wait4            => Ok("wait4"),
+        Kill             => Ok("kill"),
+        Ppoll            => None,
+        Poll             => Ok("poll"),
+        Ioctl            => Ok("ioctl"),
         ThreadSelf       => Ok("pthread_self"),
         CloneThread      => None,
         PthreadStart     => Ok("pthread_create"),
@@ -355,6 +407,16 @@ sys_named* = (name: str) Res<Sys> {
         "getcwd"                 => Ok(Sys.Getcwd),
         "mkdirat"                => Ok(Sys.Mkdirat),
         "unlinkat"               => Ok(Sys.Unlinkat),
+        "pipe2"                  => Ok(Sys.Pipe2),
+        "fork"                   => Ok(Sys.Fork),
+        "execve"                 => Ok(Sys.Execve),
+        "dup3"                   => Ok(Sys.Dup3),
+        "chdir"                  => Ok(Sys.Chdir),
+        "wait4"                  => Ok(Sys.Wait4),
+        "kill"                   => Ok(Sys.Kill),
+        "ppoll"                  => Ok(Sys.Ppoll),
+        "poll"                   => Ok(Sys.Poll),
+        "ioctl"                  => Ok(Sys.Ioctl),
         "thread_self"            => Ok(Sys.ThreadSelf),
         "clone_thread"           => Ok(Sys.CloneThread),
         "pthread_start"          => Ok(Sys.PthreadStart),

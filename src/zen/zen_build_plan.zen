@@ -795,6 +795,7 @@ Executor = {
                 "C"   => Ok(Codegen.C),
                 "Js"  => Ok(Codegen.Js),
                 "Asm" => Ok(Codegen.Asm),
+                "CIr" => Ok(Codegen.CIr),
                 _     => Err(self.misplaced(r, "backend")),
             }),
             Ok(_)               => Err(self.misplaced(r, "backend")),

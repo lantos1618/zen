@@ -14,6 +14,7 @@
 { lower, LowerError } = gen.gen_lower
 { Program, float } = gen.gen_ir
 { emit_js, emit_app, emit_runtime, PAGE, supports } = gen.gen_js
+{ emit_c } = gen.gen_c_ir
 { refused, describe } = gen.gen_ir_feature
 { X86_64Linux } = gen.gen_asm_x86
 { Arm64, Arm64Os } = gen.gen_asm_arm64
@@ -23,7 +24,7 @@
 Layout* = { Single | Modules }
 ArtifactKind* = { Source | Symbols }
 
-ScalarBackend = { Js | Asm }
+ScalarBackend = { Js | Asm | CIr }
 
 // Names and bytes borrow the renderer's current buffer. Consumers must write
 // or copy them during the callback; retaining this record extends no lifetime.
@@ -62,6 +63,11 @@ Generation* = {
             ),
             Asm => self.scalar(
                 ScalarBackend.Asm,
+                report,
+                (artifact) { publish(artifact) }
+            ),
+            CIr => self.scalar(
+                ScalarBackend.CIr,
                 report,
                 (artifact) { publish(artifact) }
             ),
@@ -184,6 +190,11 @@ Generation* = {
                         },
                     }),
                 }),
+                CIr => publish(Artifact(
+                    kind: ArtifactKind.Source,
+                    name: "zen.c",
+                    text: emit_c(self.alloc, program).try().view()
+                )),
                 Asm => refused_by_asm(program).match({
                     Ok(what) => {
                         report.fmt(

@@ -567,6 +567,7 @@ Project = {
     build_exe = (self: @Self, exe: ExeNode) Res<Res<String>, AllocError> {
         exe.spec.backend.match({
             C   => self.build_native(exe, "c"),
+            CIr => self.build_native(exe, "c"),
             Js  => self.build_script(exe),
             Asm => asm_native(self.planned.target).match({
                 true  => self.build_native(exe, "s"),
@@ -805,7 +806,7 @@ Project = {
             head.word(args.std_root).try();
             head.word(args.target).try();
             head.word(
-                args.backend.match({ C => "c", Js => "js", Asm => "asm" })
+                args.backend.match({ C => "c", Js => "js", Asm => "asm", CIr => "c-ir" })
             ).try();
             exe.spec.deps.loop((dep) {
                 self.planned.libs.find((lib) { lib.name.eq(dep.name) }).match({

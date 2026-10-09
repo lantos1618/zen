@@ -39,19 +39,6 @@ clock_gettime* = (clock: i32, time: Ptr<u8>) i64
 // Linux getrandom; on macOS getentropy in chunks of at most 256 bytes, with
 // the Linux result (the byte count).
 getrandom* = (buf: Ptr<u8>, len: usize, flags: u32) i64
-mkdirat* = (dir: i32, path: Ptr<u8>, mode: u32) i64
-unlinkat* = (dir: i32, path: Ptr<u8>, flags: i32) i64
-// Linux renameat2; macOS renameatx_np. Zero flags is a plain renameat.
-renameat2* = (
-    from_dir : i32,
-    from     : Ptr<u8>,
-    to_dir   : i32,
-    to       : Ptr<u8>,
-    flags    : u32
-) i64
-// Linux answers the length with its terminator; macOS's getcwd answers the
-// buffer, or 0 on failure. Either way the text is a C string in `buf`.
-getcwd* = (buf: Ptr<u8>, len: usize) i64
 socket* = (domain: i32, kind: i32, protocol: i32) i64
 bind* = (fd: i32, address: Ptr<u8>, len: u32) i64
 listen* = (fd: i32, backlog: i32) i64
@@ -104,6 +91,14 @@ flock* = (fd: i32, op: i32) i64
 getcwd* = (buf: Ptr<u8>, len: usize) i64
 mkdirat* = (dir: i32, path: Ptr<u8>, mode: u32) i64
 unlinkat* = (dir: i32, path: Ptr<u8>, flags: i32) i64
+// Linux renameat2; macOS renameatx_np. Zero flags is a plain renameat.
+renameat2* = (
+    from_dir : i32,
+    from     : Ptr<u8>,
+    to_dir   : i32,
+    to       : Ptr<u8>,
+    flags    : u32
+) i64
 pipe2* = (fds: Ptr<i32>, flags: i32) i64
 fork* = (
     flags  : usize,
@@ -126,26 +121,6 @@ ppoll* = (
 ) i64
 poll* = (fds: Ptr<u8>, count: usize, timeout: i32) i64
 ioctl* = (fd: i32, request: usize) i64
-
-// Child processes. Darwin spells these pipe, dup2 and poll, which ignore the
-// trailing argument; ppoll's third is a timeout pointer on Linux (0 waits
-// forever) and poll's millisecond timeout on Darwin.
-pipe2* = (fds: Ptr<i32>, flags: i32) i64
-dup3* = (old: i32, new: i32, flags: i32) i64
-chdir* = (path: Ptr<u8>) i64
-execve* = (path: Ptr<u8>, argv: Ptr<Ptr<u8>>, envp: Ptr<Ptr<u8>>) i64
-wait4* = (pid: i32, status: Ptr<i32>, options: i32, usage: usize) i64
-kill* = (pid: i32, signal: i32) i64
-ppoll* = (
-    fds     : Ptr<i32>,
-    count   : usize,
-    timeout : usize,
-    mask    : usize,
-    size    : usize
-) i64
-fcntl* = (fd: i32, cmd: i32, arg: i32) i64
-// Darwin only; Linux answers -ENOSYS and forks through `clone`.
-fork* = () i64
 
 // Threads. std.sys.sys_thread builds its portable API on these; programs
 // use that (or Env) rather than calling them directly.

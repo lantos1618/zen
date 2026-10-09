@@ -30,7 +30,7 @@
 { check_literal } = sema.sema_trap
 { check_arms, check_arms_agree, hoist_at, one_value, tail_expr } = sema.sema_hoist
 { check_dropped_tail, note_lambda_tail } = sema.sema_effect
-{ bound_declares, prim_named } = sema.sema_supply
+{ bound_declares } = sema.sema_supply
 { type_of, block_type } = sema.sema_type
 { push_tparams, module_name } = sema.sema_inst
 { param_type, type_from_ast } = sema.sema_denote
@@ -593,11 +593,7 @@ CallCheck = {
                 _        => (),
             });
         });
-        self.body = c.member_fn(
-            f.decl_owner,
-            ac.name.text,
-            f.decl_span
-        ).try().match({
+        self.body = c.member_fn(f.decl_owner, ac.name.text, f.decl_span).match({
             None => None, Ok(fn) => fn.body,
         });
         ty        = self.written_found(c, ac, f, off).try();
@@ -632,7 +628,7 @@ CallCheck = {
     // `env.args<Cli>()`; ordinary arguments infer nested uses too.
     written_found = (self :: @Self, c :: Checker, ac: Access, f: Found,
                      off: usize) Res<TyId, AllocError> {
-        c.member_fn(f.decl_owner, ac.name.text, f.decl_span).try().match({
+        c.member_fn(f.decl_owner, ac.name.text, f.decl_span).match({
             None   => (self.call.targs.len > 0).match({
                 true  => self.invalid_member_instantiation(c, ac.name.text),
                 false => Ok(f.ty),

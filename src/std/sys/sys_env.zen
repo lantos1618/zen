@@ -10,7 +10,7 @@
 { read_file, write_file, env_var, arg, argc, Pages } = std.sys
 { monotonic_ns, realtime_ns, c_path, openat, close, at_fdcwd, o_rdonly, o_cloexec } = std.sys
 { o_directory, o_rdwr, o_creat, flock, eagain } = std.sys
-{ c_len, getcwd, mkdirat, unlinkat } = std.sys
+{ c_len, getcwd, mkdirat, renameat2, unlinkat } = std.sys
 { sleep_ns } = std.sys.sys_thread
 
 // A kernel -errno as the Fs error a caller can act on.
@@ -60,6 +60,20 @@ fs_cwd* = (a: Alloc) Res<String, FsError> {
     scratch.free(buf);
     added.try();
     Ok(out)
+}
+
+// `fs.rename(from, to)`: `to` names what `from` named, in one step.
+fs_rename* = (from: str, to: str) Res<FsError> {
+    scratch = Pages();
+    old     = c_path(scratch, from).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
+    new     = c_path(scratch, to).match({
+        Ok(p)  => Ok(p),
+        Err(_) => { scratch.free(old); Err(FsError.OutOfMemory) },
+    }).try();
+    rc      = renameat2(at_fdcwd(), old, at_fdcwd(), new, 0);
+    scratch.free(old);
+    scratch.free(new);
+    (rc == 0).match({ true => Ok, false => Err(fs_error(rc)) })
 }
 
 // True when this call made the directory; false when one was already there.
@@ -166,223 +180,3 @@ fs_lock_fd* = (path: str) Res<i32, FsError> {
 fs_unlock_fd* = (fd: i32) {
     (fd >= 0).then(() { close(fd); }).match({ Ok(_) => (), None => () });
 }
-
-// ---------------------------------------------------------------------
-// child processes: the native meaning of std.proc's zg_os_proc_* floor
-// ---------------------------------------------------------------------
-
-// -1 for a failed call, -2 for one a signal interrupted.
-proc_failed = (rc: i64) i32 {
-    (rc == 0 - eintr()).match({ true => -2, false => -1 })
-}
-
-proc_pipe* = (fds: Ptr<i32>) i32 {
-    darwin = platform_darwin() == 1;
-    flags  = darwin.match({ true => 0, false => o_cloexec() });
-    (pipe2(fds, flags) < 0).match({
-        true  => -1,
-        false => (!darwin || (cloexec(fds.read(0)) && cloexec(fds.read(1)))).match({
-            true  => 0,
-            false => {
-                close(fds.read(0));
-                close(fds.read(1));
-                -1
-            },
-        }),
-    })
-}
-
-// F_SETFD, FD_CLOEXEC
-cloexec = (fd: i32) bool { fcntl(fd, 2, 1) >= 0 }
-
-proc_close* = (fd: i32) { (fd >= 0).then(() { close(fd); }); }
-
-// Like posix_spawnp: a failed exec fails the spawn. The child reports one
-// byte on a close-on-exec pipe when it cannot exec; a successful exec
-// closes the pipe empty.
-proc_spawn* = (
-    cwd  : Ptr<u8>,
-    argv : Ptr<Ptr<u8>>,
-    out  : i32,
-    err  : i32,
-    pid  : Ptr<i32>
-)
-              i32 {
-    scratch = Pages();
-    fds     = scratch.realloc<i32>(
-        null_ptr<i32>(),
-        2
-    ).match({ Ok(p) => p, Err(_) => null_ptr<i32>() });
-    path    = scratch.raw(
-        4096,
-        1
-    ).match({ Ok(p) => p, Err(_) => null_ptr<u8>() });
-    rc :: i32 = -1;
-    (!fds.is_null() && !path.is_null() && proc_pipe(fds) == 0).then(() {
-        child = fork_process();
-        (child == 0).then(() {
-            close(fds.read(0));
-            exec_child(cwd, argv, out, err, path);
-            write(fds.read(1), path, 1);
-            exit_group(127);
-        });
-        close(fds.read(1));
-        (child > 0).then(() {
-            id = child.to_i32().value_or(-1);
-            n ::= read(fds.read(0), path, 1);
-            loop(n == 0 - eintr(), (h) { n = read(fds.read(0), path, 1); });
-            (n == 0).match({
-                true  => {
-                    pid.write(0, id);
-                    rc = 0;
-                },
-                false => { reap(id, fds); },
-            });
-        });
-        close(fds.read(0));
-    });
-    (!path.is_null()).then(() { scratch.free(path); });
-    (!fds.is_null()).then(() { scratch.free(fds); });
-    rc
-}
-
-fork_process = () i64 {
-    (platform_darwin() == 1).match({
-        true  => fork(),
-        // SIGCHLD, so the parent can wait for it.
-        false => clone(17, 0, 0, 0, 0),
-    })
-}
-
-reap = (id: i32, status: Ptr<i32>) {
-    rc ::= wait4(id, status, 0, 0);
-    loop(rc == 0 - eintr(), (h) { rc = wait4(id, status, 0, 0); });
-}
-
-// In the child: returns only when it cannot exec.
-exec_child = (
-    cwd  : Ptr<u8>,
-    argv : Ptr<Ptr<u8>>,
-    out  : i32,
-    err  : i32,
-    path : Ptr<u8>
-)
-             {
-    rc :: i64 = 0;
-    (!cwd.is_null()).then(() { rc = chdir(cwd); });
-    (rc >= 0 && out >= 0 && out != 1).then(() { rc = dup3(out, 1, 0); });
-    (rc >= 0 && err >= 0 && err != 2).then(() { rc = dup3(err, 2, 0); });
-    (rc >= 0).then(() { exec_search(argv, path); });
-}
-
-// A name with a slash executes as given; any other is tried in each PATH
-// directory, an empty one meaning the current directory.
-exec_search = (argv: Ptr<Ptr<u8>>, path: Ptr<u8>) {
-    name    = c_view(argv.read(0));
-    slashed = name.contains('/');
-    slashed.then(() { execve(argv.read(0), argv, envp()); });
-    (!slashed).then(() {
-        dirs = env_var("PATH").value_or("/usr/local/bin:/usr/bin:/bin");
-        start :: usize = 0;
-        Range(0, dirs.len + 1).loop((i) {
-            (i == dirs.len || dirs.index(i) == ':').then(() {
-                dir = dirs.slice(start, i);
-                exec_in(
-                    (dir.len == 0).match({ true => ".", false => dir }),
-                    name,
-                    argv,
-                    path
-                );
-                start = i + 1;
-            });
-        });
-    });
-}
-
-exec_in = (dir: str, name: str, argv: Ptr<Ptr<u8>>, path: Ptr<u8>) {
-    (dir.len + name.len + 2 <= 4096).then(() {
-        path.copy_from(dir.ptr(), dir.len);
-        path.write(dir.len, '/');
-        path.offset(dir.len + 1).copy_from(name.ptr(), name.len);
-        path.write(dir.len + 1 + name.len, 0);
-        execve(path, argv, envp());
-    });
-}
-
-// Bit 1: stdout is ready, bit 2: stderr; hang-up counts as ready so the
-// caller drains what is left before EOF. A negative descriptor is skipped.
-proc_poll* = (out: i32, err: i32) i32 {
-    scratch = Pages();
-    fds     = scratch.realloc<i32>(
-        null_ptr<i32>(),
-        4
-    ).match({ Ok(p) => p, Err(_) => null_ptr<i32>() });
-    fds.is_null().match({
-        true  => -1,
-        false => {
-            // struct pollfd: fd, then events (POLLIN) and revents as shorts.
-            fds.write(0, out);
-            fds.write(1, 1);
-            fds.write(2, err);
-            fds.write(3, 1);
-            wait   = (platform_darwin() == 1).match({ true => usize.MAX, false => 0 });
-            rc     = ppoll(fds, 2, wait, 0, 8);
-            first  = fds.read(1) / 65536;
-            second = fds.read(3) / 65536;
-            scratch.free(fds);
-            (rc < 0).match({
-                true  => proc_failed(rc),
-                // POLLNVAL
-                false => (first / 32 % 2 == 1 || second / 32 % 2 == 1).match({
-                    true  => -1,
-                    false => (first > 0).match({ true => 1, false => 0 }) + (second > 0).match({
-                        true  => 2,
-                        false => 0,
-                    }),
-                }),
-            })
-        },
-    })
-}
-
-proc_read* = (fd: i32, buf: Ptr<u8>, cap: usize, count: Ptr<usize>) i32 {
-    n = read(fd, buf, cap);
-    (n < 0).match({
-        true  => proc_failed(n),
-        false => {
-            count.write(0, n.to_usize().value_or(0));
-            (n > 0).match({ true => 1, false => 0 })
-        },
-    })
-}
-
-// pid <= 0 names a process group, never one child: refused.
-proc_wait* = (pid: i32, code: Ptr<i32>) i32 {
-    scratch = Pages();
-    status  = scratch.realloc<i32>(
-        null_ptr<i32>(),
-        1
-    ).match({ Ok(p) => p, Err(_) => null_ptr<i32>() });
-    (pid <= 0 || status.is_null()).match({
-        true  => -1,
-        false => {
-            rc = wait4(pid, status, 0, 0);
-            s  = status.read(0);
-            scratch.free(status);
-            (rc < 0).match({
-                true  => proc_failed(rc),
-                false => {
-                    signal = s % 128;
-                    code.write(0, signal.match({
-                        0   => s / 256 % 256,
-                        127 => 127,
-                        _   => 128 + signal,
-                    }));
-                    0
-                },
-            })
-        },
-    })
-}
-
-proc_kill* = (pid: i32) { (pid > 0).then(() { kill(pid, 9); }); }

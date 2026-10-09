@@ -5,6 +5,8 @@
 { Vec } = std.collections
 { Res, Ok, Err, None, ok_or, loop, Range, IoError, WriteError, Sink,
     Error } = std.core
+// The native backend's meaning of the floor below; loaded for lowering.
+{ proc_spawn } = std.sys.sys_proc
 
 zg_os_proc_pipe = (fds: Ptr<i32>) i32
 zg_os_proc_close = (fd: i32) ()

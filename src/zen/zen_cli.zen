@@ -153,6 +153,8 @@ TestLine = {
     mode :: Res<Mode>,
     verbose :: bool = false,
     cc :: Res<str>,
+    seeds :: Res<usize>,
+    faults :: Res<usize>,
     args :: Vec<str>,
 }
 
@@ -165,6 +167,14 @@ TestLine.impl(Cli, {
     mode: MODE,
     verbose: VERBOSE,
     cc: CC,
+    seeds: Spec(
+        value: "N",
+        help: "Run each test N times, under ZEN_ACTOR_SEED=1..N; report the first failing seed"
+    ),
+    faults: Spec(
+        value: "N",
+        help: "With --seeds, also set ZEN_ACTOR_FAULTS=N: seeded faults, about 1 in N chances"
+    ),
     args: Spec(trailing: true),
 })
 
@@ -233,7 +243,7 @@ cli* = (env: Env, a: Alloc, argv: Vec<str>) Res<Job, AllocError> {
         Ok(line)  => line.match({
             Build(b) => build_job(env, a, argv, b),
             Run(r)   => Chosen(command: "run", words: words(a, r.target, None).try(), release: r.release, mode: r.mode, verbose: r.verbose, cc: r.cc, args_at: argv.len - r.args.len).project(env, a, argv, (job) { Job.Run(job) }),
-            Test(t)  => Chosen(command: "test", words: words(a, t.project, t.target).try(), release: t.release, mode: t.mode, verbose: t.verbose, cc: t.cc, args_at: argv.len - t.args.len).project(env, a, argv, (job) { Job.Test(job) }),
+            Test(t)  => Chosen(command: "test", words: words(a, t.project, t.target).try(), release: t.release, mode: t.mode, verbose: t.verbose, cc: t.cc, args_at: argv.len - t.args.len, seeds: t.seeds.value_or(0), faults: t.faults.value_or(0)).project(env, a, argv, (job) { Job.Test(job) }),
             Check(c) => Ok(Job.Build(BuildArgs(
                 root: c.root,
                 entry: c.entry.value_or(""),
@@ -442,6 +452,8 @@ Chosen = {
     std_root :: str = "",
     // The first word after `--`, or the end of argv.
     args_at: usize,
+    seeds :: usize = 0,
+    faults :: usize = 0,
 
     // The first word is a project directory or a target; a second word is a
     // target within the project the first one named.
@@ -482,7 +494,9 @@ Chosen = {
                     ) }),
                     verbose: self.verbose,
                     cc: self.cc,
-                    triple: self.triple
+                    triple: self.triple,
+                    seeds: self.seeds,
+                    faults: self.faults
                 ))),
             }),
         })

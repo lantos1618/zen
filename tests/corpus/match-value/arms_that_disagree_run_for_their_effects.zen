@@ -1,0 +1,24 @@
+{ println } = std.io
+{ Env } = std.env
+{ Vec, Res, Ok } = std.core
+{ AllocError } = std.mem
+Named = { args: Vec<i32> }
+Kind = { Named: Named | Other }
+
+walk = (k: Kind, out :: Vec<i32>) Res<AllocError> {
+    k.match({
+        Named(n) => n.args.loop((ty) { out.add(ty).ignore(); }),
+        Other    => (),
+    });
+    Ok
+}
+
+main = (env: Env) i32 {
+    a = env.mem.alloc();
+    xs ::= a.Vec<i32>();
+    xs.add(1).ignore();
+    out ::= a.Vec<i32>();
+    walk(Kind.Named(Named(args: xs)), out).ignore();
+    out.loop((v) { println("{}", v); });
+    0
+}

@@ -129,6 +129,23 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   turn that never returns (there is no preemption), and plain threads, whose
   sends still work but whose timing the seed does not fix.
 
+- Seeded faults, under `ZEN_ACTOR_SEED=n ZEN_ACTOR_FAULTS=k` (ignored without
+  a seed): at each chance below, 1 in about `k` fails. The draws come from a
+  second xorshift state (`G_FAULT_RNG`, the seed mixed and warmed up), so the
+  seed and `k` replay the same faults every run. Each fault is an outcome the
+  program must already handle:
+  - a turn fails before its handler runs, through the trap path: watchers
+    get `failed`, and the report reads `Worker#3 failed (injected fault)
+    handling m1.8` with the message's cause chain;
+  - `try_send` to another actor answers `Full` with room left (the message
+    is not admitted; a self-send never answers `Full`);
+  - a `send_after(ms)` timer fires up to `ms` later, never earlier;
+  - `spawn` answers `OutOfMemory` (`actor_new` returns no record).
+  A fault never drops an admitted message or reorders one sender's
+  messages. Reports print `rerun with ZEN_ACTOR_SEED=n ZEN_ACTOR_FAULTS=k`.
+  Without a seed `G_FAULTS` is 0: workers skip the per-turn draw, and
+  `try_send`, `send_after` and `spawn` read one word.
+
 - Pages: everything the runtime keeps (globals, per-thread state, workers,
   the registry, 2 MiB spans of slabs, large messages, trace buffers) comes
   through `actor_pool.grab`/`give_back`. Without `env.actor_mem` that is

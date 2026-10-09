@@ -57,6 +57,7 @@
 
 // which declaration a call means
 { call_type*, check_overloads* }             = sema.sema_call
+{ value_agrees* }                            = sema.sema_hoist
 { Cand*, TBound*, Actual* }                  = sema.sema_cand
 { cands_of*, matches* }                      = sema.sema_cand
 

@@ -86,7 +86,9 @@ project_cli = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
                 mode: job.mode,
                 verbose: job.verbose,
                 cc: job.cc,
-                triple: job.triple
+                triple: job.triple,
+                seeds: job.seeds,
+                faults: job.faults
             ),
             action
         ),

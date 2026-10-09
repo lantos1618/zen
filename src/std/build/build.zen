@@ -345,6 +345,10 @@ ProjectArgs* = {
     cc* :: Res<str> = None,
     // `--target`: the platform to build for, when not the host.
     triple* :: Res<str> = None,
+    // `zen test --seeds`: run each test under ZEN_ACTOR_SEED=1..seeds.
+    seeds* :: usize = 0,
+    // `zen test --faults`: ZEN_ACTOR_FAULTS for those runs (0 for none).
+    faults* :: usize = 0,
 }
 
 ZEN_STD_ENV*: str = "ZEN_STD"

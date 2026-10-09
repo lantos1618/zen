@@ -352,7 +352,7 @@ one_value* = (c: Checker, blk: Block) bool {
     })
 }
 
-value_agrees = (c: Checker, id: ExprId) bool {
+value_agrees* = (c: Checker, id: ExprId) bool {
     c.tree.expr_at(id).kind.match({
         Match(m) => c.expr_memo.get(id).match({
             None       => false,

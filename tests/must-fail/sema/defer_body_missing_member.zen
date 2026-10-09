@@ -1,0 +1,11 @@
+// The deferred body sees the locals it captures with their types, so a
+// member that the captured value's type does not have is refused there.
+//
+// position: the member that is not on `S`.
+
+S = { n: i32 }
+
+main* = () {
+    s = S(n: 1);
+    @scope.defer(() { s.nope(); });
+}

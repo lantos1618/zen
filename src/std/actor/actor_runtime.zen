@@ -56,7 +56,7 @@
 { G_TRACE, G_TRACE_N, G_TRACE_CAP, G_TRACE_T0, G_TRACE_DONE, G_TRACE_LOST } = std.actor.actor_layout
 { G_NAMES, G_TRACE_FD, G_TRACE_OUT, G_TRACE_OUT_N } = std.actor.actor_layout
 { G_REC_THREADS, G_REC_ON, G_RINGS, REC_EVENTS, REC_MASK, REC_WORDS, ID_SHIFT } = std.actor.actor_layout
-{ G_SIM, G_SIM_SEED, G_SIM_NOW, G_READY, G_READY_N, G_READY_CAP, G_SIM_LOCK, G_SIM_MAIN, G_SIM_SHARED } = std.actor.actor_layout
+{ G_SIM, G_SIM_SEED, G_SIM_NOW, G_READY, G_READY_N, G_READY_CAP, G_SIM_LOCK, G_SIM_MAIN, G_SIM_SHARED, G_FAULTS, G_FAULT_RNG } = std.actor.actor_layout
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
 { G_WATCH_LOCK, G_TIMER_LOCK, G_TIMERS, G_TIMER_LAST, G_TIMER_N, G_TIMER_ON, G_TIMER_PARKER } = std.actor.actor_layout
@@ -634,7 +634,9 @@ deliver = (
             me
         ) && (!me.is_null() || !on_core);
         behind = waits && !me.is_null() && outbox_holds(me, r);
-        full ::= waits && (count_of(old) >= BOUND || behind);
+        full ::= waits && (
+            count_of(old) >= BOUND || behind || (mode == MODE_OFFER && fault(g))
+        );
         (full && !behind && !me.is_null() && cycle_through(g, me, r)).then(() {
             full = false;
             stat(g, S_BREAKS);
@@ -985,6 +987,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
             true  => TURN_BATCH,
             false => 1 + sim_random(g) % SIM_BATCH,
         });
+        faults = owner == 0 && load(g, G_FAULTS) != 0;
         loop(() { taken < batch }, (h) {
             m = mailbox_take(a);
             m.is_null().then(() { h.break(); });
@@ -1001,12 +1004,13 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
                 true  => {
                     // A send through a message-typed Ref names no turn: it
                     // runs the receive turn the actor started with.
-                    turn    = load(m, M_TURN);
-                    code    = (turn == 0).match({ true => load(
+                    turn     = load(m, M_TURN);
+                    code     = (turn == 0).match({ true => load(
                         a,
                         B_RECEIVE
                     ), false => turn });
-                    trapped = guarded_call(
+                    injected = faults && fault(g);
+                    trapped  = injected || guarded_call(
                         code,
                         record,
                         m.offset(M_PAYLOAD)
@@ -1019,7 +1023,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
                         code
                     );
                     trapped.then(
-                        () { fail(g, l, a, slot); blame(g, l, a, m); }
+                        () { fail(g, l, a, slot); blame(g, l, a, m, injected); }
                     );
                 },
                 false => trace(
@@ -1156,13 +1160,17 @@ explain = (g: Ptr<u8>, buf: Ptr<u8>, lead: str, id: usize, cause: usize) {
 
 // A trap's report on stderr, after the trap's own line: the actor, the
 // message its turn ran, and the chain of turns that sent it.
-blame = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, m: Ptr<u8>) {
+blame = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, m: Ptr<u8>, injected: bool) {
     buf = new_block(g, l, 512);
     (!buf.is_null()).then(() {
         id = load(l, L_MSG);
         n ::= put_text(buf, 0, "actor-runtime: ");
         n = put_actor(buf, n, ref_index(load(a, B_REF)), load(a, B_NAME));
-        n = put_text(buf, n, " trapped");
+        n = put_text(
+            buf,
+            n,
+            injected.match({ true => " failed (injected fault)", false => " trapped" })
+        );
         (id != 0).then(
             () { n = put_text(buf, n, " handling "); n = put_id(buf, n, id); }
         );
@@ -1614,13 +1622,22 @@ clock = (g: Ptr<u8>) usize {
     })
 }
 
-sim_random = (g: Ptr<u8>) usize {
-    x ::= load(g, G_SIM);
+sim_random = (g: Ptr<u8>) usize { xorshift(g, G_SIM) }
+
+// One step of the xorshift generator kept in word `w` of the globals.
+xorshift = (g: Ptr<u8>, w: usize) usize {
+    x ::= load(g, w);
     x = x ^ (x << 13);
     x = x ^ (x >> 7);
     x = x ^ (x << 17);
-    store(g, G_SIM, x);
+    store(g, w, x);
     x
+}
+
+// A seeded fault: 1 in n of the chances to fail one does fail.
+fault = (g: Ptr<u8>) bool {
+    n = load(g, G_FAULTS);
+    n != 0 && xorshift(g, G_FAULT_RNG) % n == 0
 }
 
 // The seeded schedule is single-threaded unless the program starts plain
@@ -1744,6 +1761,10 @@ seed_hint = (g: Ptr<u8>, buf: Ptr<u8>) {
             "actor-runtime: rerun with ZEN_ACTOR_SEED="
         );
         k = put_number(buf, k, load(g, G_SIM_SEED));
+        (load(g, G_FAULTS) != 0).then(() {
+            k = put_text(buf, k, " ZEN_ACTOR_FAULTS=");
+            k = put_number(buf, k, load(g, G_FAULTS));
+        });
         k = put_text(buf, k, "\n");
         write_all(2, str(data: buf, len: k)).ignore();
     });
@@ -1880,6 +1901,12 @@ setup = (g: Ptr<u8>, entry: usize, names: usize) bool {
             ), None => 0 });
             store(g, G_SIM_SEED, seed);
             store(g, G_SIM, (seed << 1) | 1);
+            // ZEN_ACTOR_FAULTS=n: the seed also fails 1 in n chances.
+            // Faults draw from their own stream, so turning them on keeps
+            // the schedule's draws; mixing spreads nearby seeds apart.
+            store(g, G_FAULTS, env_number("ZEN_ACTOR_FAULTS", 0));
+            store(g, G_FAULT_RNG, seed ^ 0x9E3779B97F4A7C15);
+            Range<usize>(0, 8).loop((i) { xorshift(g, G_FAULT_RNG).ignore_word(); });
         },
     });
     sim    = load(g, G_SIM) != 0;
@@ -1978,7 +2005,8 @@ actor_new* = (
         true  => g,
         false => {
             bytes = (B_RECORD + record_bytes + 7) / 8 * 8;
-            a     = new_block(g, local(), bytes);
+            // A seeded fault refuses the spawn as if memory ran out.
+            a = fault(g).match({ true => null_ptr<u8>(), false => new_block(g, local(), bytes) });
             (!a.is_null()).then(() { zero(a, bytes); });
             a
         },
@@ -2362,7 +2390,12 @@ actor_after* = (
                     SEND_FULL
                 },
                 false => {
-                    wait = (ms > MAX_DELAY_MS).match({ true => MAX_DELAY_MS, false => ms });
+                    asked = (ms > MAX_DELAY_MS).match({ true => MAX_DELAY_MS, false => ms });
+                    // A seeded fault fires it late, by up to as long again.
+                    wait = (asked > 0 && fault(g)).match({
+                        true  => asked + (xorshift(g, G_FAULT_RNG) % (asked.to_usize().value_or(0) + 1)).to_u64(),
+                        false => asked,
+                    });
                     store(e, E_TO, rr);
                     store(
                         e,

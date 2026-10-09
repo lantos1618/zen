@@ -1,0 +1,49 @@
+// Under ZEN_ACTOR_SEED with ZEN_ACTOR_FAULTS the seed also fails some turns
+// before their handler runs: a watcher hears `failed` exactly as for a trap,
+// the report says the failure was injected, and the same seed fails the same
+// workers on every run.
+
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Worker = {}
+
+Worker.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, n: u64) {}
+})
+
+News = { Done: u64 | Failed: u64 }
+
+Boss = { left :: u64 = 6 }
+
+Boss.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, n: News) {
+        n.match({
+            Done(id)   => println("worker {} done", id),
+            Failed(id) => println("worker {} failed", id),
+        });
+        self.left = self.left - 1;
+        (self.left == 0).then(() { ctx.me.stop(); });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+hire = (env: Env, boss: Ref<News>, id: u64) Res<Error> {
+    w = env.spawn(Worker()).try();
+    w.watch(boss, News.Done(id), News.Failed(id)).try();
+    Range(0, 4).loop((k) { w.send(1).try(); });
+    w.stop();
+    Ok
+}
+
+main = (env: Env) Res<i32, Error> {
+    boss             = env.spawn(Boss()).try();
+    inbox: Ref<News> = boss;
+    Range<u64>(1, 7).loop((i) { hire(env, inbox, i).try(); });
+    boss.join();
+    println("joined");
+    Ok(0)
+}

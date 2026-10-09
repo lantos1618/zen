@@ -1,0 +1,2 @@
+actor-runtime: Sink#1 failed (injected fault) handling m1.2
+actor-runtime: rerun with ZEN_ACTOR_SEED=1 ZEN_ACTOR_FAULTS=4

@@ -6,16 +6,16 @@
 { Env } = std.env
 { println } = std.io
 
-Opt<T> = { Some: T | None }
+Box<T> = { Full: T | Empty }
 
-pick = (o: Opt<i32>) i32 {
-    o.match({ Some(v) => v, None => 0 })
+pick = (o: Box<i32>) i32 {
+    o.match({ Full(v) => v, Empty => 0 })
 }
 
 main = (env: Env) Res<i32, AllocError> {
-    x = Opt.Some(41);
+    x = Box.Full(41);
     println("{}", pick(x));
-    none: Opt<i32> = Opt.None;
+    none: Box<i32> = Box.Empty;
     println("{}", pick(none));
     Ok(0);
 }

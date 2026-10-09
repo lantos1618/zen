@@ -1,14 +1,14 @@
 // THE THIRD FACE OF ISSUE 738: the bare head written DIRECTLY as a call
-// argument, with no local and no annotation anywhere. `Opt.None` answers
+// argument, with no local and no annotation anywhere. `Box.Empty` answers
 // the bare enum (`variant_value`, sema_static.zen) and `args_agree`
 // (sema_check.zen) answered true to every arity mismatch, so overload
-// resolution married the bare head to `pick`'s `Opt<i32>` on a guess --
+// resolution married the bare head to `pick`'s `Box<i32>` on a guess --
 // the guess happened to be right here, but it is the same lie that sent
-// `x = Opt.None; pick(x)` to cc as two different structs. Nobody wrote
-// `Opt.None`'s arguments, so nobody can claim them at the boundary:
+// `x = Box.Empty; pick(x)` to cc as two different structs. Nobody wrote
+// `Box.Empty`'s arguments, so nobody can claim them at the boundary:
 // the call falls out of `assignable` and the existing resolution
 // diagnostic names it. Write the annotation first
-// (`none: Opt<i32> = Opt.None`) and the call is accepted again.
+// (`none: Box<i32> = Box.Empty`) and the call is accepted again.
 //
 // position: the argument carrying no answer.
 //
@@ -20,11 +20,11 @@
 { Env } = std.env
 { println } = std.io
 
-Opt<T> = { Some: T | None }
+Box<T> = { Full: T | Empty }
 
-pick = (o: Opt<i32>) i32 { o.match({ Some(v) => v, None => 0 }) }
+pick = (o: Box<i32>) i32 { o.match({ Full(v) => v, Empty => 0 }) }
 
 main = (env: Env) Res<i32, AllocError> {
-    println("{}", pick(Opt.None));
+    println("{}", pick(Box.Empty));
     Ok(0);
 }

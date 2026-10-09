@@ -1,0 +1,16 @@
+{ println } = std.io
+{ Env } = std.env
+
+S = { xs :: [i64, 4], n :: usize }
+
+main = (env: Env) i32 {
+    xs ::= [i64, 3]();
+    xs[1] = 7;
+    println("{} {} {}", xs[0], xs[1], xs[2]);
+    s ::= S(xs: [i64, 4](), n: 2);
+    s.xs[3] = 9;
+    println("{} {} {}", s.xs[0], s.xs[3], s.n);
+    b ::= [u8, 5]();
+    println("{}", b[4]);
+    0
+}

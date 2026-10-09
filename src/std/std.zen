@@ -38,7 +38,7 @@
 { ProcError*, ProcOutput*, Process* } = std.proc
 
 // Networking primitives; HTTP protocols live in the zen-http package.
-{ TcpStream*, TcpError* } = std.net.tcp
+{ TcpStream*, TcpError*, TcpListener*, TcpListenError* } = std.net.tcp
 { TlsStream*, TlsError* } = std.net.tls
 { DnsAddr*, DnsError*, resolve* } = std.net.dns
 

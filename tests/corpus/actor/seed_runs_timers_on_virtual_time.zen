@@ -1,0 +1,33 @@
+// Under ZEN_ACTOR_SEED timers run on a virtual clock: when nothing else
+// can run, the clock jumps to the next deadline. A 100-second timer and a
+// 200-second one fire in deadline order at once (the corpus run would time
+// out on a real clock).
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Msg = { Soon | Later }
+
+Clock = {}
+
+Clock.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Msg) {
+        m.match({
+            Soon  => println("soon"),
+            Later => { println("later"); ctx.me.stop(); },
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    c = env.spawn(Clock()).try();
+    c.send_after(200000, Msg.Later).try();
+    c.send_after(100000, Msg.Soon).try();
+    c.join();
+    println("joined");
+    Ok(0)
+}

@@ -5,6 +5,15 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: URL input validation (2026-10-09)
+
+The borrowed HTTP URL parser rejects raw ASCII whitespace, control bytes,
+DEL, and empty hosts before returning slices to callers. The existing URL
+corpus now covers these cases and an encoded-space success case. Its negative
+control failed on the previous implementation; the focused check and fresh
+`make -j1 seed verify J=8 TEST_J=8` pass after the fix. The aggregate corpus
+had 1721 passed and zero failed, and seed regeneration made no seed change.
+
 ## Current checkpoint: HTTP package boundary (2026-09-29)
 
 HTTP/1 and HTTP/2 implementations, std re-exports and `Net.http` have been

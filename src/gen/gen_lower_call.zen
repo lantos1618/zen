@@ -1451,6 +1451,22 @@ intrinsic = (
                     sources,
                     span
                 ),
+                // std.proc's POSIX floor, written in Zen over std.sys.
+                "std.proc.proc"           => proc_floor(name).match({
+                    Ok(target) => sys_module_call(
+                        lo,
+                        id,
+                        "std.sys.sys_proc",
+                        target,
+                        sources,
+                        c,
+                        span
+                    ),
+                    None       => Err(unsupported(
+                        span,
+                        "this process operation"
+                    )),
+                }),
                 // `std.js.wait()`: suspend until an event handler fires.
                 "std.js.js"               => name.eq("wait").match({
                     true  => {
@@ -1953,13 +1969,19 @@ env_call = (
 )
            Res<Value, LowerError> {
     name.match({
-        "println"   => lo.print_call(c.args, 0, true, Stream.Out, span),
-        "error"     => lo.print_call(c.args, 0, false, Stream.Err, span),
-        "errorln"   => lo.print_call(c.args, 0, true, Stream.Err, span),
-        "flush"     => {
-            ty = lo.type_of(id).try();
-            lo.variant_value(ty, "Ok", Ok(lo.unit().try()), span)
+        "println"   => {
+            lo.print_call(c.args, 0, true, Stream.Out, span).try();
+            lo.console_answer(id, span)
         },
+        "error"     => {
+            lo.print_call(c.args, 0, false, Stream.Err, span).try();
+            lo.console_answer(id, span)
+        },
+        "errorln"   => {
+            lo.print_call(c.args, 0, true, Stream.Err, span).try();
+            lo.console_answer(id, span)
+        },
+        "flush"     => lo.console_answer(id, span),
         // Threads and actors (gen_lower_thread, gen_lower_actor).
         "sleep"     => lo.sleep_thread(id, c, sources, span),
         "spawn"     => lo.receiver_kind(sources).eq("Threads").match({
@@ -1986,6 +2008,9 @@ env_call = (
                 "var"         => Ok("var"),
                 "read"        => Ok("fs_read"),
                 "write"       => Ok("fs_write"),
+                "cwd"         => Ok("fs_cwd"),
+                "mkdir"       => Ok("fs_mkdir"),
+                "remove"      => Ok("fs_remove"),
                 "exists"      => Ok("fs_exists"),
                 "is_dir"      => Ok("fs_is_dir"),
                 "since_start" => Ok("since_start"),
@@ -2182,11 +2207,40 @@ sys_env_call* = (
     span    : Span
 )
                 Res<Value, LowerError> {
-    module = lo.check.world.index_of("std.sys.sys_env").ok_or(unsupported(span, "the std.sys.sys_env module")).try();
-    table  = lo.check.world.table_at(module).ok_or(unsupported(span, "the std.sys.sys_env table")).try();
-    def    = table.defs.find((d) { d.name.eq(name) }).ok_or(unsupported(span, "a missing std.sys.sys_env function")).try();
-    decl   = decl_at(lo.tree, def.id).ok_or(unsupported(span, "a missing std.sys.sys_env declaration")).try();
-    f      = decl.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(unsupported(span, "a std.sys.sys_env non-function")).try();
+    sys_module_call(lo, id, "std.sys.sys_env", name, sources, c, span)
+}
+
+// The std.proc floor function each `zg_os_proc_*` declaration names.
+proc_floor = (name: str) Res<str> {
+    name.match({
+        "zg_os_proc_pipe"  => Ok("proc_pipe"),
+        "zg_os_proc_close" => Ok("proc_close"),
+        "zg_os_proc_spawn" => Ok("proc_spawn"),
+        "zg_os_proc_poll"  => Ok("proc_poll"),
+        "zg_os_proc_read"  => Ok("proc_read"),
+        "zg_os_proc_wait"  => Ok("proc_wait"),
+        "zg_os_proc_kill"  => Ok("proc_kill"),
+        _                  => None,
+    })
+}
+
+// Call the Zen function `name` in the std.sys module `path` in place of a
+// bodiless declaration.
+sys_module_call = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    path    : str,
+    name    : str,
+    sources : Vec<Source>,
+    c       : Call,
+    span    : Span
+)
+                  Res<Value, LowerError> {
+    module = lo.check.world.index_of(path).ok_or(unsupported(span, "a std.sys module")).try();
+    table  = lo.check.world.table_at(module).ok_or(unsupported(span, "a std.sys module table")).try();
+    def    = table.defs.find((d) { d.name.eq(name) }).ok_or(unsupported(span, "a missing std.sys function")).try();
+    decl   = decl_at(lo.tree, def.id).ok_or(unsupported(span, "a missing std.sys declaration")).try();
+    f      = decl.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(unsupported(span, "a std.sys non-function")).try();
     callee = Callee(
         f: f,
         owner: def.id,
@@ -3235,6 +3289,20 @@ std_callee_arity = (
 
 // Where formatted text goes: a console stream, or the String at a place.
 FmtTo* = { Console: Stream | Into: Place }
+
+// A Console write answers `Res<IoError>`: the console write itself has no
+// failure to report, so it is Ok. A unit-typed print answers unit.
+console_answer = (
+    lo   :: Lowerer,
+    id   : ExprId,
+    span : Span
+) Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    lo.is_unit(ty).match({
+        true  => lo.unit(),
+        false => lo.variant_value(ty, "Ok", Ok(lo.unit().try()), span),
+    })
+}
 
 // `print`/`println` and Console output: a literal format string with
 // positional and named holes, or plain values.

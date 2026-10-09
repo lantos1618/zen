@@ -1,0 +1,12 @@
+// An integer literal passed to a generic parameter keeps its full width:
+// 5000000000 truncated to 32 bits would equal 705032704.
+{ println } = std.io
+{ Env } = std.env
+{ Eq } = std.core.eq
+
+same = <U: Eq>(left: U, right: U) bool { left.eq(right) }
+
+main = (env: Env) i32 {
+    println("{}", same(5000000000, 705032704));
+    0
+}

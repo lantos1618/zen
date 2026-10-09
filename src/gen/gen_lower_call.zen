@@ -29,6 +29,7 @@
 { DeferEntry, Local } = gen.gen_lower_core
 { member_call, mem_call, sys_call, resolve, to_bound, handle_for_place } = gen.gen_lower_member
 { sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
+{ cli_call } = gen.gen_lower_cli
 { spawn_actor, use_actor_mem } = gen.gen_lower_actor
 { bound_of, dispatch, Bound } = gen.gen_lower_member
 { to_i64_bits } = gen.gen_lower_core
@@ -1460,6 +1461,12 @@ intrinsic = (
                     },
                     false => js_runtime_call(lo, id, name, sources, span),
                 }),
+                "std.cli.cli_derive"      => lo.cli_call(
+                    id,
+                    name,
+                    sources,
+                    span
+                ),
                 "std.json.json_meta"      => lo.json_call(
                     id,
                     name,

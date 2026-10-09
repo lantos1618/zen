@@ -386,6 +386,34 @@ lower_write* = (
     out.add(dst.view())
 }
 
+// `rename`: one step, so a reader of `to` never sees a partial file.
+lower_rename* = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    ret : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<AllocError> {
+    be.need_fs();
+    i32_ty = be.check.types.prim("i32").try();
+    from ::= be.alloc.String().try();
+    be.str_arg(c, 0, ctx, from).try();
+    to ::= be.alloc.String().try();
+    be.str_arg(c, 1, ctx, to).try();
+    rc  ::= be.fresh_name("t").try();
+    dst ::= be.fresh_name("t").try();
+    be.declare_temp(i32_ty, rc.view()).try();
+    be.declare_temp(ret, dst.view()).try();
+    be.write_fs_call(rc.view(), "zg_fs_rename(", from.view(), to.view()).try();
+    be.open_rc_test(rc.view()).try();
+    be.fs_chain(ret, rc.view(), dst.view(), 1).try();
+    be.close_else().try();
+    be.write_assign_ok_unit(ret, dst.view()).try();
+    be.close_brace().try();
+    out.add(dst.view())
+}
+
 write_fs_call = (be :: CBackend, rc: str, fn: str, first: str, second: str)
                 Res<AllocError> {
     be.fmt("{rc} = {fn}{first}, {second});\n")

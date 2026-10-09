@@ -2093,6 +2093,7 @@ env_call = (
                 "cwd"         => Ok("fs_cwd"),
                 "remove"      => Ok("fs_remove"),
                 "mkdir"       => Ok("fs_mkdir"),
+                "rename"      => Ok("fs_rename"),
                 "since_start" => Ok("since_start"),
                 "unix"        => Ok("unix"),
                 _             => None,

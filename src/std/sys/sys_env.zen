@@ -10,7 +10,7 @@
 { read_file, write_file, env_var, arg, argc, Pages } = std.sys
 { monotonic_ns, realtime_ns, c_path, openat, close, at_fdcwd, o_rdonly, o_cloexec } = std.sys
 { o_directory, o_rdwr, o_creat, flock, eagain } = std.sys
-{ mkdirat, unlinkat, getcwd, c_len } = std.sys
+{ mkdirat, unlinkat, renameat2, getcwd, c_len } = std.sys
 { pipe2, dup3, chdir, execve, wait4, kill, ppoll, fcntl, fork, clone } = std.sys
 { read, write, exit_group, envp, eintr, platform_darwin, c_view } = std.sys
 { sleep_ns } = std.sys.sys_thread
@@ -62,6 +62,20 @@ fs_remove* = (path: str) Res<bool, FsError> {
     gone    = rc == 0;
     missing = rc == 0 - 2 || rc == 0 - 20;
     (gone || missing).match({ true => Ok(gone), false => Err(fs_error(rc)) })
+}
+
+// `fs.rename(from, to)`: `to` names what `from` named, in one step.
+fs_rename* = (from: str, to: str) Res<FsError> {
+    scratch = Pages();
+    old     = c_path(scratch, from).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
+    new     = c_path(scratch, to).match({
+        Ok(p)  => Ok(p),
+        Err(_) => { scratch.free(old); Err(FsError.OutOfMemory) },
+    }).try();
+    rc      = renameat2(at_fdcwd(), old, at_fdcwd(), new, 0);
+    scratch.free(old);
+    scratch.free(new);
+    (rc == 0).match({ true => Ok, false => Err(fs_error(rc)) })
 }
 
 // `fs.mkdir(path)`: true when this call made the directory, false when it

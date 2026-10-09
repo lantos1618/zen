@@ -17,6 +17,7 @@
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed } = sema.sema
 { subst } = sema.sema
+{ pack_elem, tail_is_pack } = sema.sema
 { Found, members_of } = sema.sema_member
 { Printer } = sema.sema_print
 { Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
@@ -893,13 +894,15 @@ bind_sources* = (
     // that declare one.
     variadic = (f.params.len > 0) && f.params.get(f.params.len - 1).match({
         Ok(p) => p.type.match({
-            Ok(t) => lo.tree.type_at(
-                t
-            ).kind.match({ Variadic => true, _ => false }),
+            Ok(t) => lo.tree.type_at(t).kind.match({
+                Variadic => true,
+                Named(n) => n.name.text.eq("vararg"),
+                _        => false,
+            }),
             None  => false,
         }),
         None  => false,
-    });
+    }) || lo.check.tail_is_pack(f);
     c.args.loop((a) {
         a.name.match({
             None     => {
@@ -930,6 +933,79 @@ bind_sources* = (
     Ok(out)
 }
 
+// The arguments a `vararg<T>` tail swallows, from `first` on, stored in the
+// caller's frame; a lone argument that already is the pack is forwarded.
+pack_value = (lo :: Lowerer, ty: TyId, elem: TyId, c: Call, first: Res<ExprId>)
+             Res<Value, LowerError> {
+    run    ::= lo.alloc.Vec<ExprId>();
+    taking :: bool = false;
+    c.args.loop((a) {
+        a.name.match({
+            None  => {
+                first.match({ Ok(f) => a.value == f, None => false }).then(
+                    () { taking = true; }
+                );
+                taking.then(
+                    () { run.add(a.value).try(LowerError.OutOfMemory); }
+                );
+            },
+            Ok(_) => (),
+        });
+    });
+    lone      = (run.len == 1).match({ true => run.get(0), false => None });
+    forwarded = lone.match({
+        Ok(f) => lo.type_of(f).match({ Ok(t) => t == ty, Err(_) => false }),
+        None  => false,
+    });
+    forwarded.match({
+        true  => lo.expr_as(
+            lone.ok_or(unsupported(nowhere(), "a forwarded vararg")).try(),
+            ty
+        ),
+        false => {
+            count    = (run.len == 0).match({ true => 1, false => run.len });
+            store_ty = lo.check.types.array(
+                elem,
+                count
+            ).try(LowerError.OutOfMemory);
+            elements = lo.shape(store_ty).try().form.match({ Array(e) => Ok(e), _ => None })
+                .ok_or(unsupported(
+                    nowhere(),
+                    "a vararg run without an array layout"
+                )).try();
+            store    = lo.temp(store_ty).try();
+            lo.zero_fill(store, count * elements.stride).try();
+            base = lo.slot_of(Scalar.Ptr).try();
+            run.loop((h, i, arg) {
+                value = lo.expr_as(arg, elem).try();
+                lo.add(Instruction.AddressOf(Address(
+                    out: base,
+                    slot: store.slot
+                ))).try();
+                lo.add(Instruction.StoreValue(Store(
+                    base: base,
+                    offset: i * elements.stride,
+                    value: value.slot
+                ))).try();
+            });
+            lo.add(Instruction.AddressOf(Address(
+                out: base,
+                slot: store.slot
+            ))).try();
+            out   = lo.temp(ty).try();
+            whole = lo.spill(out);
+            data  = lo.field_place(whole, "data", nowhere()).try();
+            lo.write(data, Value(slot: base, ty: data.ty)).try();
+            len = lo.field_place(whole, "len", nowhere()).try();
+            lo.write(
+                len,
+                lo.constant(len.ty, run.len.to_i64_bits()).try()
+            ).try();
+            lo.read(whole)
+        },
+    })
+}
+
 // By-value arguments evaluate in the order they are written (the receiver
 // first), whatever order their parameters have.
 in_written_order = (
@@ -956,9 +1032,26 @@ in_written_order = (
     c.args.loop((a) { order.add(a.value).try(LowerError.OutOfMemory); });
     order.loop((e) {
         source_index(sources, e).when_ok((i) {
-            p       = callee.f.params.get(i).ok_or(unsupported(nowhere(), "a missing parameter")).try();
-            ty      = lo.param_type(callee, i).try();
-            special = lo.is_fn_type(ty) || lo.is_capability(ty);
+            p  = callee.f.params.get(i).ok_or(unsupported(nowhere(), "a missing parameter")).try();
+            ty = lo.param_type(callee, i).try();
+            // Only the last parameter, written in the parentheses, swallows
+            // a run; a vararg receiver is passed as itself.
+            tail = i + 1 == callee.f.params.len
+                && c.args.find(
+                    (a) { a.value == e }
+                ).match({ Ok(_) => true, None => false });
+            pack = tail.match({ true => pack_elem(
+                lo.check.types,
+                ty
+            ), false => None });
+            pack.when_ok((elem) {
+                out.set(
+                    i,
+                    Source.Computed(pack_value(lo, ty, elem, c, Ok(e)).try())
+                );
+            });
+            special = lo.is_fn_type(ty) || lo.is_capability(ty)
+                || pack.match({ Ok(_) => true, None => false });
             (!special).then(() {
                 p.mutable.match({
                     // A place is resolved now; a temporary is computed now.
@@ -974,6 +1067,26 @@ in_written_order = (
                         Source.Computed(lo.expr_as(e, ty).try())
                     ); },
                 });
+            });
+        });
+    });
+    // An empty run still passes a pack: zero elements in the caller's frame.
+    last = callee.f.params.len;
+    (last > 0).then(() {
+        out.get(last - 1).when_ok((s) {
+            s.match({
+                Absent => {
+                    ty = lo.param_type(callee, last - 1).try();
+                    pack_elem(lo.check.types, ty).when_ok((elem) {
+                        out.set(
+                            last - 1,
+                            Source.Computed(
+                                pack_value(lo, ty, elem, c, None).try()
+                            )
+                        );
+                    });
+                },
+                _      => (),
             });
         });
     });
@@ -1148,7 +1261,10 @@ inline_call* = (lo :: Lowerer, open: Callee, sources: Vec<Source>, span: Span)
     callee.f.params.loop((h, i, p) {
         kinds.get(i).when_ok((k) { lo.bind_local(p.name.text, k).try(); });
     });
-    value   = lo.block(body).try();
+    value   = lo.settled(ret).match({
+        true  => lo.block_want(body, ret),
+        false => lo.block(body),
+    }).try();
     here    = lo.here();
     coerced = lo.coerce(value, ret).try();
     lo.add(Instruction.Copy(Move(
@@ -1285,7 +1401,10 @@ construct_named* = (
     lo.is_unit(ty).then(() { lo.add(Instruction.Constant(Const(out: out.slot, value: 0))).try(); });
     s      = lo.shape(ty).try();
     fields = s.form.match({ Record(f) => Ok(f), _ => None })
-        .ok_or(unsupported(span, "a construction of a non-record type")).try();
+        .ok_or(unsupported(
+            span,
+            lo.described("a construction of a non-record type", ty)
+        )).try();
     base   = lo.slot_of(Scalar.Ptr).try();
     // Arguments evaluate in written order; omitted fields then take their
     // defaults in declaration order.
@@ -1497,47 +1616,23 @@ intrinsic = (
                 ),
                 "std.text.text_fmt"       => name.eq("fmt").match({
                     // `fmt(out :: Sink, fmt, args..)`: formatting through a Sink.
-                    true  => {
-                        out_source    = sources.get(0).value_or(Source.Absent);
-                        out_ty        = out_source.match({ Given(e) => lo.type_of(e), _ => Err(unsupported(span, "fmt without a sink")) }).try();
-                        place         = lo.argument_place(
-                            out_source,
-                            out_ty,
-                            span
-                        ).try();
-                        written_first = out_source.match({
-                            Given(e) => c.args.get(
-                                0
-                            ).match({ Ok(a) => a.value == e, None => false }),
-                            _        => false,
-                        });
-                        lo.format_call(
-                            c.args,
-                            written_first.match({ true => 1, false => 0 }),
-                            false,
-                            FmtTo.Into(place),
-                            span
-                        ).try();
-                        lo.variant_value(
-                            lo.type_of(id).try(),
-                            "Ok",
-                            Ok(lo.unit().try()),
-                            span
-                        )
-                    },
+                    true  => lo.sink_door(id, c, sources, span),
                     false => Err(unsupported(
                         span,
                         "this formatting operation"
                     )),
                 }),
-                _                         => Err(unsupported(
-                    span,
-                    lo.alloc.String(
-                        "the compiler-provided operation `{}.{}`",
-                        module,
-                        name
-                    ).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" })
-                )),
+                _                         => lo.format_door(callee.f).match({
+                    true  => lo.sink_door(id, c, sources, span),
+                    false => Err(unsupported(
+                        span,
+                        lo.alloc.String(
+                            "the compiler-provided operation `{}.{}`",
+                            module,
+                            name
+                        ).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" })
+                    )),
+                }),
             }),
         }),
     })
@@ -2874,7 +2969,10 @@ at_value = (
             ).try(),
         });
     });
-    value   = lo.block(body).try();
+    value   = lo.settled(ret).match({
+        true  => lo.block_want(body, ret),
+        false => lo.block(body),
+    }).try();
     here    = lo.here();
     coerced = lo.coerce(value, ret).try();
     lo.add(Instruction.Copy(Move(
@@ -2954,6 +3052,49 @@ handle_call = (lo :: Lowerer, loop_id: usize, name: str, c: Call, span: Span)
         },
         _       => Err(unsupported(span, "this loop handle operation")),
     })
+}
+
+// A bodyless `fmt(out :: T, fmt: str, args: ...)`: formatting into `out`.
+format_door = (lo :: Lowerer, f: Function) bool {
+    bodyless = f.body.match({ Ok(_) => false, None => true });
+    last     = f.params.get(2).match({
+        Ok(p) => p.type.match({
+            Ok(t) => lo.tree.type_at(
+                t
+            ).kind.match({ Variadic => true, _ => false }),
+            None  => false,
+        }),
+        None  => false,
+    });
+    bodyless && f.name.text.eq("fmt") && f.params.len == 3 && last
+}
+
+// `fmt(out, fmt, args..)` and `out.fmt(fmt, args..)`: the pieces are
+// written into `out`, which answers Ok.
+sink_door = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    c       : Call,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    out_source    = sources.get(0).value_or(Source.Absent);
+    out_ty        = out_source.match({ Given(e) => lo.type_of(e), _ => Err(unsupported(span, "fmt without a sink")) }).try();
+    place         = lo.argument_place(out_source, out_ty, span).try();
+    written_first = out_source.match({
+        Given(e) => c.args.get(
+            0
+        ).match({ Ok(a) => a.value == e, None => false }),
+        _        => false,
+    });
+    lo.format_call(
+        c.args,
+        written_first.match({ true => 1, false => 0 }),
+        false,
+        FmtTo.Into(place),
+        span
+    ).try();
+    lo.variant_value(lo.type_of(id).try(), "Ok", Ok(lo.unit().try()), span)
 }
 
 // ---------------------------------------------------------------------
@@ -3377,8 +3518,12 @@ sink_for_place = (
 // Append a str to the text at `place`: String.add, or Sink.write through a
 // handle.
 write_str = (lo :: Lowerer, place: Place, value: Value) Res<LowerError> {
+    string = lo.std_type("std.text.text_string", "String", nowhere()).try();
     lo.bound_of(place.ty).try().match({
-        None      => lo.string_add(place, value),
+        None      => (place.ty == string).match({
+            true  => lo.string_add(place, value),
+            false => lo.own_write(place, value),
+        }),
         Ok(bound) => {
             handle = lo.read(place).try();
             args ::= lo.alloc.Vec<Source>();
@@ -3442,6 +3587,24 @@ string_add = (lo :: Lowerer, place: Place, value: Value) Res<LowerError> {
     callee = lo.resolve(
         place.ty,
         "add",
+        None,
+        2,
+        lo.alloc.Inst(),
+        None,
+        nowhere()
+    ).try();
+    sources ::= lo.alloc.Vec<Source>();
+    sources.add(Source.Located(place)).try(LowerError.OutOfMemory);
+    sources.add(Source.Computed(value)).try(LowerError.OutOfMemory);
+    lo.real_call(callee, sources, nowhere()).try();
+    Ok
+}
+
+// Append a str through the receiving type's own `write(str)`.
+own_write = (lo :: Lowerer, place: Place, value: Value) Res<LowerError> {
+    callee = lo.resolve(
+        place.ty,
+        "write",
         None,
         2,
         lo.alloc.Inst(),

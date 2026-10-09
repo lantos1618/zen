@@ -30,6 +30,8 @@
 { class_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
 { name_source } = sema.sema_variant_name
+{ DiscriminantCall, represented_enum } = sema.sema_discriminant
+{ const_int } = sema.sema_const
 
 // How a member call reaches its body.
 Target = { Static: Callee | Dynamic: Bound }
@@ -108,77 +110,80 @@ resolved_member_call = (
     span     : Span
 ) Res<Value, LowerError> {
     method_inst = lo.call_inst(checked.inst).try();
-    lo.check.variant_name_call_of(id).match({
-        Ok(_) => lo.lower_variant_name(id, receiver, span),
-        None  => lo.bound_of(recv_ty).try().match({
-            Ok(bound) => lo.dynamic_call(
-                id,
-                c,
-                bound,
-                receiver,
-                name,
-                method_inst,
-                span
-            ),
-            None      => lo.resolve(
-                recv_ty,
-                name,
-                checked.body,
-                c.args.len + 1,
-                method_inst,
-                None,
-                span
-            ).match({
-                Ok(callee) => {
-                    sources = lo.bind_sources(
-                        callee.f,
-                        c,
-                        Ok(receiver),
-                        span
-                    ).try();
-                    lo.invoke(id, callee, sources, c, span)
-                },
-                // An allocator hook its implementor leaves out keeps the
-                // bound's meaning.
-                Err(e)     => name.is_in(["create", "free"]).match({
-                    false => lo.ufcs(recv_ty, name, c.args.len + 1).match({
-                        // Sema decides UFCS for the written types; a
-                        // receiver it could not type (see `type_of`) gets
-                        // the free function its instance type selects.
-                        Ok(callee) => {
-                            sources = lo.bind_sources(
-                                callee.f,
-                                c,
-                                Ok(receiver),
-                                span
-                            ).try();
-                            lo.invoke(id, callee, sources, c, span)
-                        },
-                        None       => Err(e),
-                    }),
-                    true  => {
-                        place = lo.place_of(receiver).try().match({
-                            Ok(p) => p,
-                            None  => lo.spill(lo.expr(receiver).try()),
-                        });
-                        args ::= lo.alloc.Vec<Source>();
-                        c.args.loop(
-                            (a) { args.add(Source.Computed(
-                                lo.expr(a.value).try()
-                            )).try(LowerError.OutOfMemory); }
-                        );
-                        alloc_bound = lo.bound_named("Alloc", span).try();
-                        lo.implementor_call(
-                            recv_ty,
-                            alloc_bound,
-                            name,
-                            place,
-                            args,
-                            method_inst,
-                            lo.call_type(id, c, name).try(),
+    lo.check.discriminant_call_of(id).match({
+        Ok(kind) => lo.lower_discriminant(receiver, kind, span),
+        None     => lo.check.variant_name_call_of(id).match({
+            Ok(_) => lo.lower_variant_name(id, receiver, span),
+            None  => lo.bound_of(recv_ty).try().match({
+                Ok(bound) => lo.dynamic_call(
+                    id,
+                    c,
+                    bound,
+                    receiver,
+                    name,
+                    method_inst,
+                    span
+                ),
+                None      => lo.resolve(
+                    recv_ty,
+                    name,
+                    checked.body,
+                    c.args.len + 1,
+                    method_inst,
+                    None,
+                    span
+                ).match({
+                    Ok(callee) => {
+                        sources = lo.bind_sources(
+                            callee.f,
+                            c,
+                            Ok(receiver),
                             span
-                        )
+                        ).try();
+                        lo.invoke(id, callee, sources, c, span)
                     },
+                    // An allocator hook its implementor leaves out keeps the
+                    // bound's meaning.
+                    Err(e)     => name.is_in(["create", "free"]).match({
+                        false => lo.ufcs(recv_ty, name, c.args.len + 1).match({
+                            // Sema decides UFCS for the written types; a
+                            // receiver it could not type (see `type_of`) gets
+                            // the free function its instance type selects.
+                            Ok(callee) => {
+                                sources = lo.bind_sources(
+                                    callee.f,
+                                    c,
+                                    Ok(receiver),
+                                    span
+                                ).try();
+                                lo.invoke(id, callee, sources, c, span)
+                            },
+                            None       => Err(e),
+                        }),
+                        true  => {
+                            place = lo.place_of(receiver).try().match({
+                                Ok(p) => p,
+                                None  => lo.spill(lo.expr(receiver).try()),
+                            });
+                            args ::= lo.alloc.Vec<Source>();
+                            c.args.loop(
+                                (a) { args.add(Source.Computed(
+                                    lo.expr(a.value).try()
+                                )).try(LowerError.OutOfMemory); }
+                            );
+                            alloc_bound = lo.bound_named("Alloc", span).try();
+                            lo.implementor_call(
+                                recv_ty,
+                                alloc_bound,
+                                name,
+                                place,
+                                args,
+                                method_inst,
+                                lo.call_type(id, c, name).try(),
+                                span
+                            )
+                        },
+                    }),
                 }),
             }),
         }),
@@ -380,6 +385,50 @@ variant_switch = (lo :: Lowerer, value: Value, ty: TyId, span: Span)
         lo.start(yes);
         text = lo.string(v.name, ty).try();
         lo.add(Instruction.Copy(Move(out: out.slot, source: text.slot))).try();
+        lo.jump(done).try();
+        lo.start(next);
+    });
+    lo.trap(TrapKind.Unreachable, span).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// A represented enum's external integer: each known variant answers its
+// declared constant and a catch-all answers the integer it carries.
+lower_discriminant = (
+    lo       :: Lowerer,
+    receiver : ExprId,
+    kind     : DiscriminantCall,
+    span     : Span
+) Res<Value, LowerError> {
+    encoded: Res<TyId> = kind.match({ Encode(t) => Ok(t), Decode(_) => None });
+    ty                 = encoded.ok_or(unsupported(
+        span,
+        "a represented enum's `from_discriminant`"
+    )).try();
+    shape              = lo.check.represented_enum(
+        ty
+    ).try(LowerError.OutOfMemory)
+        .ok_or(unsupported(
+            span,
+            "a discriminant of an enum without them"
+        )).try();
+    value              = lo.expr(receiver).try();
+    out                = lo.temp(shape.repr).try();
+    done               = lo.label().try();
+    shape.value.variants.loop((h, i, v) {
+        yes  = lo.label().try();
+        next = lo.label().try();
+        lo.branch_to(lo.tag_test(value, i).try(), yes, next).try();
+        lo.start(yes);
+        answer = v.discriminant.match({
+            Ok(e) => lo.constant(shape.repr, lo.check.const_int(e).value_or(0)),
+            None  => lo.payload_of(value, i),
+        }).try();
+        lo.add(Instruction.Copy(Move(
+            out: out.slot,
+            source: answer.slot
+        ))).try();
         lo.jump(done).try();
         lo.start(next);
     });

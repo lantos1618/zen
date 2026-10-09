@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>zen-view</title>
+<link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#0b0e14;--panel:#11151d;--line:#1f2633;--text:#c9d1d9;--dim:#6b7686;--accent:#4cc2ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--violet:#a371f7}
@@ -52,6 +53,33 @@ td.r,th.r{text-align:right}
 #views>div{display:none;height:100%}
 #views>div.on{display:block}
 #tl,#sched,#flame{width:100%;height:100%;display:block}
+#views>#vFlame.on{display:flex;flex-direction:column}
+.fbar{display:flex;align-items:center;gap:8px;padding:6px 10px 4px}
+.fbar>span{white-space:nowrap}
+#fNote{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.fsearch{position:relative;flex:0 1 360px;display:flex}
+.fsearch input{width:100%;background:#0d1219;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px 4px 26px;font:inherit}
+.fsearch input:focus{outline:none;border-color:var(--accent)}
+.fsearch svg{position:absolute;left:8px;top:50%;transform:translateY(-50%)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;flex:none}
+.seg button{border:0;border-radius:0;background:#0d1219;padding:2px 9px;color:var(--dim)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.sel{background:#1f2a3a;color:#fff}
+#fHint{padding:0 12px 4px;color:var(--dim);font-size:10px}
+#fBody{flex:1;min-height:0;position:relative;overflow:auto;margin:0 10px 8px;border:1px solid var(--line);border-radius:6px;background:#0d1219}
+#flame{outline:none}
+#fTable th{top:0;cursor:pointer;user-select:none;background:#0d1219}
+#fTable th[data-dir]:not([data-dir=""])::after{content:" " attr(data-dir);color:var(--accent)}
+#fTable tr:hover td{background:#141b26}
+#fTable td{cursor:default}
+#fTable .sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:7px}
+#fTable td.pc{position:relative;width:90px}
+#fTable td.pc em{position:relative;font-style:normal;color:var(--dim)}
+#fTable .fbarc{position:absolute;left:4px;top:5px;bottom:5px;background:#1f3a55;border-radius:2px}
+#fTip{position:fixed;display:none;pointer-events:none;z-index:10;background:#161c27;border:1px solid #2b3546;border-radius:6px;padding:7px 10px;box-shadow:0 6px 20px rgba(0,0,0,.45);max-width:420px}
+#fTip b{display:block;color:#fff;margin-bottom:4px;word-break:break-all}
+#fTip div span{display:inline-block;width:62px;color:var(--dim)}
+#fTip i{color:var(--dim);font-style:normal}
 #empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13px;text-align:center;line-height:1.8}
 </style>
 </head>
@@ -91,13 +119,28 @@ td.r,th.r{text-align:right}
   </div>
   <div id="views">
     <div id="vTl" class="on"><canvas id="tl"></canvas></div>
-    <div id="vFlame"><canvas id="flame"></canvas></div>
+    <div id="vFlame">
+      <div class="fbar">
+        <label class="fsearch"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6b7686" stroke-width="2"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg><input id="fSearch" type="search" placeholder="Search behaviours (Type.behaviour)…" spellcheck="false" autocomplete="off"></label>
+        <span class="dim" id="fMatch"></span>
+        <span style="flex:1"></span>
+        <span class="dim" id="fNote"></span>
+        <span class="seg" title="merged: the causal tree of turns, same-named siblings merged · over time: one bar per turn"><button id="fLayMerged" class="sel">merged</button><button id="fLayTime">over time</button></span>
+        <span class="seg" title="frame width"><button id="fWTime" class="sel">busy time</button><button id="fWCount">turns</button></span>
+        <span class="seg"><button id="fFold" class="sel" title="a turn that re-enters a behaviour already on its stack (Peer.talk -> Peer.talk -> ...) is merged into that frame">fold recursion</button></span>
+        <span class="seg"><button id="fViewFlame" class="sel">Flamegraph</button><button id="fViewTable">Table</button></span>
+      </div>
+      <div id="fHint"></div>
+      <div id="fBody"><canvas id="flame" tabindex="0"></canvas>
+        <table id="fTable" style="display:none"><thead><tr><th data-k="name">behaviour</th><th class="r" data-k="self">self</th><th class="r pcol" data-k="self">self %</th><th class="r" data-k="total">total</th><th class="r pcol" data-k="total">total %</th><th class="r" data-k="n">turns</th><th class="r pcol" data-k="n">turns %</th><th class="r" data-k="fails">failed</th></tr></thead><tbody id="fRows"></tbody></table></div>
+    </div>
     <div id="vMsg"><table><thead><tr><th>t (ms)</th><th>from</th><th>to</th><th>behaviour</th><th class="r">queued</th><th class="r">ran</th><th>worker</th></tr></thead><tbody id="msgRows"></tbody></table></div>
     <div id="vSched"><canvas id="sched"></canvas></div>
     <div id="vFail"><table><thead><tr><th>t (ms)</th><th>what</th><th>actor</th><th>detail</th></tr></thead><tbody id="failRows"></tbody></table></div>
   </div>
 </div>
 </div>
+<div id="fTip"></div>
 <div id="empty" style="display:none"></div>
 <script>
 "use strict";
@@ -106,9 +149,11 @@ td.r,th.r{text-align:right}
 const K = {SEND:1,PARK:2,RELEASE:3,REFUSE:4,TAKE:5,BREAK:6,BLOCK:7,UNBLOCK:8,SLEEP:9,WAKE:10,CLOSED:11,WAIT:12,SPAWN:13,DONE:14,FAIL:15,STOP:16,DROP:17};
 // took[i]: for a send or park, when its message was taken (0 while queued).
 // base: how many earlier events were trimmed off the front (see trim).
-const T = {n:0, base:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null};
+// up[i]: for a take, how many events back the take of its cause is (0: none
+// kept), from the id/cause columns.
+const T = {n:0, base:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null, up:null};
 const KEEP = 4000000;
-const queued = new Map();
+const queued = new Map(), takeAt = new Map();
 const meta = {workers:0, bound:256, names:new Map(), ended:false, lost:0};
 let offset = 0;
 
@@ -117,7 +162,7 @@ function grow(need){
   let cap = Math.max(65536, T.cap * 2); while (cap < need) cap *= 2;
   const re = (A, old) => { const a = new A(cap); if (old) a.set(old.subarray(0, T.n)); return a; };
   T.ns = re(Float64Array, T.ns); T.kind = re(Uint8Array, T.kind); T.from = re(Uint32Array, T.from);
-  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.took = re(Float64Array, T.took); T.cap = cap;
+  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.took = re(Float64Array, T.took); T.up = re(Int32Array, T.up); T.cap = cap;
 }
 
 function ingest(text){
@@ -129,8 +174,11 @@ function ingest(text){
     const f = line.split(" ");
     if (f.length < 6) continue;
     const i = T.n++;
-    T.ns[i] = +f[1]; T.kind[i] = +f[2]; T.from[i] = +f[3]; T.to[i] = +f[4]; T.msg[i] = +f[5]; T.took[i] = 0;
+    T.ns[i] = +f[1]; T.kind[i] = +f[2]; T.from[i] = +f[3]; T.to[i] = +f[4]; T.msg[i] = +f[5]; T.took[i] = 0; T.up[i] = 0;
     const k = T.kind[i];
+    if (k === K.TAKE && f.length >= 8){ const id = +f[6], c = +f[7], g = T.base + i;
+      if (c){ const p = takeAt.get(c); if (p !== undefined && p >= T.base) T.up[i] = g - p; }
+      if (id) takeAt.set(id, g); }
     if (k === K.SEND || k === K.PARK) queued.set(T.msg[i], T.base + i);
     else if (k === K.TAKE || k === K.REFUSE || k === K.CLOSED || k === K.DROP){ const s = queued.get(T.msg[i]); if (s !== undefined){ if (s >= T.base) T.took[s - T.base] = T.ns[i]; queued.delete(T.msg[i]); } }
   }
@@ -144,8 +192,10 @@ function ingest(text){
 let base = null;
 function trim(d){
   const cur = M; M = base || fresh(); apply(d); base = M; M = cur;
-  for (const k of ["ns", "kind", "from", "to", "msg", "took"]) T[k].copyWithin(0, d, T.n);
+  for (const k of ["ns", "kind", "from", "to", "msg", "took", "up"]) T[k].copyWithin(0, d, T.n);
   T.n -= d; T.base += d; base.upto = 0;
+  for (const [id, g] of takeAt) if (g < T.base) takeAt.delete(id);
+  FL.tree = null;
   if (M){ M.upto -= d; if (M.upto < 0) M = null; }
 }
 
@@ -576,26 +626,296 @@ function renderTimeline(rows){
   g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(1) + " ms", x(t) - 16, 11); }
 }
 
-// Causality flame chart: x is time, a turn sits one row under the turn whose
-// send caused it, so a stack is a chain of messages.
-let flameBars = [];
+// ---------------------------------------------------------------- flame
+// Two flame views over the kept window. "merged" is a classic icicle: the
+// causal tree of turns (a turn hangs under the turn whose send caused it,
+// from the take's id/cause columns), sibling turns with the same
+// Type.behaviour merged, width = busy time or turn count. "over time" is
+// the original chart: x is time, one bar per turn, stacked by cause.
+const FL = {layout:"merged", width:"time", fold:true, view:"flame", q:"", sortK:"self", sortD:-1,
+            tree:null, key:"", builtAt:0, cost:0, at:null, frames:[], rows:[], cur:"", zoom:"", hover:null, rowH:18, stats:null};
+const MAX_DEPTH = 96;
+const PALETTE = [["#5b8def", "#fff"], ["#f2b443", "#1d1500"], ["#e8679b", "#fff"], ["#9a6cf0", "#fff"],
+                 ["#43bfa8", "#032019"], ["#de7a3c", "#fff"], ["#62b0f0", "#04121f"], ["#86c26a", "#0c1a05"]];
+// A type's colour is its name's hash on the palette; types are placed in
+// name order and step past colours already taken, so a program's types
+// get the same, distinct colours on every load.
+const typeColors = new Map();
+let colorNames = -1;
+function typeColor(type){
+  if (colorNames !== meta.names.size){ colorNames = meta.names.size; typeColors.clear();
+    const types = [...new Set([...meta.names.values()].map(n => n.split(".")[0]))].sort(), used = new Set();
+    for (const t of types){ let k = fnv(t) % PALETTE.length;
+      for (let s = 0; s < PALETTE.length && used.has(k); s++) k = (k + 1) % PALETTE.length;
+      used.add(k); if (used.size === PALETTE.length) used.clear(); typeColors.set(t, PALETTE[k]); } }
+  let c = typeColors.get(type);
+  if (!c){ c = PALETTE[fnv(type) % PALETTE.length]; typeColors.set(type, c); }
+  return c;
+}
+function fnv(s){ let h = 2166136261; for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function fnode(parent, key, label){
+  return {key, label, type:label.split(/[. ]/)[0], parent, depth:parent ? parent.depth + 1 : 0, kids:new Map(), list:[],
+          self:0, n:0, fails:0, running:0, folded:0, actors:new Map(), total:0, tn:0};
+}
+
+// Replays takes and dones in events 0..upto into the merged tree. A turn is
+// placed once its cause's node is known; until then it waits on the cause.
+function buildFlame(upto){
+  const root = fnode(null, "", "(root)"), nodes = [root];
+  if (!FL.at || FL.at.length < upto) FL.at = new Int32Array(Math.max(65536, Math.ceil(upto * 1.25)));
+  const at = FL.at; at.fill(0, 0, upto);
+  const turn = [], wait = new Map(), work = [];
+  let turns = 0, t0 = Infinity, t1 = 0;
+  const one = (j, d, code) => {
+    const p = T.up[j] ? j - T.up[j] : -1;
+    let parent = root;
+    if (p >= 0){ const v = at[p]; if (!v){ let w = wait.get(p); if (!w) wait.set(p, w = []); w.push(j, d, code); return; } parent = nodes[v - 1]; }
+    const a = T.to[j], ran = d >= 0, dur = (ran ? T.ns[d] : cursorNs) - T.ns[j];
+    const ty = (M.actors.get(a) || {}).type || "actor", key = code !== undefined ? code : "~" + ty;
+    let node = null;
+    if (FL.fold) for (let q = parent; q; q = q.parent) if (q.key === key){ node = q; node.folded++; break; }
+    if (!node && parent.depth >= MAX_DEPTH) node = parent.key === "…" ? parent : parent.kids.get("…") || null;
+    if (!node){
+      const k = parent.depth >= MAX_DEPTH ? "…" : key;
+      node = parent.kids.get(k);
+      if (!node){
+        node = fnode(parent, k, k === "…" ? "(deeper turns)" : code !== undefined ? nameOf(code) : ty + " (running)");
+        parent.kids.set(k, node); node.id = nodes.push(node);
+      }
+    }
+    at[j] = node.id;
+    node.self += Math.max(0, dur); node.n++; turns++;
+    if (ran && T.kind[d] === K.FAIL) node.fails++;
+    if (!ran) node.running++;
+    node.actors.set(a, (node.actors.get(a) || 0) + Math.max(0, dur));
+    if (T.ns[j] < t0) t0 = T.ns[j]; if ((ran ? T.ns[d] : cursorNs) > t1) t1 = ran ? T.ns[d] : cursorNs;
+    const w = wait.get(j); if (w){ wait.delete(j); for (let k = 0; k < w.length; k += 3) work.push(w[k], w[k + 1], w[k + 2]); }
+  };
+  const settle = (j, d, code) => { one(j, d, code); while (work.length){ const c = work.pop(), dd = work.pop(), jj = work.pop(); one(jj, dd, c); } };
+  root.id = 1;
+  for (let i = 0; i < upto; i++){
+    const k = T.kind[i];
+    if (k === K.TAKE) turn[T.from[i]] = i + 1;
+    else if (k === K.DONE || k === K.FAIL){ const j = (turn[T.from[i]] || 0) - 1; turn[T.from[i]] = 0; if (j >= 0) settle(j, i, T.msg[i]); }
+  }
+  // Turns still running at the cursor: their name is on the done past it, if kept.
+  const open = [];
+  turn.forEach((v, w) => { if (v) open.push([v - 1, w]); });
+  open.sort((x, y) => x[0] - y[0]);
+  for (const [j, w] of open){
+    let code;
+    for (let i = upto; i < T.n && i < upto + 500000; i++) if (T.from[i] === w && (T.kind[i] === K.DONE || T.kind[i] === K.FAIL)){ code = T.msg[i]; break; }
+    settle(j, -1, code);
+  }
+  // A cause whose own turn never finished in the window: its turns go under the root.
+  while (wait.size){ const p = wait.keys().next().value; at[p] = 1; const w = wait.get(p); wait.delete(p);
+    for (let k = 0; k < w.length; k += 3) settle(w[k], w[k + 1], w[k + 2]); }
+  // Inclusive totals, children before parents (nodes are created parent first).
+  for (let i = nodes.length - 1; i >= 0; i--){ const n = nodes[i]; n.total += n.self; n.tn += n.n;
+    if (n.parent){ n.parent.total += n.total; n.parent.tn += n.tn; } }
+  return {root, nodes, turns, t0:t0 === Infinity ? 0 : t0, t1, upto};
+}
+const metric = n => FL.width === "time" ? n.total : n.tn;
+function sortFlame(t){ for (const n of t.nodes) n.list = [...n.kids.values()].sort((a, b) => metric(b) - metric(a) || (a.label < b.label ? -1 : 1)); }
+function pathOf(n){ const ks = []; for (; n && n.parent; n = n.parent) ks.push(n.key); return ks.reverse().join("\u0001"); }
+function findPath(t, p){ let n = t.root; if (!p) return n;
+  for (const s of p.split("\u0001")){ const k = n.kids.get(s) || n.kids.get(+s); if (!k) return null; n = k; } return n; }
+function topActor(n){ let best = 0, bv = -1; for (const [a, v] of n.actors) if (v > bv){ bv = v; best = a; } return best; }
+const fmatch = n => !!FL.q && n.label.toLowerCase().includes(FL.q);
+
+// Rebuilt only when the cursor, the window or a setting moved; while live or
+// playing at most a fifth of the time goes to rebuilding.
+let flameTimer = 0;
+function flameTree(){
+  const key = [M.upto, T.base, meta.names.size, FL.fold].join("|");
+  if (FL.tree && FL.key === key) return FL.tree;
+  const now = performance.now();
+  if (FL.tree && (live || playing) && now - FL.builtAt < FL.cost * 4){
+    if (!flameTimer) flameTimer = setTimeout(() => { flameTimer = 0; dirty = true; }, FL.cost * 4);
+    return FL.tree;
+  }
+  const t = buildFlame(M.upto); sortFlame(t);
+  FL.cost = performance.now() - now; FL.builtAt = performance.now(); FL.tree = t; FL.key = key; FL.stats = null;
+  return t;
+}
+function flameStats(t){
+  const sk = FL.q + "|" + FL.width;
+  if (FL.stats && FL.stats.k === sk && FL.stats.t === t) return FL.stats;
+  let n = 0, share = 0;
+  const walk = (x, under) => { const m = fmatch(x); if (m) n++; if (m && !under) share += metric(x); for (const c of x.list) walk(c, under || m); };
+  if (FL.q) walk(t.root, false);
+  return FL.stats = {k:sk, t, n, share:metric(t.root) ? share / metric(t.root) : 0};
+}
+
 function renderFlame(){
+  const tbl = FL.view === "table", timeView = FL.layout === "time";
+  $("flame").style.display = tbl ? "none" : "block"; $("fTable").style.display = tbl ? "" : "none";
+  $("fHint").textContent = tbl ? "Click a column to sort · double-click a row to find it in the flamegraph" :
+    timeView ? "Each bar is a turn; the bar under it is the turn whose send caused it · wheel to zoom · click to select the actor" :
+    "Use the arrow keys to move between frames, Enter or Space to focus a frame, and Escape to show all frames.";
+  if (timeView && !tbl){ renderFlameTime(); return; }
+  const t = flameTree(), s = flameStats(t);
+  $("fMatch").textContent = FL.q ? `${s.n.toLocaleString()} match${s.n === 1 ? "" : "es"} · ${(100 * s.share).toFixed(1)}% of ${FL.width === "time" ? "busy time" : "turns"}` : "";
+  $("fNote").textContent = `${t.turns.toLocaleString()} turns · ${ms(t.root.total)} busy over ${ms(Math.max(0, t.t1 - t.t0))}` +
+    (T.base ? ` · last ${(T.n / 1e6).toFixed(1)}M events` : "");
+  if (tbl) renderFlameTable(t); else renderIcicle(t);
+}
+
+function layoutIcicle(t, W){
+  const frames = [], z = (FL.zoom && findPath(t, FL.zoom)) || t.root;
+  const anc = []; for (let a = z; a; a = a.parent) anc.unshift(a);
+  for (const a of anc) frames.push({n:a, x:0, w:W, d:a.depth, anc:a !== z});
+  const place = (n, x, w) => {
+    const m = metric(n); if (!m) return; let cx = x;
+    for (const c of n.list){ const cw = metric(c) / m * w;
+      if (cw >= 0.35){ frames.push({n:c, x:cx, w:cw, d:c.depth}); if (cw >= 1) place(c, cx, cw); }
+      cx += cw; }
+  };
+  place(z, 0, W);
+  const rows = [];
+  for (const f of frames){ (rows[f.d] || (rows[f.d] = [])).push(f); }
+  return {frames, rows, z};
+}
+function ellipsis(g, s, w){
+  const cw = g.measureText("M").width, k = Math.floor(w / cw);
+  if (k >= s.length) return s; if (k < 3) return "";
+  const head = Math.ceil((k - 1) / 2), tail = k - 1 - head;
+  return s.slice(0, head) + "…" + (tail ? s.slice(-tail) : "");
+}
+function renderIcicle(t){
+  const c = $("flame"), body = $("fBody"), rh = FL.rowH;
+  const z = (FL.zoom && findPath(t, FL.zoom)) || t.root;
+  let deep = 0; for (const n of t.nodes) if (n.depth > deep && metric(n)) deep = n.depth;
+  c.style.height = Math.max(body.clientHeight - 2, 12 + (deep + 1) * rh) + "px";
+  const L = layoutIcicle(t, c.getBoundingClientRect().width - 8);
+  if (!z.parent) c.style.height = Math.max(body.clientHeight - 2, 12 + L.rows.length * rh) + "px";
+  FL.frames = L.frames; FL.rows = L.rows; FL.z = L.z; FL.t = t;
+  if (!findPath(t, FL.cur)) FL.cur = "";
+  drawIcicle();
+}
+function drawIcicle(){
   const [g, W, H] = fit($("flame")); g.clearRect(0, 0, W, H);
+  const rh = FL.rowH, q = !!FL.q, cur = FL.t ? findPath(FL.t, FL.cur) : null;
+  g.font = "11px ui-monospace,SFMono-Regular,Menlo,monospace"; g.textBaseline = "middle";
+  for (const f of FL.frames){
+    const n = f.n, x = 4 + f.x, y = 6 + f.d * rh, w = Math.max(0.8, f.w - 1.5), h = rh - 2;
+    const [bg, fg] = n.parent ? typeColor(n.type) : ["#3d7be0", "#fff"];
+    g.globalAlpha = q && !fmatch(n) ? 0.18 : f.anc ? 0.6 : 1;
+    g.fillStyle = bg;
+    if (w > 5){ g.beginPath(); g.roundRect(x, y, w, h, 3); g.fill(); } else g.fillRect(x, y, w, h);
+    if (n === FL.hover){ g.fillStyle = "rgba(255,255,255,.22)"; g.fillRect(x, y, w, h); }
+    if (n.fails && w > 3){ g.strokeStyle = "#ff4d4f"; g.lineWidth = 1.5; g.strokeRect(x + .75, y + .75, w - 1.5, h - 1.5); }
+    if (w > 22){
+      let s = n.parent ? n.label : "(root)";
+      if (n.running && n.running === n.n) s += " (running)";
+      s = ellipsis(g, s, w - 10);
+      if (s){ g.fillStyle = fg; g.fillText(s, x + 5, y + h / 2 + .5); }
+    }
+    g.globalAlpha = 1;
+    if (n === cur){ g.strokeStyle = "#fff"; g.lineWidth = 2; g.strokeRect(x + 1, y + 1, Math.max(1, w - 2), h - 2); }
+  }
+}
+function frameAt(e){
+  const b = $("flame").getBoundingClientRect(), x = e.clientX - b.left - 4, y = e.clientY - b.top - 6;
+  const row = FL.rows[Math.floor(y / FL.rowH)]; if (!row || y % FL.rowH > FL.rowH - 2) return null;
+  return row.find(f => x >= f.x && x < f.x + Math.max(f.w, 1)) || null;
+}
+function flameTip(e, f){
+  const tip = $("fTip");
+  if (!f){ tip.style.display = "none"; return; }
+  const n = f.n, r = FL.t.root, pc = (a, b) => b ? (100 * a / b).toFixed(1) + "%" : "-";
+  const who = n.actors.size > 1 ? `${n.actors.size} actors · most busy ${label(topActor(n))}` : n.actors.size ? label(topActor(n)) : "";
+  tip.innerHTML = `<b>${n.parent ? n.label : "(root)"}</b>` +
+    `<div><span>total</span>${ms(n.total)} <i>${pc(n.total, r.total)}</i></div>` +
+    `<div><span>self</span>${ms(n.self)} <i>${pc(n.self, r.total)}</i></div>` +
+    `<div><span>turns</span>${n.tn.toLocaleString()} <i>${pc(n.tn, r.tn)}</i>${n.parent ? ` · own ${n.n.toLocaleString()}` : ""}</div>` +
+    (who ? `<div><span>actor</span>${who}</div>` : "") +
+    (n.fails ? `<div class="bad"><span>failed</span>${n.fails.toLocaleString()}</div>` : "") +
+    (n.running ? `<div class="warn"><span>running</span>${n.running} at the cursor</div>` : "") +
+    (n.folded ? `<div class="dim"><span>folded</span>${n.folded.toLocaleString()} re-entries of this frame below it</div>` : "");
+  tip.style.display = "block";
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  tip.style.left = Math.min(innerWidth - tw - 8, e.clientX + 14) + "px";
+  tip.style.top = Math.max(8, Math.min(innerHeight - th - 8, e.clientY + 14) - (e.clientY + th + 22 > innerHeight ? th + 20 : 0)) + "px";
+}
+function flameCursor(n, sel){
+  FL.cur = pathOf(n); if (sel && n.parent){ const a = topActor(n); if (a){ selected = a; dirty = true; } }
+  drawIcicle();
+  const f = FL.frames.find(f => f.n === n), body = $("fBody");
+  if (f){ const y = 6 + f.d * FL.rowH; if (y < body.scrollTop) body.scrollTop = y - 4; else if (y + FL.rowH > body.scrollTop + body.clientHeight) body.scrollTop = y + FL.rowH - body.clientHeight + 4; }
+}
+function flameKey(e){
+  if (FL.layout !== "merged" || FL.view !== "flame" || !FL.t) return;
+  const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", " ", "Escape"];
+  if (!keys.includes(e.key)) return;
+  e.preventDefault(); e.stopPropagation();
+  const n = findPath(FL.t, FL.cur) || FL.t.root;
+  if (e.key === "Escape"){ FL.zoom = ""; dirty = true; return; }
+  if (e.key === "Enter" || e.key === " "){ FL.zoom = n.parent ? pathOf(n) : ""; FL.cur = pathOf(n); dirty = true; return; }
+  let to = null;
+  if (e.key === "ArrowUp") to = n.parent;
+  else if (e.key === "ArrowDown"){ const f = FL.frames.find(f => f.n.parent === n && !f.anc); to = f ? f.n : null; }
+  else {
+    const row = FL.rows[n.depth] || [], k = row.findIndex(f => f.n === n);
+    if (k >= 0) { const f = row[k + (e.key === "ArrowLeft" ? -1 : 1)]; to = f ? f.n : null; }
+  }
+  if (to) flameCursor(to, true);
+}
+
+function renderFlameTable(t){
+  const agg = new Map(), on = new Map();
+  const walk = n => {
+    if (n.parent){
+      let r = agg.get(n.label); if (!r) agg.set(n.label, r = {name:n.label, type:n.type, self:0, total:0, n:0, fails:0, best:null});
+      r.self += n.self; r.n += n.n; r.fails += n.fails;
+      if (!r.best || n.self > r.best.self) r.best = n;
+      if (!on.get(n.label)) r.total += n.total;
+      on.set(n.label, (on.get(n.label) || 0) + 1);
+    }
+    for (const c of n.list) walk(c);
+    if (n.parent) on.set(n.label, on.get(n.label) - 1);
+  };
+  walk(t.root);
+  const tot = t.root.total || 1, tn = t.root.tn || 1, k = FL.sortK, d = FL.sortD;
+  const rows = [...agg.values()].filter(r => !FL.q || r.name.toLowerCase().includes(FL.q))
+    .sort((a, b) => (k === "name" ? (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) : a[k] - b[k]) * d);
+  FL.tableRows = rows;
+  document.querySelectorAll("#fTable th").forEach(th => th.classList.toggle("sorted", th.dataset.k === k));
+  document.querySelectorAll("#fTable th").forEach(th => th.dataset.dir = th.dataset.k === k && !th.classList.contains("pcol") ? (d < 0 ? "▼" : "▲") : "");
+  const bar = (v, of) => `<i class="fbarc" style="width:${Math.min(100, 100 * v / of).toFixed(1)}%"></i>`;
+  $("fRows").innerHTML = rows.map((r, i) => { const [bg] = typeColor(r.type);
+    return `<tr data-i="${i}"><td><span class="sw" style="background:${bg}"></span>${r.name}</td>` +
+      `<td class="r">${ms(r.self)}</td><td class="r pc">${bar(r.self, tot)}<em>${(100 * r.self / tot).toFixed(1)}%</em></td>` +
+      `<td class="r">${ms(r.total)}</td><td class="r pc">${bar(r.total, tot)}<em>${(100 * r.total / tot).toFixed(1)}%</em></td>` +
+      `<td class="r">${r.n.toLocaleString()}</td><td class="r pc"><em>${(100 * r.n / tn).toFixed(1)}%</em></td>` +
+      `<td class="r${r.fails ? " bad" : " dim"}">${r.fails || "-"}</td></tr>`; }).join("") ||
+    `<tr><td class="dim" colspan="8">${FL.q ? "no behaviour matches the search" : "no turns in the window yet"}</td></tr>`;
+}
+
+// Time-ordered causality chart (the original flame view).
+let flameBars = [];
+function renderFlameTime(){
+  const c = $("flame"); c.style.height = ($("fBody").clientHeight - 2) + "px";
+  const [g, W, H] = fit(c); g.clearRect(0, 0, W, H);
   const span = windowNs(), t1 = cursorNs, t0 = t1 - span, x = t => (t - t0) / span * W, rowH = 16;
-  g.font = "10px ui-monospace,monospace"; flameBars = [];
-  const hues = new Map(); let hue = 0;
+  g.font = "10px ui-monospace,monospace"; g.textBaseline = "alphabetic"; flameBars = [];
+  let hits = 0, all = 0;
   for (const b of M.bars){
     if (b.t1 < t0 || b.t0 > t1) continue;
-    const y = H - 18 - (b.depth + 1) * rowH; if (y < 14) continue;
-    const xa = Math.max(0, x(b.t0)), xb = Math.max(xa + 1, x(b.t1));
-    const ty = (M.actors.get(b.to) || {}).type || "";
-    if (!hues.has(ty)) hues.set(ty, (hue += 67) % 360);
-    g.fillStyle = b.failed ? "#f85149" : `hsl(${hues.get(ty)},55%,${b.to === selected ? 62 : 44}%)`;
+    const y = H - 18 - (b.depth + 1) * rowH; if (y < 2) continue;
+    const xa = Math.max(0, x(b.t0)), xb = Math.max(xa + 1, x(b.t1)), m = FL.q && b.name.toLowerCase().includes(FL.q);
+    const [bg, fg] = typeColor(b.name.split(".")[0]);
+    all++; if (m) hits++;
+    g.globalAlpha = FL.q && !m ? 0.18 : 1;
+    g.fillStyle = b.failed ? "#f85149" : bg;
     g.fillRect(xa, y, xb - xa - .5, rowH - 1); flameBars.push([xa, y, xb, b]);
-    if (xb - xa > 60){ g.fillStyle = "#0b0e14"; g.fillText((label(b.to) + " " + b.name.split(".").pop()).slice(0, Math.floor((xb - xa) / 6.2)), xa + 3, y + 11); }
+    if (b.to === selected){ g.strokeStyle = "#fff"; g.lineWidth = 1; g.strokeRect(xa + .5, y + .5, xb - xa - 1.5, rowH - 2); }
+    if (xb - xa > 60){ g.fillStyle = fg; g.fillText(ellipsis(g, label(b.to) + " " + b.name.split(".").pop(), xb - xa - 6), xa + 3, y + 11); }
+    g.globalAlpha = 1;
   }
   g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(2) + " ms", Math.min(W - 60, x(t)), H - 4); }
-  g.fillText("each bar is a turn; the bar under it is the turn whose send caused it · wheel to zoom", 6, 11);
+  $("fMatch").textContent = FL.q ? `${hits.toLocaleString()} of ${all.toLocaleString()} turns match` : "";
+  $("fNote").textContent = `${all.toLocaleString()} turns in ${ms(span)}`;
 }
 
 function renderSched(){
@@ -658,13 +978,35 @@ $("speed").onchange = e => { speed = +e.target.value; dirty = true; };
 addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT"){ e.preventDefault(); setPlaying(!playing); } });
 addEventListener("resize", () => dirty = true);
 // Wheel over the lanes zooms the time window.
-for (const id of ["tl", "sched", "flame"]) $(id).addEventListener("wheel", e => { e.preventDefault();
+for (const id of ["tl", "sched", "flame"]) $(id).addEventListener("wheel", e => { if (id === "flame" && FL.layout !== "time") return; e.preventDefault();
   zoom = Math.min(4, Math.max(1e-4, zoom * (e.deltaY > 0 ? 1.25 : 0.8))); dirty = true; }, {passive:false});
 const MODES = [["mTree", "tree"], ["mGraph", "graph"], ["mRing", "ring"]];
 for (const [id, mode] of MODES) $(id).onclick = () => { topoMode = mode;
   for (const [other, m] of MODES) $(other).classList.toggle("sel", m === mode); dirty = true; };
-$("flame").onclick = e => { const b = e.target.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
-  const hit = flameBars.find(([xa, ya, xb]) => x >= xa && x <= xb && y >= ya && y <= ya + 16); if (hit){ selected = hit[3].to; dirty = true; } };
+$("flame").onclick = e => {
+  if (FL.layout === "time"){ const b = e.target.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+    const hit = flameBars.find(([xa, ya, xb]) => x >= xa && x <= xb && y >= ya && y <= ya + 16); if (hit){ selected = hit[3].to; dirty = true; } return; }
+  const f = frameAt(e); if (f) flameCursor(f.n, true); };
+$("flame").ondblclick = e => { if (FL.layout !== "merged") return; const f = frameAt(e); if (f){ FL.cur = pathOf(f.n); FL.zoom = f.n.parent ? FL.cur : ""; dirty = true; } };
+$("flame").onmousemove = e => { if (FL.layout !== "merged"){ flameTip(e, null); return; }
+  const f = frameAt(e), n = f ? f.n : null; flameTip(e, f); $("flame").style.cursor = n ? "pointer" : "default";
+  if (n !== FL.hover){ FL.hover = n; drawIcicle(); } };
+$("flame").onmouseleave = e => { flameTip(e, null); if (FL.hover){ FL.hover = null; if (FL.layout === "merged") drawIcicle(); } };
+$("flame").addEventListener("keydown", flameKey);
+$("fSearch").oninput = e => { FL.q = e.target.value.trim().toLowerCase(); dirty = true; };
+$("fSearch").onkeydown = e => { if (e.key === "Escape"){ e.target.value = ""; FL.q = ""; dirty = true; } else if (e.key === "Enter") $("flame").focus(); };
+const FLAME_TOGGLES = [["fLayMerged", "layout", "merged"], ["fLayTime", "layout", "time"], ["fWTime", "width", "time"], ["fWCount", "width", "count"],
+                       ["fViewFlame", "view", "flame"], ["fViewTable", "view", "table"]];
+for (const [id, k, v] of FLAME_TOGGLES) $(id).onclick = () => { FL[k] = v; FL.hover = null;
+  for (const [o, ok, ov] of FLAME_TOGGLES) if (ok === k) $(o).classList.toggle("sel", ov === v);
+  if (k === "width" && FL.tree){ sortFlame(FL.tree); FL.stats = null; }
+  dirty = true; };
+$("fFold").onclick = () => { FL.fold = !FL.fold; $("fFold").classList.toggle("sel", FL.fold); FL.cur = FL.zoom = ""; dirty = true; };
+document.querySelectorAll("#fTable th").forEach(th => th.onclick = () => { const k = th.dataset.k;
+  FL.sortD = FL.sortK === k ? -FL.sortD : k === "name" ? 1 : -1; FL.sortK = k; dirty = true; });
+$("fRows").onclick = e => { const tr = e.target.closest("tr"), r = tr && FL.tableRows[+tr.dataset.i]; if (r && r.best){ const a = topActor(r.best); if (a){ selected = a; dirty = true; } } };
+$("fRows").ondblclick = e => { const tr = e.target.closest("tr"), r = tr && FL.tableRows[+tr.dataset.i]; if (!r) return;
+  $("fSearch").value = r.name; FL.q = r.name.toLowerCase(); FL.cur = r.best ? pathOf(r.best) : FL.cur; $("fViewFlame").click(); };
 
 // ---------------------------------------------------------------- polling
 let dirty = true, polling = false;
@@ -673,7 +1015,7 @@ async function poll(){
   try {
     const r = await fetch("/trace?from=" + offset, {cache:"no-store"});
     const start = +(r.headers.get("X-Trace-Start") || 0), text = await r.text();
-    if (start !== offset){ T.n = 0; T.base = 0; base = null; queued.clear(); offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
+    if (start !== offset){ T.n = 0; T.base = 0; base = null; queued.clear(); takeAt.clear(); FL.tree = null; offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
     if (text.length){ more = text.length > 1048576; ingest(text); offset += new TextEncoder().encode(text).length; dirty = true; }
     $("liveDot").classList.toggle("on", !meta.ended);
     $("liveText").textContent = meta.ended ? "program exited" : "running";

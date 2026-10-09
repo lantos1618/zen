@@ -3,3 +3,9 @@ https example.com 443 /
 http example.com 80 /
 invalid http://example.com:70000/
 invalid ftp://example.com/
+https example.com 443 /a%20b
+rejected empty-host
+rejected empty-host-port
+rejected space-in-host
+rejected newline-in-path
+rejected space-in-path

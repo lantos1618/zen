@@ -1,0 +1,16 @@
+// A type parameter used only inside the body still separates instances:
+// show<u8> overflows where show<i64> would not.
+{ println } = std.io
+{ Env } = std.env
+
+show = <T>() {
+    x: T = 200;
+    y    = x + x;
+    println("{}", y);
+}
+
+main = (env: Env) i32 {
+    show<i64>();
+    show<u8>();
+    0
+}

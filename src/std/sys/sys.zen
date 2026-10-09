@@ -87,6 +87,26 @@ mprotect* = (addr: usize, len: usize, prot: i32) i64
 madvise* = (addr: usize, len: usize, advice: i32) i64
 flock* = (fd: i32, op: i32) i64
 
+// Child processes. Darwin spells these pipe, dup2 and poll, which ignore the
+// trailing argument; ppoll's third is a timeout pointer on Linux (0 waits
+// forever) and poll's millisecond timeout on Darwin.
+pipe2* = (fds: Ptr<i32>, flags: i32) i64
+dup3* = (old: i32, new: i32, flags: i32) i64
+chdir* = (path: Ptr<u8>) i64
+execve* = (path: Ptr<u8>, argv: Ptr<Ptr<u8>>, envp: Ptr<Ptr<u8>>) i64
+wait4* = (pid: i32, status: Ptr<i32>, options: i32, usage: usize) i64
+kill* = (pid: i32, signal: i32) i64
+ppoll* = (
+    fds     : Ptr<i32>,
+    count   : usize,
+    timeout : usize,
+    mask    : usize,
+    size    : usize
+) i64
+fcntl* = (fd: i32, cmd: i32, arg: i32) i64
+// Darwin only; Linux answers -ENOSYS and forks through `clone`.
+fork* = () i64
+
 // Threads. std.sys.sys_thread builds its portable API on these; programs
 // use that (or Env) rather than calling them directly.
 //

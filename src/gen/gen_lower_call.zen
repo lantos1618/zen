@@ -1460,6 +1460,13 @@ intrinsic = (
                     },
                     false => js_runtime_call(lo, id, name, sources, span),
                 }),
+                "std.proc.proc"           => lo.proc_call(
+                    id,
+                    name,
+                    sources,
+                    c,
+                    span
+                ),
                 "std.text.text_string"    => lo.string_call(
                     id,
                     name,
@@ -2164,6 +2171,35 @@ receiver_kind = (lo :: Lowerer, sources: Vec<Source>) str {
         Given(e) => lo.type_of(e).match({ Ok(t) => lo.type_name(t), Err(_) => "" }),
         _        => "",
     })
+}
+
+// std.proc's zg_os_proc_* floor, which std.sys.sys_env implements natively.
+proc_call = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    name    : str,
+    sources : Vec<Source>,
+    c       : Call,
+    span    : Span
+)
+            Res<Value, LowerError> {
+    native: Res<str> = name.match({
+        "zg_os_proc_pipe"  => Ok("proc_pipe"),
+        "zg_os_proc_close" => Ok("proc_close"),
+        "zg_os_proc_spawn" => Ok("proc_spawn"),
+        "zg_os_proc_poll"  => Ok("proc_poll"),
+        "zg_os_proc_read"  => Ok("proc_read"),
+        "zg_os_proc_wait"  => Ok("proc_wait"),
+        "zg_os_proc_kill"  => Ok("proc_kill"),
+        _                  => None,
+    });
+    lo.sys_env_call(
+        id,
+        native.ok_or(unsupported(span, "this std.proc operation")).try(),
+        sources,
+        c,
+        span
+    )
 }
 
 // Call a function of std.sys.sys_env by name.

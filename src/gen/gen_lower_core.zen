@@ -23,6 +23,7 @@
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at } = sema.sema
 { subst, type_from_ast, is_prim, const_int, fits } = sema.sema
+{ Memos, instance_key_of } = sema.sema
 { Pat, PatReading, read_pattern } = sema.sema
 { is_drop_type } = sema.sema_drop
 { Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
@@ -88,6 +89,8 @@ Frame* = {
     // Cleanup scopes open when this frame began; a `.try()` leaving the
     // frame runs every scope above.
     depth* :: usize = 0,
+    // What sema recorded for this instance of a generic body.
+    instance* :: Res<Memos> = None,
 }
 
 // A function body at one instantiation: a free function, or a member of a
@@ -338,7 +341,32 @@ Lowerer* = {
     // has the type of the local this instance bound it to, and a method
     // call on such a receiver has the result type of the method the
     // receiver's type resolves it to.
+    //
+    // Until every instance is published, sema's per-instance answer only
+    // fills in what this path leaves open; a settled answer here wins.
     type_of* = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
+        self.solved_type(id).match({
+            Ok(t)  => self.settled(t).match({
+                true  => Ok(t),
+                false => Ok(self.recorded_type(id).value_or(t)),
+            }),
+            Err(e) => self.recorded_type(id).match({
+                Ok(t) => Ok(t),
+                None  => Err(e),
+            }),
+        })
+    }
+
+    // The settled type sema recorded for this expression at this instance.
+    recorded_type = (self :: @Self, id: ExprId) Res<TyId> {
+        m = self.here().instance.try();
+        t = m.expr_memo.get(id).try();
+        self.settled(t).match({ true => Ok(t), false => None })
+    }
+
+    // The type the lowering works out when sema recorded none for this
+    // instance.
+    solved_type = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
         raw     = self.check.expr_memo.get(id).match({
             Ok(t) => t,
             // Arguments of a call sema could not resolve go unchecked.
@@ -348,10 +376,10 @@ Lowerer* = {
             },
         });
         checked = self.concrete(raw).try();
-        self.settled(checked).match({
-            true  => Ok(checked),
-            false => Ok(self.local_type(id).value_or(checked)),
-        })
+        Ok(self.settled(checked).match({
+            true  => checked,
+            false => self.local_type(id).value_or(checked),
+        }))
     }
 
     local_type = (self :: @Self, id: ExprId) Res<TyId> {
@@ -2869,6 +2897,7 @@ Lowerer* = {
                    self_ty: Res<TyId>, scope: Res<Callee>) Res<usize, LowerError> {
         ret_slot  = self.temp(ret_ty).try().slot;
         ret_block = self.label().try();
+        instance  = self.instance_of(scope, ret_ty).try();
         self.frames.add(Frame(
             inst: inst,
             module: module,
@@ -2877,9 +2906,61 @@ Lowerer* = {
             ret_ty: ret_ty,
             self_ty: self_ty,
             scope: scope,
-            depth: self.scopes.len
+            depth: self.scopes.len,
+            instance: instance
         )).try(LowerError.OutOfMemory);
         Ok(self.frames.len - 1)
+    }
+
+    // The answers sema recorded for the instance a frame lowers.
+    instance_of = (self :: @Self, scope: Res<Callee>, ret_ty: TyId)
+                  Res<Res<Memos>, LowerError> {
+        Ok(self.instance_key_for(scope, ret_ty).try().match({
+            None    => None,
+            Ok(key) => self.check.instance_memos(key),
+        }))
+    }
+
+    instance_key_for = (self :: @Self, scope: Res<Callee>, ret_ty: TyId)
+                       Res<Res<str>, LowerError> {
+        scope.match({
+            None       => Ok(None),
+            Ok(callee) => callee.f.body.match({
+                None  => Ok(None),
+                Ok(b) => {
+                    params ::= self.alloc.Vec<TyId>();
+                    callee.f.params.loop((h, p) {
+                        p.type.when_ok((t) {
+                            params.add(
+                                self.callee_type(callee, t).try()
+                            ).try(LowerError.OutOfMemory);
+                        });
+                    });
+                    owner = self.check.owner_of(
+                        callee.module,
+                        callee.f.name.text
+                    ).try(LowerError.OutOfMemory);
+                    targs ::= self.alloc.Vec<TyId>();
+                    callee.f.tparams.loop((h, tp) {
+                        var = self.check.types.var(
+                            tp.name.text,
+                            owner
+                        ).try(LowerError.OutOfMemory);
+                        targs.add(callee.inst.arg_for(
+                            var
+                        )).try(LowerError.OutOfMemory);
+                    });
+                    key = self.check.instance_key_of(
+                        b,
+                        callee.self_ty,
+                        targs,
+                        params,
+                        ret_ty
+                    ).try(LowerError.OutOfMemory);
+                    Ok(Ok(key))
+                },
+            }),
+        })
     }
 
     // A real function instance for (callee, substitution, Self).

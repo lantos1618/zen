@@ -4,7 +4,7 @@
 // output, traps, exit hooks, page mapping and threads; kernel calls go
 // through libc's `syscall` on Linux and libSystem symbols on macOS. Threads,
 // locks and conditions always use pthreads (`PthreadThreads` is 1). The
-// caller verifies the program and checks `supports` before rendering.
+// caller verifies the program and checks `c_supports` before rendering.
 { Alloc, AllocError } = std.mem
 { String, str } = std.text
 { Vec } = std.collections
@@ -16,38 +16,22 @@
 { IrFeature } = gen.gen_ir_feature
 { Sys, SysConstant, Platform, DarwinResult } = gen.gen_sys
 { linux_x86_64, linux_arm64, darwin_symbol, darwin_result, constant_value } = gen.gen_sys
-{ simplify } = gen.gen_asm_regalloc
-{ reachable_only, ordered } = gen.gen_asm_prepare
-{ reads, written, exit_read } = gen.gen_asm_flow
 
-supports* = (feature: IrFeature) bool {
+c_supports* = (feature: IrFeature) bool {
     feature.match({ Host => false, _ => true })
 }
 
-// Each function is first cleaned up by the passes the native renderers use:
-// unreachable blocks dropped, copies propagated, unread pure values removed,
-// and blocks ordered so most jumps fall through.
 emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
     writer ::= C(
         out: a.String().try(),
         head: a.String().try(),
         location: a.String().try(),
         labels: a.Vec<bool>(),
-        declared: a.Vec<bool>(),
         operands: a.Vec<usize>(),
         layouts: a.Vec<Layout>(),
         symbols: a.Vec<str>()
     );
-    simple ::= a.Vec<Func>();
-    program.functions.loop((function) {
-        simple.add(
-            ordered(
-                a,
-                simplify(a, reachable_only(a, function).try()).try()
-            ).try()
-        ).try();
-    });
-    writer.program(Program(functions: simple, entry: program.entry)).try();
+    writer.program(program).try();
     text ::= a.String().try();
     text.runtime().try();
     text.add(writer.head.view()).try();
@@ -62,8 +46,6 @@ C = {
     head :: String,
     location :: String,
     labels :: Vec<bool>,
-    // Per slot of the function being rendered: whether it is read or written.
-    declared :: Vec<bool>,
     operands :: Vec<usize>,
     layouts :: Vec<Layout>,
     symbols :: Vec<str>,
@@ -142,21 +124,19 @@ C = {
     function = (self :: @Self, index: usize, function: Func) Res<(), AllocError> {
         self.signature(index, function).try();
         self.out.add(" {\n").try();
-        self.slot_uses(function).try();
-        // Zeroed declarations keep C's flow analysis quiet; the verifier has
-        // already proved every read follows a write.
+        // The verifier has proved every read follows a write. Zeroed scalars
+        // keep C's flow analysis quiet at no cost; zeroing every aggregate
+        // would clear the whole frame on each call.
         Range(function.parameters, function.slots.len).loop((i) {
-            self.declared.get(i).value_or(false).then(() {
-                ty = slot_ty(function, i);
-                self.need(ty).try();
-                self.out.add("  ZR_U ").try();
-                self.out.ctype(ty).try();
-                self.out.fmt(" v{} = ", i).try();
-                is_block(ty).match({
-                    true  => self.out.add("{{0}};\n"),
-                    false => self.out.add("0;\n"),
-                }).try();
-            });
+            ty = slot_ty(function, i);
+            self.need(ty).try();
+            self.out.add("  ZR_U ").try();
+            self.out.ctype(ty).try();
+            self.out.fmt(" v{}", i).try();
+            is_block(ty).match({
+                true  => self.out.add(";\n"),
+                false => self.out.add(" = 0;\n"),
+            }).try();
         });
         self.labels.clear();
         function.blocks.loop((_) { self.labels.add(false).try(); });
@@ -186,21 +166,6 @@ C = {
             self.terminator(block.exit, block_id + 1).try();
         });
         self.out.add("}\n")
-    }
-
-    slot_uses = (self :: @Self, function: Func) Res<(), AllocError> {
-        self.declared.clear();
-        function.slots.loop((_) { self.declared.add(false).try(); });
-        function.blocks.loop((block) {
-            block.code.loop((instruction) {
-                self.operands.clear();
-                reads(instruction, self.operands).try();
-                self.operands.loop((slot) { self.declared.set(slot, true); });
-                written(instruction).when_ok((slot) { self.declared.set(slot, true); });
-            });
-            exit_read(block.exit).when_ok((slot) { self.declared.set(slot, true); });
-        });
-        Ok
     }
 
     // `next` is the block rendered after this one; a jump to it falls through.

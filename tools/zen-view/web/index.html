@@ -33,6 +33,7 @@ button.sel{background:#173149;border-color:var(--accent);color:#fff}
 .st.run{background:var(--ok)}.st.idle{background:#3b4656}.st.blocked{background:var(--warn)}.st.failed{background:var(--bad)}.st.stopped{background:#555}
 #topo{padding:0}
 #topo canvas{display:block;width:100%;height:calc(100% - 31px)}
+#topo h2 button{padding:0 6px;font-size:10px}
 #insp .kv{display:grid;grid-template-columns:120px 1fr;padding:3px 10px}
 #insp .kv span:first-child{color:var(--dim)}
 .bar{height:6px;background:#1a2130;border-radius:3px;overflow:hidden;margin:2px 10px 8px}
@@ -50,7 +51,7 @@ td.r,th.r{text-align:right}
 #views{flex:1;overflow:auto;position:relative}
 #views>div{display:none;height:100%}
 #views>div.on{display:block}
-#tl,#sched{width:100%;height:100%;display:block}
+#tl,#sched,#flame{width:100%;height:100%;display:block}
 #empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13px;text-align:center;line-height:1.8}
 </style>
 </head>
@@ -69,11 +70,12 @@ td.r,th.r{text-align:right}
     <button id="btnLive" class="sel" title="follow the end of the trace">live</button></div>
 </header>
 <div class="panel" id="tree"><h2>actors</h2><div id="treeRows"></div></div>
-<div class="panel" id="topo"><h2>topology <span class="dim" id="topoNote"></span></h2><canvas id="topoC"></canvas></div>
+<div class="panel" id="topo"><h2>topology <span class="dim" id="topoNote"></span><span style="float:right"><button id="mTree" class="sel" title="who spawned whom">tree</button> <button id="mGraph" title="who talks to whom">graph</button></span></h2><canvas id="topoC"></canvas></div>
 <div class="panel" id="insp"><h2>inspector</h2><div id="inspBody"><div class="kv"><span>select an actor</span></div></div></div>
 <div class="panel" id="bottom">
   <div id="tabs">
     <button data-v="vTl" class="sel">timeline</button>
+    <button data-v="vFlame">flame</button>
     <button data-v="vMsg">messages</button>
     <button data-v="vSched">scheduler</button>
     <button data-v="vFail">failures</button>
@@ -89,6 +91,7 @@ td.r,th.r{text-align:right}
   </div>
   <div id="views">
     <div id="vTl" class="on"><canvas id="tl"></canvas></div>
+    <div id="vFlame"><canvas id="flame"></canvas></div>
     <div id="vMsg"><table><thead><tr><th>t (ms)</th><th>from</th><th>to</th><th>behaviour</th><th class="r">queued</th><th class="r">ran</th><th>worker</th></tr></thead><tbody id="msgRows"></tbody></table></div>
     <div id="vSched"><canvas id="sched"></canvas></div>
     <div id="vFail"><table><thead><tr><th>t (ms)</th><th>what</th><th>actor</th><th>detail</th></tr></thead><tbody id="failRows"></tbody></table></div>
@@ -101,7 +104,9 @@ td.r,th.r{text-align:right}
 // ---------------------------------------------------------------- trace
 // One event per line: index ns kind from to message (see docs/ACTOR_RUNTIME.md).
 const K = {SEND:1,PARK:2,RELEASE:3,REFUSE:4,TAKE:5,BREAK:6,BLOCK:7,UNBLOCK:8,SLEEP:9,WAKE:10,CLOSED:11,WAIT:12,SPAWN:13,DONE:14,FAIL:15,STOP:16,DROP:17};
-const T = {n:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null};
+// took[i]: for a send or park, when its message was taken (0 while queued).
+const T = {n:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null};
+const queued = new Map();
 const meta = {workers:0, bound:256, names:new Map(), ended:false, lost:0};
 let offset = 0;
 
@@ -110,7 +115,7 @@ function grow(need){
   let cap = Math.max(65536, T.cap * 2); while (cap < need) cap *= 2;
   const re = (A, old) => { const a = new A(cap); if (old) a.set(old.subarray(0, T.n)); return a; };
   T.ns = re(Float64Array, T.ns); T.kind = re(Uint8Array, T.kind); T.from = re(Uint32Array, T.from);
-  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.cap = cap;
+  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.took = re(Float64Array, T.took); T.cap = cap;
 }
 
 function ingest(text){
@@ -122,7 +127,10 @@ function ingest(text){
     const f = line.split(" ");
     if (f.length < 6) continue;
     const i = T.n++;
-    T.ns[i] = +f[1]; T.kind[i] = +f[2]; T.from[i] = +f[3]; T.to[i] = +f[4]; T.msg[i] = +f[5];
+    T.ns[i] = +f[1]; T.kind[i] = +f[2]; T.from[i] = +f[3]; T.to[i] = +f[4]; T.msg[i] = +f[5]; T.took[i] = 0;
+    const k = T.kind[i];
+    if (k === K.SEND || k === K.PARK) queued.set(T.msg[i], i);
+    else if (k === K.TAKE || k === K.REFUSE || k === K.CLOSED || k === K.DROP){ const s = queued.get(T.msg[i]); if (s !== undefined){ T.took[s] = T.ns[i]; queued.delete(T.msg[i]); } }
   }
 }
 
@@ -138,7 +146,7 @@ function header(line){
 let M;
 function fresh(){
   return {upto:0, actors:new Map(), edges:new Map(), pending:new Map(), running:new Map(),
-          workers:[], bars:[], msgs:[], fails:[], latency:[], done:0};
+          workers:[], bars:[], msgs:[], fails:[], latency:[], done:0, cause:new Map(), turnId:0};
 }
 function actor(i){
   let a = M.actors.get(i);
@@ -164,7 +172,9 @@ function apply(upto){
       if (k === K.SEND) a.mail++; else a.parked++;
       const key = from + ">" + to, e = M.edges.get(key) || {from, to, n:0};
       e.n++; M.edges.set(key, e);
-      M.pending.set(m, {t, from}); a.last = t; break; }
+      M.pending.set(m, {t, from}); a.last = t;
+      if (from){ for (const r of M.running.values()) if (r.actor === from){ M.cause.set(m, r); break; } }
+      break; }
     case K.RELEASE: { const a = actor(to); a.parked = Math.max(0, a.parked - 1); a.mail++; break; }
     case K.REFUSE: { const a = actor(to); a.parked = Math.max(0, a.parked - 1); M.pending.delete(m);
       keep(M.fails, {t, what:"refused", actor:to, detail:"parked send from " + label(from) + " dropped: receiver stopped"}, MAX_KEEP); break; }
@@ -174,7 +184,8 @@ function apply(upto){
       const a = actor(to); a.mail = Math.max(0, a.mail - 1);
       const p = M.pending.get(m); M.pending.delete(m);
       const q = p ? t - p.t : 0;
-      M.running.set(from, {t, actor:to, q, src:p ? p.from : 0});
+      const parent = M.cause.get(m); M.cause.delete(m);
+      M.running.set(from, {t, actor:to, q, src:p ? p.from : 0, id:++M.turnId, parent:parent || null, depth:parent ? parent.depth + 1 : 0});
       keep(a.q, q, SAMPLE); keep(M.latency, {t, q}, 4096);
       worker(from).busyFrom = t; break; }
     case K.DONE: case K.FAIL: {
@@ -182,7 +193,7 @@ function apply(upto){
       const a = actor(to), start = r ? r.t : t, dur = t - start, name = nameOf(m);
       if (!a.type) a.type = typeOf(m);
       a.turns++; a.busy += dur; keep(a.run, dur, SAMPLE); M.done++;
-      const rec = {t0:start, t1:t, from:r ? r.src : 0, to, name, q:r ? r.q : 0, dur, w:from, failed:k === K.FAIL};
+      const rec = {t0:start, t1:t, from:r ? r.src : 0, to, name, q:r ? r.q : 0, dur, w:from, failed:k === K.FAIL, depth:r ? r.depth : 0};
       keep(M.msgs, rec, MAX_KEEP); keep(a.recent, rec, 50); keep(M.bars, rec, MAX_KEEP * 2);
       const w = worker(from); keep(w.spans, [start, t, to], 4000); w.busyFrom = -1;
       if (k === K.FAIL){ a.failed = true; keep(M.fails, {t, what:"failed", actor:to, detail:name + " trapped"}, MAX_KEEP); }
@@ -298,7 +309,7 @@ function renderTree(rows){
   $("treeRows").innerHTML = html + (rows.length > 1500 ? `<div class="row dim">+${rows.length - 1500} more</div>` : "");
 }
 
-let nodes = [];
+let nodes = [], topoMode = "tree";
 function renderTopo(rows){
   const [g, W, H] = fit($("topoC")); g.clearRect(0, 0, W, H);
   if (!rows.length) return;
@@ -310,15 +321,28 @@ function renderTopo(rows){
     shown = rows.filter(r => keepSet.has(r[0].i));
     $("topoNote").textContent = `· busiest ${shown.length} of ${rows.length}`;
   } else $("topoNote").textContent = "";
-  const cols = new Map();
-  shown.forEach(([a, d]) => { if (!cols.has(d)) cols.set(d, []); cols.get(d).push(a); });
-  nodes = []; const pos = new Map(), nw = 112, nh = 30;
+  nodes = []; const pos = new Map(), nw = 112;
+  let nh = 30;
   const put = (a, x, y) => { pos.set(a.i, [x, y]); nodes.push({a, x, y, w:nw, h:nh}); };
-  const fits = [...cols.values()].every(l => l.length * (nh + 8) <= H - 20);
-  if (fits){
-    const colW = Math.max(nw + 60, (W - 40) / cols.size);
-    for (const [d, list] of cols){ const step = (H - 20) / list.length;
-      list.forEach((a, j) => put(a, 20 + d * colW, 10 + j * step + (step - nh) / 2)); }
+  if (topoMode === "tree"){
+    // Tidy tree: leaves take rows in order, a parent sits beside the middle of its children.
+    const keepSet = new Set(shown.map(r => r[0].i)), kids = a => a.kids.filter(k => keepSet.has(k)).sort((x, y) => x - y);
+    const roots = shown.filter(r => r[1] === 0).map(r => r[0]);
+    const leaves = shown.filter(r => !kids(r[0]).length).length + 1, depth = Math.max(...shown.map(r => r[1])) + 2;
+    const rowH = Math.min(44, (H - 20) / leaves); nh = Math.max(12, Math.min(30, rowH - 4));
+    const colW = Math.min(230, Math.max(nw + 40, (W - 40 - nw) / Math.max(1, depth - 1)));
+    let row = 0;
+    const place = (a, d) => { const ks = kids(a); let y;
+      if (!ks.length) y = 10 + (row++) * rowH; else { const ys = ks.map(k => place(M.actors.get(k), d + 1)); y = (ys[0] + ys[ys.length - 1]) / 2; }
+      put(a, 20 + (d + 1) * colW, y); return y; };
+    const ys = roots.map(a => place(a, 0));
+    // The program's main thread spawned the roots.
+    const main = {i:0, kids:[], type:"", mail:0, parked:0, stop:-1, failed:false, blocked:false};
+    put(main, 20, ys.length ? (ys[0] + ys[ys.length - 1]) / 2 : H / 2);
+    g.strokeStyle = "rgba(160,170,190,.35)"; g.lineWidth = 1;
+    for (const n of nodes){ const pa = n.a.i ? (M.actors.get(n.a.i).parent || 0) : -1; const p = pa >= 0 ? pos.get(pa) : null; if (!p) continue;
+      const x1 = p[0] + nw, y1 = p[1] + nh / 2, x2 = n.x, y2 = n.y + nh / 2, mx = (x1 + x2) / 2;
+      g.beginPath(); g.moveTo(x1, y1); g.lineTo(mx, y1); g.lineTo(mx, y2); g.lineTo(x2, y2); g.stroke(); }
   } else {
     // Too many siblings for a column: spawners in the middle, the rest on a ring.
     const hubs = shown.filter(r => r[0].kids.length).map(r => r[0]), ring = shown.map(r => r[0]).filter(a => !a.kids.length);
@@ -333,24 +357,53 @@ function renderTopo(rows){
     const r = rates.get(e.from + ">" + e.to) || 0, hot = e.from === selected || e.to === selected;
     g.strokeStyle = r > 0 ? (hot ? "rgba(76,194,255,.95)" : "rgba(76,194,255,.45)") : "rgba(120,130,150,.18)";
     g.lineWidth = 1 + 3 * Math.sqrt(e.n / maxN);
-    const x1 = p[0] + nw / 2, y1 = p[1] + nh / 2, x2 = q[0] + nw / 2, y2 = q[1] + nh / 2;
+    const c = curve(p, q, nw, nh);
+    if (topoMode === "tree" && r === 0 && !hot) continue;
     g.beginPath();
-    if (e.from === e.to){ g.arc(x1 + nw / 2, p[1], 8, 0, Math.PI * 2); }
-    else { const mx = (x1 + x2) / 2 + (y2 - y1) * .15, my = (y1 + y2) / 2 - (x2 - x1) * .15; g.moveTo(x1, y1); g.quadraticCurveTo(mx, my, x2, y2); }
+    if (e.from === e.to){ g.arc(c[0] + nw / 2, p[1], 8, 0, Math.PI * 2); }
+    else { g.moveTo(c[0], c[1]); g.quadraticCurveTo(c[2], c[3], c[4], c[5]); }
     g.stroke();
+    const x1 = c[0], y1 = c[1], x2 = c[4], y2 = c[5];
     if (r > 0 && (hot || shown.length < 25)){ g.fillStyle = "#8fd8ff"; g.font = "10px ui-monospace,monospace";
       g.fillText(Math.round(r) + "/s", (x1 + x2) / 2 - 12, (y1 + y2) / 2 - 4); }
   }
+  dots(g, pos, nw, nh);
   for (const n of nodes){
-    const a = n.a, s = status(a);
+    const a = n.a, s = n.a.i ? status(a) : "idle";
     g.fillStyle = a.i === selected ? "#173149" : "#151b26"; g.strokeStyle = {run:"#3fb950", blocked:"#d29922", failed:"#f85149", stopped:"#444", idle:"#2a3444"}[s];
     g.lineWidth = a.i === selected ? 2 : 1;
     g.beginPath(); g.roundRect(n.x, n.y, n.w, n.h, 5); g.fill(); g.stroke();
     g.fillStyle = s === "stopped" ? "#666" : "#e6edf3"; g.font = "11px ui-monospace,monospace";
-    g.fillText(label(a.i).slice(0, 15), n.x + 7, n.y + 13);
+    g.fillText(label(a.i).slice(0, 15), n.x + 7, n.y + Math.min(13, n.h - 2));
+    if (n.h < 24) continue;
     const fill = Math.min(1, (a.mail + a.parked) / meta.bound);
     g.fillStyle = "#1f2633"; g.fillRect(n.x + 7, n.y + 20, n.w - 14, 4);
     g.fillStyle = fill > .8 ? "#f85149" : fill > .5 ? "#d29922" : "#4cc2ff"; g.fillRect(n.x + 7, n.y + 20, (n.w - 14) * fill, 4);
+  }
+}
+
+// Message edges bow to one side so a pair's two directions don't overlap.
+function curve(p, q, nw, nh){
+  const x1 = p[0] + nw / 2, y1 = p[1] + nh / 2, x2 = q[0] + nw / 2, y2 = q[1] + nh / 2;
+  return [x1, y1, (x1 + x2) / 2 + (y2 - y1) * .2, (y1 + y2) / 2 - (x2 - x1) * .2, x2, y2];
+}
+// One dot per message in flight at the cursor: it leaves the sender when sent
+// and reaches the receiver when a worker takes it.
+const MAX_DOTS = 600;
+function dots(g, pos, nw, nh){
+  const now = cursorNs, look = Math.max(windowNs() / 4, 1e6), lo = indexAt(now - look), hi = indexAt(now);
+  let n = 0;
+  for (let i = hi - 1; i >= lo && n < MAX_DOTS; i--){
+    const k = T.kind[i]; if (k !== K.SEND && k !== K.PARK) continue;
+    const p = pos.get(T.from[i]), q = pos.get(T.to[i]); if (!p || !q || T.from[i] === T.to[i]) continue;
+    const t0 = T.ns[i], t1 = T.took[i] || now + 1;
+    if (t1 < now) continue;
+    // Queue time is long next to travel: show the wait as the dot easing in.
+    const f = Math.min(1, (now - t0) / Math.max(1, Math.min(t1 - t0, look))), c = curve(p, q, nw, nh), u = 1 - f;
+    const x = u * u * c[0] + 2 * u * f * c[2] + f * f * c[4], y = u * u * c[1] + 2 * u * f * c[3] + f * f * c[5];
+    const hot = T.from[i] === selected || T.to[i] === selected;
+    g.fillStyle = k === K.PARK ? "#d29922" : hot ? "#ffffff" : "#8fd8ff";
+    g.beginPath(); g.arc(x, y, hot ? 3 : 2.2, 0, Math.PI * 2); g.fill(); n++;
   }
 }
 
@@ -385,7 +438,8 @@ function oldestFor(i){
 }
 
 // While playing, the lanes show the last few wall-clock seconds of trace time.
-function windowNs(){ return Math.max(1e6, Math.min(endNs(), playing ? speed * 4e9 : 200e6)); }
+let zoom = 1;
+function windowNs(){ return Math.max(2e4, zoom * Math.min(endNs(), playing ? speed * 4e9 : 200e6)); }
 
 function renderTimeline(rows){
   const [g, W, H] = fit($("tl")); g.clearRect(0, 0, W, H);
@@ -403,6 +457,28 @@ function renderTimeline(rows){
     if (xb - xa > 50){ g.fillStyle = "#0b0e14"; g.fillText(b.name.split(".").pop(), xa + 3, y + 11); }
   }
   g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(1) + " ms", x(t) - 16, 11); }
+}
+
+// Causality flame chart: x is time, a turn sits one row under the turn whose
+// send caused it, so a stack is a chain of messages.
+let flameBars = [];
+function renderFlame(){
+  const [g, W, H] = fit($("flame")); g.clearRect(0, 0, W, H);
+  const span = windowNs(), t1 = cursorNs, t0 = t1 - span, x = t => (t - t0) / span * W, rowH = 16;
+  g.font = "10px ui-monospace,monospace"; flameBars = [];
+  const hues = new Map(); let hue = 0;
+  for (const b of M.bars){
+    if (b.t1 < t0 || b.t0 > t1) continue;
+    const y = H - 18 - (b.depth + 1) * rowH; if (y < 14) continue;
+    const xa = Math.max(0, x(b.t0)), xb = Math.max(xa + 1, x(b.t1));
+    const ty = (M.actors.get(b.to) || {}).type || "";
+    if (!hues.has(ty)) hues.set(ty, (hue += 67) % 360);
+    g.fillStyle = b.failed ? "#f85149" : `hsl(${hues.get(ty)},55%,${b.to === selected ? 62 : 44}%)`;
+    g.fillRect(xa, y, xb - xa - .5, rowH - 1); flameBars.push([xa, y, xb, b]);
+    if (xb - xa > 60){ g.fillStyle = "#0b0e14"; g.fillText((label(b.to) + " " + b.name.split(".").pop()).slice(0, Math.floor((xb - xa) / 6.2)), xa + 3, y + 11); }
+  }
+  g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(2) + " ms", Math.min(W - 60, x(t)), H - 4); }
+  g.fillText("each bar is a turn; the bar under it is the turn whose send caused it · wheel to zoom", 6, 11);
 }
 
 function renderSched(){
@@ -436,7 +512,7 @@ function render(){
   if (!selected && M.actors.size) selected = [...M.actors.keys()][0];
   const rows = order();
   renderHeader(); renderTree(rows); renderTopo(rows); renderInspector();
-  if (view === "vTl") renderTimeline(rows); else if (view === "vSched") renderSched(); else renderTables();
+  if (view === "vTl") renderTimeline(rows); else if (view === "vSched") renderSched(); else if (view === "vFlame") renderFlame(); else renderTables();
   $("tCursor").textContent = "t = " + (cursorNs / 1e6).toFixed(2) + " ms";
   const span = endNs() - startNs();
   $("scrub").value = live ? 1000 : span > 0 ? Math.round(1000 * (cursorNs - startNs()) / span) : 0;
@@ -445,7 +521,7 @@ function render(){
 // ---------------------------------------------------------------- input
 $("treeRows").onclick = e => { const r = e.target.closest(".row"); if (r && r.dataset.i){ selected = +r.dataset.i; dirty = true; } };
 $("topoC").onclick = e => { const b = e.target.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
-  const n = nodes.find(n => x >= n.x && x <= n.x + n.w && y >= n.y && y <= n.y + n.h); if (n){ selected = n.a.i; dirty = true; } };
+  const n = nodes.find(n => x >= n.x && x <= n.x + n.w && y >= n.y && y <= n.y + n.h); if (n && n.a.i){ selected = n.a.i; dirty = true; } };
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("sel", x === b));
   document.querySelectorAll("#views>div").forEach(v => v.classList.toggle("on", v.id === b.dataset.v));
@@ -464,6 +540,13 @@ $("btnStart").onclick = () => { goLive(false); cursorNs = startNs(); lastWall = 
 $("speed").onchange = e => { speed = +e.target.value; dirty = true; };
 addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT"){ e.preventDefault(); setPlaying(!playing); } });
 addEventListener("resize", () => dirty = true);
+// Wheel over the lanes zooms the time window.
+for (const id of ["tl", "sched", "flame"]) $(id).addEventListener("wheel", e => { e.preventDefault();
+  zoom = Math.min(4, Math.max(1e-4, zoom * (e.deltaY > 0 ? 1.25 : 0.8))); dirty = true; }, {passive:false});
+for (const [id, mode] of [["mTree", "tree"], ["mGraph", "graph"]]) $(id).onclick = () => { topoMode = mode;
+  $("mTree").classList.toggle("sel", mode === "tree"); $("mGraph").classList.toggle("sel", mode === "graph"); dirty = true; };
+$("flame").onclick = e => { const b = e.target.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+  const hit = flameBars.find(([xa, ya, xb]) => x >= xa && x <= xb && y >= ya && y <= ya + 16); if (hit){ selected = hit[3].to; dirty = true; } };
 
 // ---------------------------------------------------------------- polling
 let dirty = true, polling = false;
@@ -472,7 +555,7 @@ async function poll(){
   try {
     const r = await fetch("/trace?from=" + offset, {cache:"no-store"});
     const start = +(r.headers.get("X-Trace-Start") || 0), text = await r.text();
-    if (start !== offset){ T.n = 0; offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
+    if (start !== offset){ T.n = 0; queued.clear(); offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
     if (text.length){ ingest(text); offset += new TextEncoder().encode(text).length; dirty = true; }
     $("liveDot").classList.toggle("on", !meta.ended);
     $("liveText").textContent = meta.ended ? "program exited" : "running";

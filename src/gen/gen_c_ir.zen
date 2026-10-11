@@ -108,11 +108,19 @@ C = {
         self.out.ctype(function.result).try();
         self.out.fmt(" zf{}(", index).try();
         (function.parameters == 0).then(() { self.out.add("void").try(); });
+        // A body lowered to traps alone never reads its parameters, though
+        // the source did, and a unit parameter carries nothing to read; only
+        // a returning body's unused data parameter is a warning.
+        stub = function.blocks.find((block) {
+            block.exit.match({ Return(_) => true, _ => false })
+        }).match({ Ok(_) => false, None => true });
         Range(0, function.parameters).loop((i) {
             ty = slot_ty(function, i);
             self.need(ty).try();
             (i > 0).then(() { self.out.add(", ").try(); });
-            self.out.add("ZR_U ").try();
+            (stub || ty.match({ Unit => true, _ => false })).then(() {
+                self.out.add("ZR_U ").try();
+            });
             self.out.ctype(ty).try();
             self.by_pointer(index, i).match({
                 true  => self.out.fmt(" *zp{}", i),

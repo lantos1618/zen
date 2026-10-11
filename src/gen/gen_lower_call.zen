@@ -1924,6 +1924,10 @@ pointer_call = (
             receiver = lo.expr(sources.source_expr(0, span).try()).try();
             elem     = lo.pointee(receiver.ty).try();
             (!(lo.is_unit(elem) && moves_element(name))).ensure(unsupported(span, "reading, writing, or shifting a Ptr<()>")).try();
+            // Copying a Drop owner is refused where only an instance knows
+            // the element; the legacy C backend reports it.
+            copies = name.is_in(["read", "copy_from"]);
+            (!(copies && lo.check.contains_drop(elem).try(LowerError.OutOfMemory))).ensure(unsupported(span, "copying a Drop owner through Ptr")).try();
             stride = lo.element_size(elem).try();
             name.match({
                 "read"      => {

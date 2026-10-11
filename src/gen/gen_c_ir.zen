@@ -704,20 +704,43 @@ C = {
                 value.out,
                 value.slot
             ),
-            LoadValue(value)    => self.out.fmt(
-                "  memcpy(&v{}, (const void *)(uintptr_t)(v{} + {}u), sizeof v{});\n",
-                value.out,
-                value.base,
-                value.offset,
-                value.out
-            ),
-            StoreValue(value)   => self.out.fmt(
-                "  memcpy((void *)(uintptr_t)(v{} + {}u), &v{}, sizeof v{});\n",
-                value.base,
-                value.offset,
-                value.value,
-                value.value
-            ),
+            LoadValue(value)    => is_block(slot_ty(f, value.out)).match({
+                true  => self.out.fmt(
+                    "  memcpy(&v{}, (const void *)(uintptr_t)(v{} + {}u), sizeof v{});\n",
+                    value.out,
+                    value.base,
+                    value.offset,
+                    value.out
+                ),
+                false => {
+                    self.out.fmt("  v{} = *(const za_", value.out).try();
+                    ctype(self.out, slot_ty(f, value.out)).try();
+                    self.out.fmt(
+                        " *)(uintptr_t)(v{} + {}u);\n",
+                        value.base,
+                        value.offset
+                    )
+                },
+            }),
+            StoreValue(value)   => is_block(slot_ty(f, value.value)).match({
+                true  => self.out.fmt(
+                    "  memcpy((void *)(uintptr_t)(v{} + {}u), &v{}, sizeof v{});\n",
+                    value.base,
+                    value.offset,
+                    value.value,
+                    value.value
+                ),
+                false => {
+                    self.out.add("  *(za_").try();
+                    ctype(self.out, slot_ty(f, value.value)).try();
+                    self.out.fmt(
+                        " *)(uintptr_t)(v{} + {}u) = v{};\n",
+                        value.base,
+                        value.offset,
+                        value.value
+                    )
+                },
+            }),
             CopyBytes(value)    => self.out.fmt(
                 "  memmove((void *)(uintptr_t)v{}, (const void *)(uintptr_t)v{}, (size_t)v{});\n",
                 value.dest,
@@ -1356,6 +1379,17 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("#include <sys/syscall.h>\n").try();
     out.add("#endif\n").try();
     out.add("#define ZR_U __attribute__((unused))\n").try();
+    // Scalar loads and stores through an address use these may_alias,
+    // byte-aligned spellings: a plain move even unoptimized, and still
+    // defined under strict aliasing. GCC ignores may_alias on a typedef of
+    // an already defined struct, so blocks keep memcpy.
+    ["int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "int64_t", "uint64_t", "double"].loop((name) {
+        out.fmt(
+            "typedef {} __attribute__((may_alias, aligned(1))) za_{};\n",
+            name,
+            name
+        ).try();
+    });
     out.add(
         "#ifdef __OPTIMIZE__\n#define ZR_Z = 0\n#else\n#define ZR_Z\n#endif\n"
     ).try();

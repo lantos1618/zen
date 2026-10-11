@@ -1,12 +1,18 @@
 c evaluation true
 c literal bytes true
 c shadow true
+c str overloads true
+c match discard true
 js evaluation true
 js literal bytes true
 js shadow true
+js str overloads true
+js match discard true
 asm evaluation true
 asm literal bytes true
 asm shadow true
+asm str overloads true
+asm match discard true
 c literal paths true
 js wide true
 js literal width true

@@ -183,6 +183,23 @@ main = (env: Env) Res<AllocError> {
             backend.stable_name(),
             run(env, a, backend, "shadow.zen", "", 42).try()
         );
+        println(
+            "{} str overloads {}",
+            backend.stable_name(),
+            run(
+                env,
+                a,
+                backend,
+                "str_overloads.zen",
+                "false true\n1\ntrue\n",
+                0
+            ).try()
+        );
+        println(
+            "{} match discard {}",
+            backend.stable_name(),
+            run(env, a, backend, "match_discard.zen", "7 0\n", 0).try()
+        );
     });
     a        = env.mem.alloc();
     expected = c_literal_output(a).try();

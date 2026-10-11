@@ -2576,6 +2576,7 @@ Lowerer* = {
                 reading.root,
                 arm.pattern,
                 subject,
+                false,
                 read
             ).try();
             value = self.expr_as(arm.body, ty).try();
@@ -2808,14 +2809,19 @@ Lowerer* = {
     // Binders come from the reading too: a wildcard with a name binds the
     // whole subject, a constructor binds inside its payload. A payload is
     // read only when something beneath it binds.
+    // A `fresh` subject is a payload read made for this arm, which a
+    // binder takes without another copy.
     bind_pattern = (self :: @Self, reading: PatReading, at: usize, node: PatternId,
-                    subject: Value, read :: Vec<TestedPayload>) Res<LowerError> {
+                    subject: Value, fresh: bool, read :: Vec<TestedPayload>) Res<LowerError> {
         p = reading.pats.at(at);
         p.kind.match({
             WildPat => p.binder.is_empty().match({
                 true  => Ok,
                 false => {
-                    copy = self.copy_value(subject).try();
+                    copy = fresh.match({
+                        true  => subject,
+                        false => self.copy_value(subject).try(),
+                    });
                     self.bind_local(p.binder, LocalKind.Direct(copy))
                 },
             }),
@@ -2834,6 +2840,7 @@ Lowerer* = {
                         p.sub,
                         self.sub_node(node, p),
                         payload,
+                        true,
                         read
                     )
                 },

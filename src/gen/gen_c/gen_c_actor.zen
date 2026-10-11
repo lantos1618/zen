@@ -421,7 +421,15 @@ write_turn = (
     ).try();
     Range(2, sig.len).loop((h, i) {
         be.check.actor_byte_buffer(sig.ty_at(i)).then(() {
-            be.write_buffer_move(i - 2, sig.ty_at(i), context_ty, body).try();
+            be.check.lends_parameter(hit.f, i).try().match({
+                true  => be.write_buffer_lend(i - 2, body),
+                false => be.write_buffer_move(
+                    i - 2,
+                    sig.ty_at(i),
+                    context_ty,
+                    body
+                ),
+            }).try();
         });
     });
     // The context and message live for the whole call, so a borrowed
@@ -1292,6 +1300,27 @@ write_buffer_move = (
     body.fmt(
         "        {}.{data} = bytes; {}.{capacity} = {}.{len}; {}.{allocator} = zg_ctx->{allocator};\n    }}\n",
         field.view(),
+        field.view(),
+        field.view(),
+        field.view()
+    )
+}
+
+// A byte buffer the behaviour only reads scalars through (`lends_parameter`)
+// stays in the message, which the runtime frees when the turn ends. Nothing
+// grows it or keeps it, so it needs no copy in the actor's arena.
+write_buffer_lend = (
+    be   :: CBackend,
+    arg  : usize,
+    body :: String
+) Res<AllocError> {
+    capacity  = be.actor_field("capacity").try();
+    len       = be.actor_field("len").try();
+    allocator = be.actor_field("alloc").try();
+    field ::= be.alloc.String("zg_msg->zg_arg").try();
+    field.write_usize(arg).try();
+    body.fmt(
+        "    {}.{capacity} = {}.{len}; {}.{allocator} = zg_ctx->{allocator};\n",
         field.view(),
         field.view(),
         field.view()

@@ -1,4 +1,4 @@
-{ Ast, ExprId, TypeId, BlockId } = std.ast
+{ Ast, ExprId, TypeId, BlockId, Function } = std.ast
 { Span } = std.source
 { nowhere } = std.source
 { BinOp, Unary, Binary, Access, TParam } = std.ast
@@ -19,7 +19,7 @@
 { NumericConversion, IntegerBitOperation } = sema.sema_numeric
 { Primitive } = sema.sema_prim
 { Printer, IO_MODULE, printer_named } = sema.sema_print
-{ OwnCheck, StoreEffects } = sema.sema_store
+{ OwnCheck, StoreEffects, parameter_lent } = sema.sema_store
 { owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer } = sema.sema_copy
 { decl_at } = sema.sema_def
 { ref_converts } = sema.sema_bound
@@ -361,6 +361,13 @@ Checker* = {
     // `ty` is the one container a mailbox transfers by ownership: `Vec<u8>`.
     actor_byte_buffer* = (self: @Self, ty: TyId) bool {
         self.mailbox_byte_buffer(ty)
+    }
+
+    // `f` only reads scalars through its `parameter`th argument, so an
+    // actor turn may leave a received buffer in its message.
+    lends_parameter* = (self :: @Self, f: Function, parameter: usize)
+                       Res<bool, AllocError> {
+        parameter_lent(self, f, parameter)
     }
 
     mark_discriminant_call* = (

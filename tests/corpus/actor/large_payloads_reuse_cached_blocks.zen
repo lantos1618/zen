@@ -1,0 +1,44 @@
+// Payloads above the largest size class come from cached large blocks once
+// earlier ones are freed. Every reused block must carry only its own bytes.
+
+{ Res, Ok, IoError, loop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ String, str } = std.text
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+
+Check = { got :: usize = 0, bad :: usize = 0 }
+
+Check.impl(Actor, {
+    block = (self :: @Self, ctx: Context, fill: u8, bytes: str) {
+        i :: usize = 0;
+        loop(() { i < bytes.len }, (h) {
+            (bytes.ptr().read(i) != fill).then(() { self.bad = self.bad + 1; });
+            i = i + 1;
+        });
+        self.got = self.got + 1;
+        (self.got == 300).then(() {
+            ctx.env.out.println("large {} bad {}", self.got, self.bad).ignore();
+        });
+    }
+})
+
+Error = AllocError | IoError | ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    check = env.spawn(Check()).try();
+    arena ::= env.mem.alloc();
+    k     :: usize = 0;
+    loop(() { k < 300 }, (h) {
+        fill = (k % 251 + 1).to_u8().value_or(1);
+        text ::= arena.String().try();
+        n    :: usize = 20000;
+        (k % 3 == 1).then(() { n = 70000; });
+        (k % 3 == 2).then(() { n = 300000; });
+        j :: usize = 0;
+        loop(() { j < n }, (h2) { text.add(fill).try(); j = j + 1; });
+        check.block(fill, text.view()).try();
+        k = k + 1;
+    });
+    Ok(0)
+}

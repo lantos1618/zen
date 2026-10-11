@@ -1132,7 +1132,7 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("static __thread uint64_t zr_word;\n").try();
     out.add("static __thread jmp_buf *zr_guard;\n").try();
     out.add(
-        "static inline void zr_write_all(int fd, const unsigned char *p, size_t n) {\n"
+        "static inline ZR_U void zr_write_all(int fd, const unsigned char *p, size_t n) {\n"
     ).try();
     out.add("  while (n > 0) {\n").try();
     out.add("    ssize_t w = write(fd, p, n);\n").try();
@@ -1142,13 +1142,13 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  }\n").try();
     out.add("}\n").try();
     out.add(
-        "static inline void zr_flush_held(void) { zr_write_all(1, zr_out_buf, zr_out_len); zr_out_len = 0; }\n"
+        "static inline ZR_U void zr_flush_held(void) { zr_write_all(1, zr_out_buf, zr_out_len); zr_out_len = 0; }\n"
     ).try();
     out.add(
-        "static inline void zr_flush(void) { pthread_mutex_lock(&zr_out_lock); zr_flush_held(); pthread_mutex_unlock(&zr_out_lock); }\n"
+        "static inline ZR_U void zr_flush(void) { pthread_mutex_lock(&zr_out_lock); zr_flush_held(); pthread_mutex_unlock(&zr_out_lock); }\n"
     ).try();
     out.add(
-        "static inline void zr_write(int fd, uint64_t data, uint64_t len) {\n"
+        "static inline ZR_U void zr_write(int fd, uint64_t data, uint64_t len) {\n"
     ).try();
     out.add(
         "  const unsigned char *p = (const unsigned char *)(uintptr_t)data;\n"
@@ -1169,15 +1169,17 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  pthread_mutex_unlock(&zr_out_lock);\n").try();
     out.add("}\n").try();
     out.add(
-        "static inline void zr_text(int fd, const char *s, size_t n) { zr_write(fd, (uint64_t)(uintptr_t)s, n); }\n"
+        "static inline ZR_U void zr_text(int fd, const char *s, size_t n) { zr_write(fd, (uint64_t)(uintptr_t)s, n); }\n"
     ).try();
     out.add(
-        "static inline void zr_print_i(int fd, int64_t v) { char b[32]; int n = snprintf(b, sizeof b, \"%\" PRId64, v); zr_text(fd, b, (size_t)n); }\n"
+        "static inline ZR_U void zr_print_i(int fd, int64_t v) { char b[32]; int n = snprintf(b, sizeof b, \"%\" PRId64, v); zr_text(fd, b, (size_t)n); }\n"
     ).try();
     out.add(
-        "static inline void zr_print_u(int fd, uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, \"%\" PRIu64, v); zr_text(fd, b, (size_t)n); }\n"
+        "static inline ZR_U void zr_print_u(int fd, uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, \"%\" PRIu64, v); zr_text(fd, b, (size_t)n); }\n"
     ).try();
-    out.add("static inline void zr_print_f(int fd, double v) {\n").try();
+    out.add(
+        "static inline ZR_U ZR_U void zr_print_f(int fd, double v) {\n"
+    ).try();
     out.add("  char b[64];\n").try();
     out.add("  if (isnan(v)) { zr_text(fd, \"nan\", 3); return; }\n").try();
     out.add(
@@ -1187,7 +1189,7 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  zr_text(fd, b, (size_t)n);\n").try();
     out.add("}\n").try();
     out.add(
-        "static inline __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {\n"
+        "static inline ZR_U __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {\n"
     ).try();
     out.add("  zr_flush();\n").try();
     out.add("  zr_write_all(2, (const unsigned char *)where, n);\n").try();
@@ -1195,7 +1197,7 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  _exit(134);\n").try();
     out.add("}\n").try();
     out.add(
-        "static inline __attribute__((noreturn)) void zr_exit(int status) {\n"
+        "static inline ZR_U __attribute__((noreturn)) void zr_exit(int status) {\n"
     ).try();
     out.add(
         "  if (zr_globals[0]) ((void (*)(void))(uintptr_t)zr_globals[0])();\n"
@@ -1203,7 +1205,9 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  zr_flush();\n").try();
     out.add("  _exit(status);\n").try();
     out.add("}\n").try();
-    out.add("static inline uint64_t zr_map(uint64_t bytes) {\n").try();
+    out.add(
+        "static inline ZR_U ZR_U uint64_t zr_map(uint64_t bytes) {\n"
+    ).try();
     out.add(
         "  void *p = mmap(0, (size_t)bytes + 16, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n"
     ).try();
@@ -1211,42 +1215,46 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  *(uint64_t *)p = bytes + 16;\n").try();
     out.add("  return (uint64_t)(uintptr_t)p + 16;\n").try();
     out.add("}\n").try();
-    out.add("static inline void zr_unmap(uint64_t at) {\n").try();
+    out.add("static inline ZR_U ZR_U void zr_unmap(uint64_t at) {\n").try();
     out.add("  if (!at) return;\n").try();
     out.add("  void *p = (void *)(uintptr_t)(at - 16);\n").try();
     out.add("  munmap(p, (size_t)*(uint64_t *)p);\n").try();
     out.add("}\n").try();
     out.add(
-        "static inline int64_t zr_lerr(long r) { return r == -1 ? -(int64_t)errno : (int64_t)r; }\n"
+        "static inline ZR_U int64_t zr_lerr(long r) { return r == -1 ? -(int64_t)errno : (int64_t)r; }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_derr(int64_t r) { return r == -1 ? -(int64_t)errno : r; }\n"
+        "static inline ZR_U int64_t zr_derr(int64_t r) { return r == -1 ? -(int64_t)errno : r; }\n"
     ).try();
     out.add(
-        "static inline double zr_f64(uint64_t bits) { double d; memcpy(&d, &bits, sizeof d); return d; }\n"
+        "static inline ZR_U double zr_f64(uint64_t bits) { double d; memcpy(&d, &bits, sizeof d); return d; }\n"
     ).try();
     out.add(
-        "static inline uint64_t zr_shl(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a << c; }\n"
+        "static inline ZR_U uint64_t zr_shl(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a << c; }\n"
     ).try();
     out.add(
-        "static inline uint64_t zr_shr(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a >> c; }\n"
+        "static inline ZR_U uint64_t zr_shr(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a >> c; }\n"
     ).try();
     out.add(
-        "static inline uint64_t zr_rotr(uint64_t a, uint64_t c, unsigned bits) {\n"
+        "static inline ZR_U uint64_t zr_rotr(uint64_t a, uint64_t c, unsigned bits) {\n"
     ).try();
     out.add("  c %= bits;\n").try();
     out.add("  if (c == 0) return a;\n").try();
     out.add("  return (a >> c) | (a << (bits - c));\n").try();
     out.add("}\n").try();
-    out.add("static inline void *zr_thread_main(void *block) {\n").try();
+    out.add(
+        "static inline ZR_U ZR_U void *zr_thread_main(void *block) {\n"
+    ).try();
     out.add("  uint64_t *w = block;\n").try();
     out.add("  ((void (*)(uint64_t))(uintptr_t)w[1])(w[2]);\n").try();
     out.add("  return 0;\n").try();
     out.add("}\n").try();
     out.add(
-        "static inline int64_t zr_thread_self(void) { pthread_t t = pthread_self(); uint64_t w = 0; memcpy(&w, &t, sizeof t); return (int64_t)w; }\n"
+        "static inline ZR_U int64_t zr_thread_self(void) { pthread_t t = pthread_self(); uint64_t w = 0; memcpy(&w, &t, sizeof t); return (int64_t)w; }\n"
     ).try();
-    out.add("static inline int64_t zr_pthread_start(uint64_t block) {\n").try();
+    out.add(
+        "static inline ZR_U ZR_U int64_t zr_pthread_start(uint64_t block) {\n"
+    ).try();
     out.add("  pthread_t t;\n").try();
     out.add(
         "  int r = pthread_create(&t, 0, zr_thread_main, (void *)(uintptr_t)block);\n"
@@ -1258,7 +1266,7 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  return 0;\n").try();
     out.add("}\n").try();
     out.add(
-        "static inline int64_t zr_pthread_join(uint64_t thread, uint64_t result) {\n"
+        "static inline ZR_U int64_t zr_pthread_join(uint64_t thread, uint64_t result) {\n"
     ).try();
     out.add("  pthread_t t; memcpy(&t, &thread, sizeof t);\n").try();
     out.add(
@@ -1266,40 +1274,40 @@ runtime = (out :: String) Res<(), AllocError> {
     ).try();
     out.add("}\n").try();
     out.add(
-        "static inline int64_t zr_mutex_init(uint64_t m, uint64_t a) { return -(int64_t)pthread_mutex_init((pthread_mutex_t *)(uintptr_t)m, (const pthread_mutexattr_t *)(uintptr_t)a); }\n"
+        "static inline ZR_U int64_t zr_mutex_init(uint64_t m, uint64_t a) { return -(int64_t)pthread_mutex_init((pthread_mutex_t *)(uintptr_t)m, (const pthread_mutexattr_t *)(uintptr_t)a); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_mutex_lock(uint64_t m) { return -(int64_t)pthread_mutex_lock((pthread_mutex_t *)(uintptr_t)m); }\n"
+        "static inline ZR_U int64_t zr_mutex_lock(uint64_t m) { return -(int64_t)pthread_mutex_lock((pthread_mutex_t *)(uintptr_t)m); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_mutex_unlock(uint64_t m) { return -(int64_t)pthread_mutex_unlock((pthread_mutex_t *)(uintptr_t)m); }\n"
+        "static inline ZR_U int64_t zr_mutex_unlock(uint64_t m) { return -(int64_t)pthread_mutex_unlock((pthread_mutex_t *)(uintptr_t)m); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_mutex_destroy(uint64_t m) { return -(int64_t)pthread_mutex_destroy((pthread_mutex_t *)(uintptr_t)m); }\n"
+        "static inline ZR_U int64_t zr_mutex_destroy(uint64_t m) { return -(int64_t)pthread_mutex_destroy((pthread_mutex_t *)(uintptr_t)m); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_cond_init(uint64_t c, uint64_t a) { return -(int64_t)pthread_cond_init((pthread_cond_t *)(uintptr_t)c, (const pthread_condattr_t *)(uintptr_t)a); }\n"
+        "static inline ZR_U int64_t zr_cond_init(uint64_t c, uint64_t a) { return -(int64_t)pthread_cond_init((pthread_cond_t *)(uintptr_t)c, (const pthread_condattr_t *)(uintptr_t)a); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_cond_wait(uint64_t c, uint64_t m) { return -(int64_t)pthread_cond_wait((pthread_cond_t *)(uintptr_t)c, (pthread_mutex_t *)(uintptr_t)m); }\n"
+        "static inline ZR_U int64_t zr_cond_wait(uint64_t c, uint64_t m) { return -(int64_t)pthread_cond_wait((pthread_cond_t *)(uintptr_t)c, (pthread_mutex_t *)(uintptr_t)m); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_cond_signal(uint64_t c) { return -(int64_t)pthread_cond_signal((pthread_cond_t *)(uintptr_t)c); }\n"
+        "static inline ZR_U int64_t zr_cond_signal(uint64_t c) { return -(int64_t)pthread_cond_signal((pthread_cond_t *)(uintptr_t)c); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_cond_broadcast(uint64_t c) { return -(int64_t)pthread_cond_broadcast((pthread_cond_t *)(uintptr_t)c); }\n"
+        "static inline ZR_U int64_t zr_cond_broadcast(uint64_t c) { return -(int64_t)pthread_cond_broadcast((pthread_cond_t *)(uintptr_t)c); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_cond_destroy(uint64_t c) { return -(int64_t)pthread_cond_destroy((pthread_cond_t *)(uintptr_t)c); }\n"
+        "static inline ZR_U int64_t zr_cond_destroy(uint64_t c) { return -(int64_t)pthread_cond_destroy((pthread_cond_t *)(uintptr_t)c); }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_word_get(void) { return (int64_t)zr_word; }\n"
+        "static inline ZR_U int64_t zr_word_get(void) { return (int64_t)zr_word; }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_word_set(uint64_t value) { zr_word = value; return 0; }\n"
+        "static inline ZR_U int64_t zr_word_set(uint64_t value) { zr_word = value; return 0; }\n"
     ).try();
     out.add(
-        "static inline int64_t zr_guarded(uint64_t code, uint64_t first, uint64_t second) {\n"
+        "static inline ZR_U int64_t zr_guarded(uint64_t code, uint64_t first, uint64_t second) {\n"
     ).try();
     out.add("  jmp_buf here;\n").try();
     out.add("  jmp_buf *volatile outer = zr_guard;\n").try();

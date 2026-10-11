@@ -26,7 +26,7 @@ static size_t zr_out_len;
 static pthread_mutex_t zr_out_lock = PTHREAD_MUTEX_INITIALIZER;
 static __thread uint64_t zr_word;
 static __thread jmp_buf *zr_guard;
-static inline void zr_write_all(int fd, const unsigned char *p, size_t n) {
+static inline ZR_U void zr_write_all(int fd, const unsigned char *p, size_t n) {
   while (n > 0) {
     ssize_t w = write(fd, p, n);
     if (w < 0 && errno == EINTR) continue;
@@ -34,9 +34,9 @@ static inline void zr_write_all(int fd, const unsigned char *p, size_t n) {
     p += w; n -= (size_t)w;
   }
 }
-static inline void zr_flush_held(void) { zr_write_all(1, zr_out_buf, zr_out_len); zr_out_len = 0; }
-static inline void zr_flush(void) { pthread_mutex_lock(&zr_out_lock); zr_flush_held(); pthread_mutex_unlock(&zr_out_lock); }
-static inline void zr_write(int fd, uint64_t data, uint64_t len) {
+static inline ZR_U void zr_flush_held(void) { zr_write_all(1, zr_out_buf, zr_out_len); zr_out_len = 0; }
+static inline ZR_U void zr_flush(void) { pthread_mutex_lock(&zr_out_lock); zr_flush_held(); pthread_mutex_unlock(&zr_out_lock); }
+static inline ZR_U void zr_write(int fd, uint64_t data, uint64_t len) {
   const unsigned char *p = (const unsigned char *)(uintptr_t)data;
   if (fd != 1) { zr_write_all(fd, p, (size_t)len); return; }
   pthread_mutex_lock(&zr_out_lock);
@@ -45,77 +45,77 @@ static inline void zr_write(int fd, uint64_t data, uint64_t len) {
   else { memcpy(zr_out_buf + zr_out_len, p, (size_t)len); zr_out_len += (size_t)len; }
   pthread_mutex_unlock(&zr_out_lock);
 }
-static inline void zr_text(int fd, const char *s, size_t n) { zr_write(fd, (uint64_t)(uintptr_t)s, n); }
-static inline void zr_print_i(int fd, int64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%" PRId64, v); zr_text(fd, b, (size_t)n); }
-static inline void zr_print_u(int fd, uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%" PRIu64, v); zr_text(fd, b, (size_t)n); }
-static inline void zr_print_f(int fd, double v) {
+static inline ZR_U void zr_text(int fd, const char *s, size_t n) { zr_write(fd, (uint64_t)(uintptr_t)s, n); }
+static inline ZR_U void zr_print_i(int fd, int64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%" PRId64, v); zr_text(fd, b, (size_t)n); }
+static inline ZR_U void zr_print_u(int fd, uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, "%" PRIu64, v); zr_text(fd, b, (size_t)n); }
+static inline ZR_U ZR_U void zr_print_f(int fd, double v) {
   char b[64];
   if (isnan(v)) { zr_text(fd, "nan", 3); return; }
   if (isinf(v)) { zr_text(fd, v < 0 ? "-inf" : "inf", v < 0 ? 4u : 3u); return; }
   int n = snprintf(b, sizeof b, "%g", v);
   zr_text(fd, b, (size_t)n);
 }
-static inline __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {
+static inline ZR_U __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {
   zr_flush();
   zr_write_all(2, (const unsigned char *)where, n);
   if (zr_guard) longjmp(*zr_guard, 1);
   _exit(134);
 }
-static inline __attribute__((noreturn)) void zr_exit(int status) {
+static inline ZR_U __attribute__((noreturn)) void zr_exit(int status) {
   if (zr_globals[0]) ((void (*)(void))(uintptr_t)zr_globals[0])();
   zr_flush();
   _exit(status);
 }
-static inline uint64_t zr_map(uint64_t bytes) {
+static inline ZR_U ZR_U uint64_t zr_map(uint64_t bytes) {
   void *p = mmap(0, (size_t)bytes + 16, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (p == MAP_FAILED) return 0;
   *(uint64_t *)p = bytes + 16;
   return (uint64_t)(uintptr_t)p + 16;
 }
-static inline void zr_unmap(uint64_t at) {
+static inline ZR_U ZR_U void zr_unmap(uint64_t at) {
   if (!at) return;
   void *p = (void *)(uintptr_t)(at - 16);
   munmap(p, (size_t)*(uint64_t *)p);
 }
-static inline int64_t zr_lerr(long r) { return r == -1 ? -(int64_t)errno : (int64_t)r; }
-static inline int64_t zr_derr(int64_t r) { return r == -1 ? -(int64_t)errno : r; }
-static inline double zr_f64(uint64_t bits) { double d; memcpy(&d, &bits, sizeof d); return d; }
-static inline uint64_t zr_shl(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a << c; }
-static inline uint64_t zr_shr(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a >> c; }
-static inline uint64_t zr_rotr(uint64_t a, uint64_t c, unsigned bits) {
+static inline ZR_U int64_t zr_lerr(long r) { return r == -1 ? -(int64_t)errno : (int64_t)r; }
+static inline ZR_U int64_t zr_derr(int64_t r) { return r == -1 ? -(int64_t)errno : r; }
+static inline ZR_U double zr_f64(uint64_t bits) { double d; memcpy(&d, &bits, sizeof d); return d; }
+static inline ZR_U uint64_t zr_shl(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a << c; }
+static inline ZR_U uint64_t zr_shr(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a >> c; }
+static inline ZR_U uint64_t zr_rotr(uint64_t a, uint64_t c, unsigned bits) {
   c %= bits;
   if (c == 0) return a;
   return (a >> c) | (a << (bits - c));
 }
-static inline void *zr_thread_main(void *block) {
+static inline ZR_U ZR_U void *zr_thread_main(void *block) {
   uint64_t *w = block;
   ((void (*)(uint64_t))(uintptr_t)w[1])(w[2]);
   return 0;
 }
-static inline int64_t zr_thread_self(void) { pthread_t t = pthread_self(); uint64_t w = 0; memcpy(&w, &t, sizeof t); return (int64_t)w; }
-static inline int64_t zr_pthread_start(uint64_t block) {
+static inline ZR_U int64_t zr_thread_self(void) { pthread_t t = pthread_self(); uint64_t w = 0; memcpy(&w, &t, sizeof t); return (int64_t)w; }
+static inline ZR_U ZR_U int64_t zr_pthread_start(uint64_t block) {
   pthread_t t;
   int r = pthread_create(&t, 0, zr_thread_main, (void *)(uintptr_t)block);
   if (r) return -(int64_t)r;
   memcpy((unsigned char *)(uintptr_t)block + 32, &t, sizeof t);
   return 0;
 }
-static inline int64_t zr_pthread_join(uint64_t thread, uint64_t result) {
+static inline ZR_U int64_t zr_pthread_join(uint64_t thread, uint64_t result) {
   pthread_t t; memcpy(&t, &thread, sizeof t);
   return -(int64_t)pthread_join(t, (void **)(uintptr_t)result);
 }
-static inline int64_t zr_mutex_init(uint64_t m, uint64_t a) { return -(int64_t)pthread_mutex_init((pthread_mutex_t *)(uintptr_t)m, (const pthread_mutexattr_t *)(uintptr_t)a); }
-static inline int64_t zr_mutex_lock(uint64_t m) { return -(int64_t)pthread_mutex_lock((pthread_mutex_t *)(uintptr_t)m); }
-static inline int64_t zr_mutex_unlock(uint64_t m) { return -(int64_t)pthread_mutex_unlock((pthread_mutex_t *)(uintptr_t)m); }
-static inline int64_t zr_mutex_destroy(uint64_t m) { return -(int64_t)pthread_mutex_destroy((pthread_mutex_t *)(uintptr_t)m); }
-static inline int64_t zr_cond_init(uint64_t c, uint64_t a) { return -(int64_t)pthread_cond_init((pthread_cond_t *)(uintptr_t)c, (const pthread_condattr_t *)(uintptr_t)a); }
-static inline int64_t zr_cond_wait(uint64_t c, uint64_t m) { return -(int64_t)pthread_cond_wait((pthread_cond_t *)(uintptr_t)c, (pthread_mutex_t *)(uintptr_t)m); }
-static inline int64_t zr_cond_signal(uint64_t c) { return -(int64_t)pthread_cond_signal((pthread_cond_t *)(uintptr_t)c); }
-static inline int64_t zr_cond_broadcast(uint64_t c) { return -(int64_t)pthread_cond_broadcast((pthread_cond_t *)(uintptr_t)c); }
-static inline int64_t zr_cond_destroy(uint64_t c) { return -(int64_t)pthread_cond_destroy((pthread_cond_t *)(uintptr_t)c); }
-static inline int64_t zr_word_get(void) { return (int64_t)zr_word; }
-static inline int64_t zr_word_set(uint64_t value) { zr_word = value; return 0; }
-static inline int64_t zr_guarded(uint64_t code, uint64_t first, uint64_t second) {
+static inline ZR_U int64_t zr_mutex_init(uint64_t m, uint64_t a) { return -(int64_t)pthread_mutex_init((pthread_mutex_t *)(uintptr_t)m, (const pthread_mutexattr_t *)(uintptr_t)a); }
+static inline ZR_U int64_t zr_mutex_lock(uint64_t m) { return -(int64_t)pthread_mutex_lock((pthread_mutex_t *)(uintptr_t)m); }
+static inline ZR_U int64_t zr_mutex_unlock(uint64_t m) { return -(int64_t)pthread_mutex_unlock((pthread_mutex_t *)(uintptr_t)m); }
+static inline ZR_U int64_t zr_mutex_destroy(uint64_t m) { return -(int64_t)pthread_mutex_destroy((pthread_mutex_t *)(uintptr_t)m); }
+static inline ZR_U int64_t zr_cond_init(uint64_t c, uint64_t a) { return -(int64_t)pthread_cond_init((pthread_cond_t *)(uintptr_t)c, (const pthread_condattr_t *)(uintptr_t)a); }
+static inline ZR_U int64_t zr_cond_wait(uint64_t c, uint64_t m) { return -(int64_t)pthread_cond_wait((pthread_cond_t *)(uintptr_t)c, (pthread_mutex_t *)(uintptr_t)m); }
+static inline ZR_U int64_t zr_cond_signal(uint64_t c) { return -(int64_t)pthread_cond_signal((pthread_cond_t *)(uintptr_t)c); }
+static inline ZR_U int64_t zr_cond_broadcast(uint64_t c) { return -(int64_t)pthread_cond_broadcast((pthread_cond_t *)(uintptr_t)c); }
+static inline ZR_U int64_t zr_cond_destroy(uint64_t c) { return -(int64_t)pthread_cond_destroy((pthread_cond_t *)(uintptr_t)c); }
+static inline ZR_U int64_t zr_word_get(void) { return (int64_t)zr_word; }
+static inline ZR_U int64_t zr_word_set(uint64_t value) { zr_word = value; return 0; }
+static inline ZR_U int64_t zr_guarded(uint64_t code, uint64_t first, uint64_t second) {
   jmp_buf here;
   jmp_buf *volatile outer = zr_guard;
   if (setjmp(here)) { zr_guard = outer; return 1; }
@@ -196062,8 +196062,8 @@ b95:;
   v409 = (uint64_t)(uintptr_t)&v398;
   memcpy(&v408, (const void *)(uintptr_t)(v409 + 4u), sizeof v408);
   v410 = (uint8_t)INT64_C(0);
-  v412 = (uint64_t)(uintptr_t)"static inline void zr_write_all(int fd, const unsigned char *p, size_t n) {\012";
-  v413 = (uint64_t)INT64_C(76);
+  v412 = (uint64_t)(uintptr_t)"static inline ZR_U void zr_write_all(int fd, const unsigned char *p, size_t n) {\012";
+  v413 = (uint64_t)INT64_C(81);
   v414 = (uint64_t)(uintptr_t)&v411;
   memcpy((void *)(uintptr_t)(v414 + 0u), &v412, sizeof v412);
   memcpy((void *)(uintptr_t)(v414 + 8u), &v413, sizeof v413);
@@ -196270,8 +196270,8 @@ b127:;
   v545 = (uint64_t)(uintptr_t)&v534;
   memcpy(&v544, (const void *)(uintptr_t)(v545 + 4u), sizeof v544);
   v546 = (uint8_t)INT64_C(0);
-  v548 = (uint64_t)(uintptr_t)"static inline void zr_flush_held(void) { zr_write_all(1, zr_out_buf, zr_out_len); zr_out_len = 0; }\012";
-  v549 = (uint64_t)INT64_C(100);
+  v548 = (uint64_t)(uintptr_t)"static inline ZR_U void zr_flush_held(void) { zr_write_all(1, zr_out_buf, zr_out_len); zr_out_len = 0; }\012";
+  v549 = (uint64_t)INT64_C(105);
   v550 = (uint64_t)(uintptr_t)&v547;
   memcpy((void *)(uintptr_t)(v550 + 0u), &v548, sizeof v548);
   memcpy((void *)(uintptr_t)(v550 + 8u), &v549, sizeof v549);
@@ -196296,8 +196296,8 @@ b131:;
   v562 = (uint64_t)(uintptr_t)&v551;
   memcpy(&v561, (const void *)(uintptr_t)(v562 + 4u), sizeof v561);
   v563 = (uint8_t)INT64_C(0);
-  v565 = (uint64_t)(uintptr_t)"static inline void zr_flush(void) { pthread_mutex_lock(&zr_out_lock); zr_flush_held(); pthread_mutex_unlock(&zr_out_lock); }\012";
-  v566 = (uint64_t)INT64_C(125);
+  v565 = (uint64_t)(uintptr_t)"static inline ZR_U void zr_flush(void) { pthread_mutex_lock(&zr_out_lock); zr_flush_held(); pthread_mutex_unlock(&zr_out_lock); }\012";
+  v566 = (uint64_t)INT64_C(130);
   v567 = (uint64_t)(uintptr_t)&v564;
   memcpy((void *)(uintptr_t)(v567 + 0u), &v565, sizeof v565);
   memcpy((void *)(uintptr_t)(v567 + 8u), &v566, sizeof v566);
@@ -196322,8 +196322,8 @@ b135:;
   v579 = (uint64_t)(uintptr_t)&v568;
   memcpy(&v578, (const void *)(uintptr_t)(v579 + 4u), sizeof v578);
   v580 = (uint8_t)INT64_C(0);
-  v582 = (uint64_t)(uintptr_t)"static inline void zr_write(int fd, uint64_t data, uint64_t len) {\012";
-  v583 = (uint64_t)INT64_C(67);
+  v582 = (uint64_t)(uintptr_t)"static inline ZR_U void zr_write(int fd, uint64_t data, uint64_t len) {\012";
+  v583 = (uint64_t)INT64_C(72);
   v584 = (uint64_t)(uintptr_t)&v581;
   memcpy((void *)(uintptr_t)(v584 + 0u), &v582, sizeof v582);
   memcpy((void *)(uintptr_t)(v584 + 8u), &v583, sizeof v583);
@@ -196556,8 +196556,8 @@ b171:;
   v732 = (uint64_t)(uintptr_t)&v721;
   memcpy(&v731, (const void *)(uintptr_t)(v732 + 4u), sizeof v731);
   v733 = (uint8_t)INT64_C(0);
-  v735 = (uint64_t)(uintptr_t)"static inline void zr_text(int fd, const char *s, size_t n) { zr_write(fd, (uint64_t)(uintptr_t)s, n); }\012";
-  v736 = (uint64_t)INT64_C(105);
+  v735 = (uint64_t)(uintptr_t)"static inline ZR_U void zr_text(int fd, const char *s, size_t n) { zr_write(fd, (uint64_t)(uintptr_t)s, n); }\012";
+  v736 = (uint64_t)INT64_C(110);
   v737 = (uint64_t)(uintptr_t)&v734;
   memcpy((void *)(uintptr_t)(v737 + 0u), &v735, sizeof v735);
   memcpy((void *)(uintptr_t)(v737 + 8u), &v736, sizeof v736);
@@ -196582,8 +196582,8 @@ b175:;
   v749 = (uint64_t)(uintptr_t)&v738;
   memcpy(&v748, (const void *)(uintptr_t)(v749 + 4u), sizeof v748);
   v750 = (uint8_t)INT64_C(0);
-  v752 = (uint64_t)(uintptr_t)"static inline void zr_print_i(int fd, int64_t v) { char b[32]; int n = snprintf(b, sizeof b, \042%\042 PRId64, v); zr_text(fd, b, (size_t)n); }\012";
-  v753 = (uint64_t)INT64_C(138);
+  v752 = (uint64_t)(uintptr_t)"static inline ZR_U void zr_print_i(int fd, int64_t v) { char b[32]; int n = snprintf(b, sizeof b, \042%\042 PRId64, v); zr_text(fd, b, (size_t)n); }\012";
+  v753 = (uint64_t)INT64_C(143);
   v754 = (uint64_t)(uintptr_t)&v751;
   memcpy((void *)(uintptr_t)(v754 + 0u), &v752, sizeof v752);
   memcpy((void *)(uintptr_t)(v754 + 8u), &v753, sizeof v753);
@@ -196608,8 +196608,8 @@ b179:;
   v766 = (uint64_t)(uintptr_t)&v755;
   memcpy(&v765, (const void *)(uintptr_t)(v766 + 4u), sizeof v765);
   v767 = (uint8_t)INT64_C(0);
-  v769 = (uint64_t)(uintptr_t)"static inline void zr_print_u(int fd, uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, \042%\042 PRIu64, v); zr_text(fd, b, (size_t)n); }\012";
-  v770 = (uint64_t)INT64_C(139);
+  v769 = (uint64_t)(uintptr_t)"static inline ZR_U void zr_print_u(int fd, uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, \042%\042 PRIu64, v); zr_text(fd, b, (size_t)n); }\012";
+  v770 = (uint64_t)INT64_C(144);
   v771 = (uint64_t)(uintptr_t)&v768;
   memcpy((void *)(uintptr_t)(v771 + 0u), &v769, sizeof v769);
   memcpy((void *)(uintptr_t)(v771 + 8u), &v770, sizeof v770);
@@ -196634,8 +196634,8 @@ b183:;
   v783 = (uint64_t)(uintptr_t)&v772;
   memcpy(&v782, (const void *)(uintptr_t)(v783 + 4u), sizeof v782);
   v784 = (uint8_t)INT64_C(0);
-  v786 = (uint64_t)(uintptr_t)"static inline void zr_print_f(int fd, double v) {\012";
-  v787 = (uint64_t)INT64_C(50);
+  v786 = (uint64_t)(uintptr_t)"static inline ZR_U ZR_U void zr_print_f(int fd, double v) {\012";
+  v787 = (uint64_t)INT64_C(60);
   v788 = (uint64_t)(uintptr_t)&v785;
   memcpy((void *)(uintptr_t)(v788 + 0u), &v786, sizeof v786);
   memcpy((void *)(uintptr_t)(v788 + 8u), &v787, sizeof v787);
@@ -196816,8 +196816,8 @@ b211:;
   v902 = (uint64_t)(uintptr_t)&v891;
   memcpy(&v901, (const void *)(uintptr_t)(v902 + 4u), sizeof v901);
   v903 = (uint8_t)INT64_C(0);
-  v905 = (uint64_t)(uintptr_t)"static inline __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {\012";
-  v906 = (uint64_t)INT64_C(84);
+  v905 = (uint64_t)(uintptr_t)"static inline ZR_U __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {\012";
+  v906 = (uint64_t)INT64_C(89);
   v907 = (uint64_t)(uintptr_t)&v904;
   memcpy((void *)(uintptr_t)(v907 + 0u), &v905, sizeof v905);
   memcpy((void *)(uintptr_t)(v907 + 8u), &v906, sizeof v906);
@@ -196972,8 +196972,8 @@ b235:;
   v1004 = (uint64_t)(uintptr_t)&v993;
   memcpy(&v1003, (const void *)(uintptr_t)(v1004 + 4u), sizeof v1003);
   v1005 = (uint8_t)INT64_C(0);
-  v1007 = (uint64_t)(uintptr_t)"static inline __attribute__((noreturn)) void zr_exit(int status) {\012";
-  v1008 = (uint64_t)INT64_C(67);
+  v1007 = (uint64_t)(uintptr_t)"static inline ZR_U __attribute__((noreturn)) void zr_exit(int status) {\012";
+  v1008 = (uint64_t)INT64_C(72);
   v1009 = (uint64_t)(uintptr_t)&v1006;
   memcpy((void *)(uintptr_t)(v1009 + 0u), &v1007, sizeof v1007);
   memcpy((void *)(uintptr_t)(v1009 + 8u), &v1008, sizeof v1008);
@@ -197102,8 +197102,8 @@ b255:;
   v1089 = (uint64_t)(uintptr_t)&v1078;
   memcpy(&v1088, (const void *)(uintptr_t)(v1089 + 4u), sizeof v1088);
   v1090 = (uint8_t)INT64_C(0);
-  v1092 = (uint64_t)(uintptr_t)"static inline uint64_t zr_map(uint64_t bytes) {\012";
-  v1093 = (uint64_t)INT64_C(48);
+  v1092 = (uint64_t)(uintptr_t)"static inline ZR_U ZR_U uint64_t zr_map(uint64_t bytes) {\012";
+  v1093 = (uint64_t)INT64_C(58);
   v1094 = (uint64_t)(uintptr_t)&v1091;
   memcpy((void *)(uintptr_t)(v1094 + 0u), &v1092, sizeof v1092);
   memcpy((void *)(uintptr_t)(v1094 + 8u), &v1093, sizeof v1093);
@@ -197258,8 +197258,8 @@ b279:;
   v1191 = (uint64_t)(uintptr_t)&v1180;
   memcpy(&v1190, (const void *)(uintptr_t)(v1191 + 4u), sizeof v1190);
   v1192 = (uint8_t)INT64_C(0);
-  v1194 = (uint64_t)(uintptr_t)"static inline void zr_unmap(uint64_t at) {\012";
-  v1195 = (uint64_t)INT64_C(43);
+  v1194 = (uint64_t)(uintptr_t)"static inline ZR_U ZR_U void zr_unmap(uint64_t at) {\012";
+  v1195 = (uint64_t)INT64_C(53);
   v1196 = (uint64_t)(uintptr_t)&v1193;
   memcpy((void *)(uintptr_t)(v1196 + 0u), &v1194, sizeof v1194);
   memcpy((void *)(uintptr_t)(v1196 + 8u), &v1195, sizeof v1195);
@@ -197388,8 +197388,8 @@ b299:;
   v1276 = (uint64_t)(uintptr_t)&v1265;
   memcpy(&v1275, (const void *)(uintptr_t)(v1276 + 4u), sizeof v1275);
   v1277 = (uint8_t)INT64_C(0);
-  v1279 = (uint64_t)(uintptr_t)"static inline int64_t zr_lerr(long r) { return r == -1 \077 -(int64_t)errno : (int64_t)r; }\012";
-  v1280 = (uint64_t)INT64_C(89);
+  v1279 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_lerr(long r) { return r == -1 \077 -(int64_t)errno : (int64_t)r; }\012";
+  v1280 = (uint64_t)INT64_C(94);
   v1281 = (uint64_t)(uintptr_t)&v1278;
   memcpy((void *)(uintptr_t)(v1281 + 0u), &v1279, sizeof v1279);
   memcpy((void *)(uintptr_t)(v1281 + 8u), &v1280, sizeof v1280);
@@ -197414,8 +197414,8 @@ b303:;
   v1293 = (uint64_t)(uintptr_t)&v1282;
   memcpy(&v1292, (const void *)(uintptr_t)(v1293 + 4u), sizeof v1292);
   v1294 = (uint8_t)INT64_C(0);
-  v1296 = (uint64_t)(uintptr_t)"static inline int64_t zr_derr(int64_t r) { return r == -1 \077 -(int64_t)errno : r; }\012";
-  v1297 = (uint64_t)INT64_C(83);
+  v1296 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_derr(int64_t r) { return r == -1 \077 -(int64_t)errno : r; }\012";
+  v1297 = (uint64_t)INT64_C(88);
   v1298 = (uint64_t)(uintptr_t)&v1295;
   memcpy((void *)(uintptr_t)(v1298 + 0u), &v1296, sizeof v1296);
   memcpy((void *)(uintptr_t)(v1298 + 8u), &v1297, sizeof v1297);
@@ -197440,8 +197440,8 @@ b307:;
   v1310 = (uint64_t)(uintptr_t)&v1299;
   memcpy(&v1309, (const void *)(uintptr_t)(v1310 + 4u), sizeof v1309);
   v1311 = (uint8_t)INT64_C(0);
-  v1313 = (uint64_t)(uintptr_t)"static inline double zr_f64(uint64_t bits) { double d; memcpy(&d, &bits, sizeof d); return d; }\012";
-  v1314 = (uint64_t)INT64_C(96);
+  v1313 = (uint64_t)(uintptr_t)"static inline ZR_U double zr_f64(uint64_t bits) { double d; memcpy(&d, &bits, sizeof d); return d; }\012";
+  v1314 = (uint64_t)INT64_C(101);
   v1315 = (uint64_t)(uintptr_t)&v1312;
   memcpy((void *)(uintptr_t)(v1315 + 0u), &v1313, sizeof v1313);
   memcpy((void *)(uintptr_t)(v1315 + 8u), &v1314, sizeof v1314);
@@ -197466,8 +197466,8 @@ b311:;
   v1327 = (uint64_t)(uintptr_t)&v1316;
   memcpy(&v1326, (const void *)(uintptr_t)(v1327 + 4u), sizeof v1326);
   v1328 = (uint8_t)INT64_C(0);
-  v1330 = (uint64_t)(uintptr_t)"static inline uint64_t zr_shl(uint64_t a, uint64_t c, unsigned bits) { return c >= bits \077 0 : a << c; }\012";
-  v1331 = (uint64_t)INT64_C(104);
+  v1330 = (uint64_t)(uintptr_t)"static inline ZR_U uint64_t zr_shl(uint64_t a, uint64_t c, unsigned bits) { return c >= bits \077 0 : a << c; }\012";
+  v1331 = (uint64_t)INT64_C(109);
   v1332 = (uint64_t)(uintptr_t)&v1329;
   memcpy((void *)(uintptr_t)(v1332 + 0u), &v1330, sizeof v1330);
   memcpy((void *)(uintptr_t)(v1332 + 8u), &v1331, sizeof v1331);
@@ -197492,8 +197492,8 @@ b315:;
   v1344 = (uint64_t)(uintptr_t)&v1333;
   memcpy(&v1343, (const void *)(uintptr_t)(v1344 + 4u), sizeof v1343);
   v1345 = (uint8_t)INT64_C(0);
-  v1347 = (uint64_t)(uintptr_t)"static inline uint64_t zr_shr(uint64_t a, uint64_t c, unsigned bits) { return c >= bits \077 0 : a >> c; }\012";
-  v1348 = (uint64_t)INT64_C(104);
+  v1347 = (uint64_t)(uintptr_t)"static inline ZR_U uint64_t zr_shr(uint64_t a, uint64_t c, unsigned bits) { return c >= bits \077 0 : a >> c; }\012";
+  v1348 = (uint64_t)INT64_C(109);
   v1349 = (uint64_t)(uintptr_t)&v1346;
   memcpy((void *)(uintptr_t)(v1349 + 0u), &v1347, sizeof v1347);
   memcpy((void *)(uintptr_t)(v1349 + 8u), &v1348, sizeof v1348);
@@ -197518,8 +197518,8 @@ b319:;
   v1361 = (uint64_t)(uintptr_t)&v1350;
   memcpy(&v1360, (const void *)(uintptr_t)(v1361 + 4u), sizeof v1360);
   v1362 = (uint8_t)INT64_C(0);
-  v1364 = (uint64_t)(uintptr_t)"static inline uint64_t zr_rotr(uint64_t a, uint64_t c, unsigned bits) {\012";
-  v1365 = (uint64_t)INT64_C(72);
+  v1364 = (uint64_t)(uintptr_t)"static inline ZR_U uint64_t zr_rotr(uint64_t a, uint64_t c, unsigned bits) {\012";
+  v1365 = (uint64_t)INT64_C(77);
   v1366 = (uint64_t)(uintptr_t)&v1363;
   memcpy((void *)(uintptr_t)(v1366 + 0u), &v1364, sizeof v1364);
   memcpy((void *)(uintptr_t)(v1366 + 8u), &v1365, sizeof v1365);
@@ -197648,8 +197648,8 @@ b339:;
   v1446 = (uint64_t)(uintptr_t)&v1435;
   memcpy(&v1445, (const void *)(uintptr_t)(v1446 + 4u), sizeof v1445);
   v1447 = (uint8_t)INT64_C(0);
-  v1449 = (uint64_t)(uintptr_t)"static inline void *zr_thread_main(void *block) {\012";
-  v1450 = (uint64_t)INT64_C(50);
+  v1449 = (uint64_t)(uintptr_t)"static inline ZR_U ZR_U void *zr_thread_main(void *block) {\012";
+  v1450 = (uint64_t)INT64_C(60);
   v1451 = (uint64_t)(uintptr_t)&v1448;
   memcpy((void *)(uintptr_t)(v1451 + 0u), &v1449, sizeof v1449);
   memcpy((void *)(uintptr_t)(v1451 + 8u), &v1450, sizeof v1450);
@@ -197778,8 +197778,8 @@ b359:;
   v1531 = (uint64_t)(uintptr_t)&v1520;
   memcpy(&v1530, (const void *)(uintptr_t)(v1531 + 4u), sizeof v1530);
   v1532 = (uint8_t)INT64_C(0);
-  v1534 = (uint64_t)(uintptr_t)"static inline int64_t zr_thread_self(void) { pthread_t t = pthread_self(); uint64_t w = 0; memcpy(&w, &t, sizeof t); return (int64_t)w; }\012";
-  v1535 = (uint64_t)INT64_C(138);
+  v1534 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_thread_self(void) { pthread_t t = pthread_self(); uint64_t w = 0; memcpy(&w, &t, sizeof t); return (int64_t)w; }\012";
+  v1535 = (uint64_t)INT64_C(143);
   v1536 = (uint64_t)(uintptr_t)&v1533;
   memcpy((void *)(uintptr_t)(v1536 + 0u), &v1534, sizeof v1534);
   memcpy((void *)(uintptr_t)(v1536 + 8u), &v1535, sizeof v1535);
@@ -197804,8 +197804,8 @@ b363:;
   v1548 = (uint64_t)(uintptr_t)&v1537;
   memcpy(&v1547, (const void *)(uintptr_t)(v1548 + 4u), sizeof v1547);
   v1549 = (uint8_t)INT64_C(0);
-  v1551 = (uint64_t)(uintptr_t)"static inline int64_t zr_pthread_start(uint64_t block) {\012";
-  v1552 = (uint64_t)INT64_C(57);
+  v1551 = (uint64_t)(uintptr_t)"static inline ZR_U ZR_U int64_t zr_pthread_start(uint64_t block) {\012";
+  v1552 = (uint64_t)INT64_C(67);
   v1553 = (uint64_t)(uintptr_t)&v1550;
   memcpy((void *)(uintptr_t)(v1553 + 0u), &v1551, sizeof v1551);
   memcpy((void *)(uintptr_t)(v1553 + 8u), &v1552, sizeof v1552);
@@ -197986,8 +197986,8 @@ b391:;
   v1667 = (uint64_t)(uintptr_t)&v1656;
   memcpy(&v1666, (const void *)(uintptr_t)(v1667 + 4u), sizeof v1666);
   v1668 = (uint8_t)INT64_C(0);
-  v1670 = (uint64_t)(uintptr_t)"static inline int64_t zr_pthread_join(uint64_t thread, uint64_t result) {\012";
-  v1671 = (uint64_t)INT64_C(74);
+  v1670 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_pthread_join(uint64_t thread, uint64_t result) {\012";
+  v1671 = (uint64_t)INT64_C(79);
   v1672 = (uint64_t)(uintptr_t)&v1669;
   memcpy((void *)(uintptr_t)(v1672 + 0u), &v1670, sizeof v1670);
   memcpy((void *)(uintptr_t)(v1672 + 8u), &v1671, sizeof v1671);
@@ -198090,8 +198090,8 @@ b407:;
   v1735 = (uint64_t)(uintptr_t)&v1724;
   memcpy(&v1734, (const void *)(uintptr_t)(v1735 + 4u), sizeof v1734);
   v1736 = (uint8_t)INT64_C(0);
-  v1738 = (uint64_t)(uintptr_t)"static inline int64_t zr_mutex_init(uint64_t m, uint64_t a) { return -(int64_t)pthread_mutex_init((pthread_mutex_t *)(uintptr_t)m, (const pthread_mutexattr_t *)(uintptr_t)a); }\012";
-  v1739 = (uint64_t)INT64_C(177);
+  v1738 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_mutex_init(uint64_t m, uint64_t a) { return -(int64_t)pthread_mutex_init((pthread_mutex_t *)(uintptr_t)m, (const pthread_mutexattr_t *)(uintptr_t)a); }\012";
+  v1739 = (uint64_t)INT64_C(182);
   v1740 = (uint64_t)(uintptr_t)&v1737;
   memcpy((void *)(uintptr_t)(v1740 + 0u), &v1738, sizeof v1738);
   memcpy((void *)(uintptr_t)(v1740 + 8u), &v1739, sizeof v1739);
@@ -198116,8 +198116,8 @@ b411:;
   v1752 = (uint64_t)(uintptr_t)&v1741;
   memcpy(&v1751, (const void *)(uintptr_t)(v1752 + 4u), sizeof v1751);
   v1753 = (uint8_t)INT64_C(0);
-  v1755 = (uint64_t)(uintptr_t)"static inline int64_t zr_mutex_lock(uint64_t m) { return -(int64_t)pthread_mutex_lock((pthread_mutex_t *)(uintptr_t)m); }\012";
-  v1756 = (uint64_t)INT64_C(122);
+  v1755 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_mutex_lock(uint64_t m) { return -(int64_t)pthread_mutex_lock((pthread_mutex_t *)(uintptr_t)m); }\012";
+  v1756 = (uint64_t)INT64_C(127);
   v1757 = (uint64_t)(uintptr_t)&v1754;
   memcpy((void *)(uintptr_t)(v1757 + 0u), &v1755, sizeof v1755);
   memcpy((void *)(uintptr_t)(v1757 + 8u), &v1756, sizeof v1756);
@@ -198142,8 +198142,8 @@ b415:;
   v1769 = (uint64_t)(uintptr_t)&v1758;
   memcpy(&v1768, (const void *)(uintptr_t)(v1769 + 4u), sizeof v1768);
   v1770 = (uint8_t)INT64_C(0);
-  v1772 = (uint64_t)(uintptr_t)"static inline int64_t zr_mutex_unlock(uint64_t m) { return -(int64_t)pthread_mutex_unlock((pthread_mutex_t *)(uintptr_t)m); }\012";
-  v1773 = (uint64_t)INT64_C(126);
+  v1772 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_mutex_unlock(uint64_t m) { return -(int64_t)pthread_mutex_unlock((pthread_mutex_t *)(uintptr_t)m); }\012";
+  v1773 = (uint64_t)INT64_C(131);
   v1774 = (uint64_t)(uintptr_t)&v1771;
   memcpy((void *)(uintptr_t)(v1774 + 0u), &v1772, sizeof v1772);
   memcpy((void *)(uintptr_t)(v1774 + 8u), &v1773, sizeof v1773);
@@ -198168,8 +198168,8 @@ b419:;
   v1786 = (uint64_t)(uintptr_t)&v1775;
   memcpy(&v1785, (const void *)(uintptr_t)(v1786 + 4u), sizeof v1785);
   v1787 = (uint8_t)INT64_C(0);
-  v1789 = (uint64_t)(uintptr_t)"static inline int64_t zr_mutex_destroy(uint64_t m) { return -(int64_t)pthread_mutex_destroy((pthread_mutex_t *)(uintptr_t)m); }\012";
-  v1790 = (uint64_t)INT64_C(128);
+  v1789 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_mutex_destroy(uint64_t m) { return -(int64_t)pthread_mutex_destroy((pthread_mutex_t *)(uintptr_t)m); }\012";
+  v1790 = (uint64_t)INT64_C(133);
   v1791 = (uint64_t)(uintptr_t)&v1788;
   memcpy((void *)(uintptr_t)(v1791 + 0u), &v1789, sizeof v1789);
   memcpy((void *)(uintptr_t)(v1791 + 8u), &v1790, sizeof v1790);
@@ -198194,8 +198194,8 @@ b423:;
   v1803 = (uint64_t)(uintptr_t)&v1792;
   memcpy(&v1802, (const void *)(uintptr_t)(v1803 + 4u), sizeof v1802);
   v1804 = (uint8_t)INT64_C(0);
-  v1806 = (uint64_t)(uintptr_t)"static inline int64_t zr_cond_init(uint64_t c, uint64_t a) { return -(int64_t)pthread_cond_init((pthread_cond_t *)(uintptr_t)c, (const pthread_condattr_t *)(uintptr_t)a); }\012";
-  v1807 = (uint64_t)INT64_C(173);
+  v1806 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_cond_init(uint64_t c, uint64_t a) { return -(int64_t)pthread_cond_init((pthread_cond_t *)(uintptr_t)c, (const pthread_condattr_t *)(uintptr_t)a); }\012";
+  v1807 = (uint64_t)INT64_C(178);
   v1808 = (uint64_t)(uintptr_t)&v1805;
   memcpy((void *)(uintptr_t)(v1808 + 0u), &v1806, sizeof v1806);
   memcpy((void *)(uintptr_t)(v1808 + 8u), &v1807, sizeof v1807);
@@ -198220,8 +198220,8 @@ b427:;
   v1820 = (uint64_t)(uintptr_t)&v1809;
   memcpy(&v1819, (const void *)(uintptr_t)(v1820 + 4u), sizeof v1819);
   v1821 = (uint8_t)INT64_C(0);
-  v1823 = (uint64_t)(uintptr_t)"static inline int64_t zr_cond_wait(uint64_t c, uint64_t m) { return -(int64_t)pthread_cond_wait((pthread_cond_t *)(uintptr_t)c, (pthread_mutex_t *)(uintptr_t)m); }\012";
-  v1824 = (uint64_t)INT64_C(164);
+  v1823 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_cond_wait(uint64_t c, uint64_t m) { return -(int64_t)pthread_cond_wait((pthread_cond_t *)(uintptr_t)c, (pthread_mutex_t *)(uintptr_t)m); }\012";
+  v1824 = (uint64_t)INT64_C(169);
   v1825 = (uint64_t)(uintptr_t)&v1822;
   memcpy((void *)(uintptr_t)(v1825 + 0u), &v1823, sizeof v1823);
   memcpy((void *)(uintptr_t)(v1825 + 8u), &v1824, sizeof v1824);
@@ -198246,8 +198246,8 @@ b431:;
   v1837 = (uint64_t)(uintptr_t)&v1826;
   memcpy(&v1836, (const void *)(uintptr_t)(v1837 + 4u), sizeof v1836);
   v1838 = (uint8_t)INT64_C(0);
-  v1840 = (uint64_t)(uintptr_t)"static inline int64_t zr_cond_signal(uint64_t c) { return -(int64_t)pthread_cond_signal((pthread_cond_t *)(uintptr_t)c); }\012";
-  v1841 = (uint64_t)INT64_C(123);
+  v1840 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_cond_signal(uint64_t c) { return -(int64_t)pthread_cond_signal((pthread_cond_t *)(uintptr_t)c); }\012";
+  v1841 = (uint64_t)INT64_C(128);
   v1842 = (uint64_t)(uintptr_t)&v1839;
   memcpy((void *)(uintptr_t)(v1842 + 0u), &v1840, sizeof v1840);
   memcpy((void *)(uintptr_t)(v1842 + 8u), &v1841, sizeof v1841);
@@ -198272,8 +198272,8 @@ b435:;
   v1854 = (uint64_t)(uintptr_t)&v1843;
   memcpy(&v1853, (const void *)(uintptr_t)(v1854 + 4u), sizeof v1853);
   v1855 = (uint8_t)INT64_C(0);
-  v1857 = (uint64_t)(uintptr_t)"static inline int64_t zr_cond_broadcast(uint64_t c) { return -(int64_t)pthread_cond_broadcast((pthread_cond_t *)(uintptr_t)c); }\012";
-  v1858 = (uint64_t)INT64_C(129);
+  v1857 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_cond_broadcast(uint64_t c) { return -(int64_t)pthread_cond_broadcast((pthread_cond_t *)(uintptr_t)c); }\012";
+  v1858 = (uint64_t)INT64_C(134);
   v1859 = (uint64_t)(uintptr_t)&v1856;
   memcpy((void *)(uintptr_t)(v1859 + 0u), &v1857, sizeof v1857);
   memcpy((void *)(uintptr_t)(v1859 + 8u), &v1858, sizeof v1858);
@@ -198298,8 +198298,8 @@ b439:;
   v1871 = (uint64_t)(uintptr_t)&v1860;
   memcpy(&v1870, (const void *)(uintptr_t)(v1871 + 4u), sizeof v1870);
   v1872 = (uint8_t)INT64_C(0);
-  v1874 = (uint64_t)(uintptr_t)"static inline int64_t zr_cond_destroy(uint64_t c) { return -(int64_t)pthread_cond_destroy((pthread_cond_t *)(uintptr_t)c); }\012";
-  v1875 = (uint64_t)INT64_C(125);
+  v1874 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_cond_destroy(uint64_t c) { return -(int64_t)pthread_cond_destroy((pthread_cond_t *)(uintptr_t)c); }\012";
+  v1875 = (uint64_t)INT64_C(130);
   v1876 = (uint64_t)(uintptr_t)&v1873;
   memcpy((void *)(uintptr_t)(v1876 + 0u), &v1874, sizeof v1874);
   memcpy((void *)(uintptr_t)(v1876 + 8u), &v1875, sizeof v1875);
@@ -198324,8 +198324,8 @@ b443:;
   v1888 = (uint64_t)(uintptr_t)&v1877;
   memcpy(&v1887, (const void *)(uintptr_t)(v1888 + 4u), sizeof v1887);
   v1889 = (uint8_t)INT64_C(0);
-  v1891 = (uint64_t)(uintptr_t)"static inline int64_t zr_word_get(void) { return (int64_t)zr_word; }\012";
-  v1892 = (uint64_t)INT64_C(69);
+  v1891 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_word_get(void) { return (int64_t)zr_word; }\012";
+  v1892 = (uint64_t)INT64_C(74);
   v1893 = (uint64_t)(uintptr_t)&v1890;
   memcpy((void *)(uintptr_t)(v1893 + 0u), &v1891, sizeof v1891);
   memcpy((void *)(uintptr_t)(v1893 + 8u), &v1892, sizeof v1892);
@@ -198350,8 +198350,8 @@ b447:;
   v1905 = (uint64_t)(uintptr_t)&v1894;
   memcpy(&v1904, (const void *)(uintptr_t)(v1905 + 4u), sizeof v1904);
   v1906 = (uint8_t)INT64_C(0);
-  v1908 = (uint64_t)(uintptr_t)"static inline int64_t zr_word_set(uint64_t value) { zr_word = value; return 0; }\012";
-  v1909 = (uint64_t)INT64_C(81);
+  v1908 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_word_set(uint64_t value) { zr_word = value; return 0; }\012";
+  v1909 = (uint64_t)INT64_C(86);
   v1910 = (uint64_t)(uintptr_t)&v1907;
   memcpy((void *)(uintptr_t)(v1910 + 0u), &v1908, sizeof v1908);
   memcpy((void *)(uintptr_t)(v1910 + 8u), &v1909, sizeof v1909);
@@ -198376,8 +198376,8 @@ b451:;
   v1922 = (uint64_t)(uintptr_t)&v1911;
   memcpy(&v1921, (const void *)(uintptr_t)(v1922 + 4u), sizeof v1921);
   v1923 = (uint8_t)INT64_C(0);
-  v1925 = (uint64_t)(uintptr_t)"static inline int64_t zr_guarded(uint64_t code, uint64_t first, uint64_t second) {\012";
-  v1926 = (uint64_t)INT64_C(83);
+  v1925 = (uint64_t)(uintptr_t)"static inline ZR_U int64_t zr_guarded(uint64_t code, uint64_t first, uint64_t second) {\012";
+  v1926 = (uint64_t)INT64_C(88);
   v1927 = (uint64_t)(uintptr_t)&v1924;
   memcpy((void *)(uintptr_t)(v1927 + 0u), &v1925, sizeof v1925);
   memcpy((void *)(uintptr_t)(v1927 + 8u), &v1926, sizeof v1926);

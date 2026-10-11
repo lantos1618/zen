@@ -151,18 +151,20 @@ const K = {SEND:1,PARK:2,RELEASE:3,REFUSE:4,TAKE:5,BREAK:6,BLOCK:7,UNBLOCK:8,SLE
 // base: how many earlier events were trimmed off the front (see trim).
 // up[i]: for a take, how many events back the take of its cause is (0: none
 // kept), from the id/cause columns.
-const T = {n:0, base:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null, up:null};
+// sc[i]: sends and parks before event i over the whole run, so a window's
+// send count is two lookups (sendsBefore), not a scan.
+const T = {n:0, base:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null, up:null, sc:null};
 const KEEP = 4000000;
 const queued = new Map(), takeAt = new Map();
 const meta = {workers:0, bound:256, names:new Map(), ended:false, lost:0};
-let offset = 0;
+let offset = 0, sends = 0;
 
 function grow(need){
   if (need <= T.cap) return;
   let cap = Math.max(65536, T.cap * 2); while (cap < need) cap *= 2;
   const re = (A, old) => { const a = new A(cap); if (old) a.set(old.subarray(0, T.n)); return a; };
   T.ns = re(Float64Array, T.ns); T.kind = re(Uint8Array, T.kind); T.from = re(Uint32Array, T.from);
-  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.took = re(Float64Array, T.took); T.up = re(Int32Array, T.up); T.cap = cap;
+  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.took = re(Float64Array, T.took); T.up = re(Int32Array, T.up); T.sc = re(Float64Array, T.sc); T.cap = cap;
 }
 
 function ingest(text){
@@ -179,7 +181,8 @@ function ingest(text){
     if (k === K.TAKE && f.length >= 8){ const id = +f[6], c = +f[7], g = T.base + i;
       if (c){ const p = takeAt.get(c); if (p !== undefined && p >= T.base) T.up[i] = g - p; }
       if (id) takeAt.set(id, g); }
-    if (k === K.SEND || k === K.PARK) queued.set(T.msg[i], T.base + i);
+    T.sc[i] = sends;
+    if (k === K.SEND || k === K.PARK){ sends++; queued.set(T.msg[i], T.base + i); }
     else if (k === K.TAKE || k === K.REFUSE || k === K.CLOSED || k === K.DROP){ const s = queued.get(T.msg[i]); if (s !== undefined){ if (s >= T.base) T.took[s - T.base] = T.ns[i]; queued.delete(T.msg[i]); } }
   }
   if (T.n > KEEP * 1.5) trim(T.n - KEEP);
@@ -192,7 +195,7 @@ function ingest(text){
 let base = null;
 function trim(d){
   const cur = M; M = base || fresh(); apply(d); base = M; M = cur;
-  for (const k of ["ns", "kind", "from", "to", "msg", "took", "up"]) T[k].copyWithin(0, d, T.n);
+  for (const k of ["ns", "kind", "from", "to", "msg", "took", "up", "sc"]) T[k].copyWithin(0, d, T.n);
   T.n -= d; T.base += d; base.upto = 0;
   for (const [id, g] of takeAt) if (g < T.base) takeAt.delete(id);
   FL.tree = null;
@@ -210,7 +213,7 @@ function header(line){
 // Replays events 0..upto into per-actor state; live mode appends.
 let M;
 function fresh(){
-  return {upto:0, actors:new Map(), edges:new Map(), pending:new Map(), running:new Map(),
+  return {upto:0, actors:new Map(), edges:new Map(), eby:new Map(), pending:new Map(), running:new Map(), busy:new Map(),
           workers:[], bars:[], msgs:[], fails:[], latency:[], done:0, cause:new Map(), turnId:0};
 }
 function actor(i){
@@ -235,10 +238,11 @@ function apply(upto){
     case K.SEND: case K.PARK: {
       const a = actor(to); if (from) actor(from).sent++;
       if (k === K.SEND) a.mail++; else a.parked++;
-      const key = from + ">" + to, e = M.edges.get(key) || {from, to, n:0};
-      e.n++; M.edges.set(key, e);
+      let em = M.eby.get(from); if (!em) M.eby.set(from, em = new Map());
+      let e = em.get(to); if (!e){ e = {from, to, n:0}; em.set(to, e); M.edges.set(from + ">" + to, e); }
+      e.n++;
       M.pending.set(m, {t, from}); a.last = t;
-      if (from){ for (const r of M.running.values()) if (r.actor === from){ M.cause.set(m, r); break; } }
+      if (from){ const r = M.busy.get(from); if (r) M.cause.set(m, r); }
       break; }
     case K.RELEASE: { const a = actor(to); a.parked = Math.max(0, a.parked - 1); a.mail++; break; }
     case K.REFUSE: { const a = actor(to); a.parked = Math.max(0, a.parked - 1); M.pending.delete(m);
@@ -250,11 +254,12 @@ function apply(upto){
       const p = M.pending.get(m); M.pending.delete(m);
       const q = p ? t - p.t : 0;
       const parent = M.cause.get(m); M.cause.delete(m);
-      M.running.set(from, {t, actor:to, q, src:p ? p.from : 0, id:++M.turnId, depth:parent ? parent.depth + 1 : 0});
+      const run = {t, actor:to, q, src:p ? p.from : 0, id:++M.turnId, depth:parent ? parent.depth + 1 : 0};
+      M.running.set(from, run); M.busy.set(to, run);
       keep(a.q, q, SAMPLE); keep(M.latency, {t, q}, 4096);
       worker(from).busyFrom = t; break; }
     case K.DONE: case K.FAIL: {
-      const r = M.running.get(from); M.running.delete(from);
+      const r = M.running.get(from); M.running.delete(from); if (r && M.busy.get(r.actor) === r) M.busy.delete(r.actor);
       const a = actor(to), start = r ? r.t : t, dur = t - start, name = nameOf(m);
       if (!a.type) a.type = typeOf(m);
       a.turns++; a.busy += dur; keep(a.run, dur, SAMPLE); M.done++;
@@ -292,8 +297,7 @@ function status(a){
   if (a.failed) return "failed";
   if (a.stop >= 0) return "stopped";
   if (a.blocked) return "blocked";
-  for (const r of M.running.values()) if (r.actor === a.i) return "run";
-  return "idle";
+  return M.busy.has(a.i) ? "run" : "idle";
 }
 function pct(arr, p){ if (!arr.length) return 0; const s = arr.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
 function ms(ns){ return ns >= 1e9 ? (ns / 1e9).toFixed(2) + " s" : ns >= 1e6 ? (ns / 1e6).toFixed(1) + " ms" : ns >= 1e3 ? (ns / 1e3).toFixed(1) + " µs" : Math.round(ns) + " ns"; }
@@ -315,21 +319,33 @@ function lastActivity(){
   for (let i = T.n - 1; i >= 0 && i >= T.n - 500000; i--){ const k = T.kind[i]; if (k === K.DONE || k === K.FAIL) return T.ns[i]; }
   return endNs();
 }
-function windowRate(ns, span){
-  const lo = indexAt(ns - span), hi = indexAt(ns); let n = 0;
-  for (let i = lo; i < hi; i++){ const k = T.kind[i]; if (k === K.SEND || k === K.PARK) n++; }
-  return n * 1e9 / span;
+function sendsBefore(i){ return i >= T.n ? sends : T.sc[i]; }
+function windowRate(ns, span){ return (sendsBefore(indexAt(ns)) - sendsBefore(indexAt(ns - span))) * 1e9 / span; }
+// Per-edge sends in the window before the cursor, as a sliding window over
+// global event indices: moving the cursor on only adds the events it passed
+// and drops those that fell out. Returns rate(from, to) in sends/s.
+const ER = {lo:0, hi:0, by:new Map()};
+function erAdd(i, d){
+  const k = T.kind[i]; if (k !== K.SEND && k !== K.PARK) return;
+  let m = ER.by.get(T.from[i]); if (!m) ER.by.set(T.from[i], m = new Map());
+  m.set(T.to[i], (m.get(T.to[i]) || 0) + d);
 }
 function edgeRates(ns, span){
-  const lo = indexAt(ns - span), hi = indexAt(ns), r = new Map();
-  for (let i = lo; i < hi; i++){ const k = T.kind[i]; if (k === K.SEND || k === K.PARK){ const key = T.from[i] + ">" + T.to[i]; r.set(key, (r.get(key) || 0) + 1); } }
-  for (const [k, v] of r) r.set(k, v * 1e9 / span);
-  return r;
+  const lo = T.base + indexAt(ns - span), hi = T.base + indexAt(ns);
+  if (lo < ER.lo || hi < ER.hi || lo > ER.hi || ER.lo < T.base){ ER.by.clear(); ER.lo = ER.hi = lo; }
+  for (let g = ER.hi; g < hi; g++) erAdd(g - T.base, 1);
+  for (let g = ER.lo; g < lo; g++) erAdd(g - T.base, -1);
+  ER.lo = lo; ER.hi = hi;
+  const s = 1e9 / span;
+  return (from, to) => { const m = ER.by.get(from); return m ? (m.get(to) || 0) * s : 0; };
 }
 
 // ---------------------------------------------------------------- render
 const $ = id => document.getElementById(id);
-function fit(c){ const r = c.getBoundingClientRect(), d = devicePixelRatio || 1;
+// Canvas sizes come from a ResizeObserver: reading getBoundingClientRect
+// every frame forces a layout after each DOM update.
+const sizes = new Map(), sizer = new ResizeObserver(es => { for (const e of es) sizes.set(e.target, e.target.getBoundingClientRect()); dirty = true; });
+function fit(c){ let r = sizes.get(c); if (!r){ r = c.getBoundingClientRect(); sizes.set(c, r); sizer.observe(c); } const d = devicePixelRatio || 1;
   if (c.width !== Math.round(r.width * d) || c.height !== Math.round(r.height * d)){ c.width = Math.round(r.width * d); c.height = Math.round(r.height * d); }
   const g = c.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); return [g, r.width, r.height]; }
 
@@ -341,7 +357,11 @@ function spark(id, vals, color){
   g.stroke();
 }
 
+// The header's numbers and sparklines redraw at most ten times a second.
+let headerAt = 0;
 function renderHeader(){
+  if (playing && performance.now() - headerAt < 100) return;
+  headerAt = performance.now();
   const span = 1e9, now = cursorNs, acts = [...M.actors.values()];
   const liveActs = acts.filter(a => a.stop < 0);
   $("sActors").textContent = liveActs.length + (acts.length > liveActs.length ? " / " + acts.length : "");
@@ -353,9 +373,9 @@ function renderHeader(){
   $("sFail").textContent = acts.filter(a => a.failed).length;
   $("sFail").className = acts.some(a => a.failed) ? "bad" : "";
   $("sEvents").textContent = (T.base + T.n).toLocaleString() + (T.base ? " · last " + (T.n / 1e6).toFixed(1) + "M kept" : "") + (meta.lost ? " (" + meta.lost + " lost)" : "");
-  const step = Math.max(endNs() / 40, 1e6), rates = [], lats = [];
-  for (let i = 39; i >= 0; i--){ const t = now - i * step; rates.push(windowRate(t, step));
-    const qs = M.latency.filter(l => l.t > t - step && l.t <= t).map(l => l.q); lats.push(qs.length ? pct(qs, .95) : 0); }
+  const step = Math.max(endNs() / 40, 1e6), rates = [], lats = [], qb = Array.from({length:40}, () => []);
+  for (const l of M.latency){ const j = Math.floor((now - l.t) / step); if (j >= 0 && j < 40) qb[j].push(l.q); }
+  for (let i = 39; i >= 0; i--){ rates.push(windowRate(now - i * step, step)); lats.push(qb[i].length ? pct(qb[i], .95) : 0); }
   spark("sparkRate", rates, "#4cc2ff"); spark("sparkLat", lats, "#d29922");
 }
 
@@ -367,11 +387,13 @@ function order(){
   return out;
 }
 
+let treeHtml = "";
 function renderTree(rows){
   const html = rows.slice(0, 1500).map(([a, d]) =>
     `<div class="row${a.i === selected ? " sel" : ""}" data-i="${a.i}" style="padding-left:${8 + d * 12}px">` +
     `<span class="st ${status(a)}"></span>${label(a.i)}<span class="n">${a.mail + a.parked}</span></div>`).join("");
-  $("treeRows").innerHTML = html + (rows.length > 1500 ? `<div class="row dim">+${rows.length - 1500} more</div>` : "");
+  const out = html + (rows.length > 1500 ? `<div class="row dim">+${rows.length - 1500} more</div>` : "");
+  if (out !== treeHtml){ treeHtml = out; $("treeRows").innerHTML = out; }
 }
 
 let nodes = [], topoMode = "tree";
@@ -426,7 +448,7 @@ function renderTopo(rows){
     const load = new Map(), hotLinks = new Set();
     for (const e of M.edges.values()){
       if (!pos.has(e.from) || !pos.has(e.to) || e.from === e.to) continue;
-      const r = rates.get(e.from + ">" + e.to) || 0; if (!r) continue;
+      const r = rates(e.from, e.to); if (!r) continue;
       const hot = e.from === selected || e.to === selected;
       for (const c of route(e.from, e.to).links){ load.set(c, (load.get(c) || 0) + r); if (hot) hotLinks.add(c); }
     }
@@ -476,7 +498,7 @@ function messageEdges(g, pos, nw, nh, rates, count){
     const maxN = Math.max(1, ...[...M.edges.values()].map(e => e.n));
     for (const e of M.edges.values()){
       const p = pos.get(e.from), q = pos.get(e.to); if (!p || !q) continue;
-      const r = rates.get(e.from + ">" + e.to) || 0, hot = e.from === selected || e.to === selected;
+      const r = rates(e.from, e.to), hot = e.from === selected || e.to === selected;
       g.strokeStyle = r > 0 ? (hot ? "rgba(76,194,255,.95)" : "rgba(76,194,255,.45)") : "rgba(120,130,150,.18)";
       g.lineWidth = 1 + 3 * Math.sqrt(e.n / maxN);
       const c = curve(p, q, nw, nh);
@@ -492,9 +514,14 @@ function messageEdges(g, pos, nw, nh, rates, count){
 // Force layout for the graph view: actors repel, message edges pull by how
 // many messages crossed them, spawn links pull a little. Positions persist
 // between frames, so each frame only refines the last.
-const fpos = new Map();
+const fpos = new Map(), fsim = {key:"", still:0};
 function settle(list, W, H, nw){
   const keep = new Set(list.map(a => a.i)), ids = [...keep];
+  // Settled with the same actors and size: rest, re-checking now and then as
+  // edge weights drift.
+  const key = ids.join(",") + "|" + W + "|" + H;
+  if (key === fsim.key && fsim.still > 0 && fsim.still++ % 30) return;
+  fsim.key = key;
   for (const a of list) if (!fpos.has(a.i)){
     const p = fpos.get(a.parent || 0) || {x:W / 2, y:H / 2};
     fpos.set(a.i, {x:p.x + (Math.random() - .5) * 120, y:p.y + (Math.random() - .5) * 120});
@@ -505,6 +532,7 @@ function settle(list, W, H, nw){
   for (const s of springs) s[2] /= maxW;
   for (const a of list) if (keep.has(a.parent)) springs.push([a.i, a.parent, .3]);
   const k = Math.sqrt(W * H / Math.max(1, ids.length)) * .55;
+  let moved = 0;
   for (let it = 0; it < 10; it++){
     const f = new Map(ids.map(i => [i, [0, 0]]));
     for (let x = 0; x < ids.length; x++) for (let y = x + 1; y < ids.length; y++){
@@ -521,11 +549,12 @@ function settle(list, W, H, nw){
     }
     for (const i of ids){ const p = fpos.get(i), v = f.get(i);
       v[0] += (W / 2 - p.x) * .02; v[1] += (H / 2 - p.y) * .04;
-      const m = Math.hypot(v[0], v[1]), step = Math.min(8, m) / Math.max(m, 1e-9);
+      const m = Math.hypot(v[0], v[1]), step = Math.min(8, m) / Math.max(m, 1e-9), ox = p.x, oy = p.y;
       p.x = Math.min(W - nw / 2 - 6, Math.max(nw / 2 + 6, p.x + v[0] * step));
-      p.y = Math.min(H - 24, Math.max(24, p.y + v[1] * step)); }
+      p.y = Math.min(H - 24, Math.max(24, p.y + v[1] * step));
+      if (it === 9) moved = Math.max(moved, Math.abs(p.x - ox) + Math.abs(p.y - oy)); }
   }
-  dirty = true;
+  if (moved > .3){ fsim.still = 0; dirty = true; } else if (!fsim.still) fsim.still = 1;
 }
 
 // Message edges bow to one side so a pair's two directions don't overlap.
@@ -574,9 +603,10 @@ function dots(g, pos, nw, nh, route){
   }
 }
 
+let inspHtml = "";
 function renderInspector(){
   const a = M.actors.get(selected);
-  if (!a){ $("inspBody").innerHTML = '<div class="kv"><span>select an actor</span></div>'; return; }
+  if (!a){ inspHtml = ""; $("inspBody").innerHTML = '<div class="kv"><span>select an actor</span></div>'; return; }
   const life = (a.stop >= 0 ? a.stop : cursorNs) - a.spawn, s = status(a), fill = (a.mail + a.parked) / meta.bound;
   const oldest = [...M.pending.entries()].length && a.mail ? oldestFor(a.i) : 0;
   const kv = (k, v, c) => `<div class="kv"><span>${k}</span><span class="${c || ""}">${v}</span></div>`;
@@ -593,7 +623,7 @@ function renderInspector(){
     (a.dropped ? kv("dropped", a.dropped, "bad") : "") +
     `<h3>recent messages</h3><table>` +
     a.recent.slice(-14).reverse().map(r => `<tr><td>${r.name.split(".").pop()}</td><td class="dim">${label(r.from)}</td><td class="r">${ms(r.q)}</td><td class="r${r.failed ? " bad" : ""}">${ms(r.dur)}</td></tr>`).join("") + `</table>`;
-  $("inspBody").innerHTML = h;
+  if (h !== inspHtml){ inspHtml = h; $("inspBody").innerHTML = h; }
 }
 function oldestFor(i){
   // Messages still pending to `i`: the earliest send among them.
@@ -616,13 +646,24 @@ function renderTimeline(rows){
   g.font = "10px ui-monospace,monospace";
   lanes.forEach((a, j) => { const y = 16 + j * 16; g.fillStyle = a.i === selected ? "#173149" : j % 2 ? "#121721" : "#0f141c";
     g.fillRect(0, y, W, 16); g.fillStyle = "#9aa4b2"; g.fillText(label(a.i).slice(0, 20), 6, y + 11); });
-  for (const b of M.bars){
-    if (b.t1 < t0 || b.t0 > t1) continue; const j = lane.get(b.to); if (j === undefined) continue;
-    const y = 16 + j * 16, xa = Math.max(lx, x(b.t0)), xb = Math.max(xa + 1.5, x(b.t1));
-    if (b.q > 0){ g.fillStyle = "rgba(210,153,34,.25)"; g.fillRect(Math.max(lx, x(b.t0 - b.q)), y + 7, xa - Math.max(lx, x(b.t0 - b.q)), 2); }
-    g.fillStyle = b.failed ? "#f85149" : "#3fb9a0"; g.fillRect(xa, y + 3, xb - xa, 10);
-    if (xb - xa > 50){ g.fillStyle = "#0b0e14"; g.fillText(b.name.split(".").pop(), xa + 3, y + 11); }
+  // Bars end in time order, so skip straight to the first one still in view.
+  // Bars and queue waits closer than half a pixel in a lane merge into one
+  // rectangle: thousands of sub-pixel turns cost one fillRect, not thousands.
+  const bars = M.bars; let lo = 0, hi = bars.length;
+  while (lo < hi){ const mid = (lo + hi) >> 1; if (bars[mid].t1 < t0) lo = mid + 1; else hi = mid; }
+  const runs = lanes.map(() => [0, -1, false, 0, -1]), labels = [];
+  const flushBar = (r, y) => { if (r[1] > r[0]){ g.fillStyle = r[2] ? "#f85149" : "#3fb9a0"; g.fillRect(r[0], y + 3, r[1] - r[0], 10); } };
+  const flushQ = (r, y) => { if (r[4] > r[3]){ g.fillStyle = "rgba(210,153,34,.25)"; g.fillRect(r[3], y + 7, r[4] - r[3], 2); } };
+  for (let i = lo; i < bars.length; i++){
+    const b = bars[i]; if (b.t0 > t1) continue; const j = lane.get(b.to); if (j === undefined) continue;
+    const y = 16 + j * 16, xa = Math.max(lx, x(b.t0)), xb = Math.max(xa + 1.5, x(b.t1)), r = runs[j];
+    if (b.q > 0){ const qa = Math.max(lx, x(b.t0 - b.q));
+      if (qa > r[4] + .5){ flushQ(r, y); r[3] = qa; } r[4] = Math.max(r[4], xa); }
+    if (xa > r[1] + .5 || r[2] !== b.failed){ flushBar(r, y); r[0] = xa; r[1] = xb; r[2] = b.failed; } else r[1] = Math.max(r[1], xb);
+    if (xb - xa > 50) labels.push([b, xa, y]);
   }
+  runs.forEach((r, j) => { flushQ(r, 16 + j * 16); flushBar(r, 16 + j * 16); });
+  g.fillStyle = "#0b0e14"; for (const [b, xa, y] of labels) g.fillText(b.name.split(".").pop(), xa + 3, y + 11);
   g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(1) + " ms", x(t) - 16, 11); }
 }
 
@@ -1015,7 +1056,7 @@ async function poll(){
   try {
     const r = await fetch("/trace?from=" + offset, {cache:"no-store"});
     const start = +(r.headers.get("X-Trace-Start") || 0), text = await r.text();
-    if (start !== offset){ T.n = 0; T.base = 0; base = null; queued.clear(); takeAt.clear(); FL.tree = null; offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
+    if (start !== offset){ T.n = 0; T.base = 0; base = null; queued.clear(); takeAt.clear(); FL.tree = null; sends = 0; ER.by.clear(); ER.lo = ER.hi = 0; offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
     if (text.length){ more = text.length > 1048576; ingest(text); offset += new TextEncoder().encode(text).length; dirty = true; }
     $("liveDot").classList.toggle("on", !meta.ended);
     $("liveText").textContent = meta.ended ? "program exited" : "running";
@@ -1032,7 +1073,7 @@ setInterval(poll, 400); poll();
     dirty = true;
   }
   if (dirty){ dirty = false; render(); }
-  setTimeout(() => requestAnimationFrame(frame), playing ? 33 : 120);
+  if (playing) requestAnimationFrame(frame); else setTimeout(() => requestAnimationFrame(frame), 120);
 })();
 </script>
 </body>

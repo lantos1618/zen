@@ -25,6 +25,8 @@
 { Move, Unary, Binary, Invocation, Print, Convert, Load, Store, CopyMem } = gen.gen_ir
 { Write, SysCall, Pages, Branch, Op, Const } = gen.gen_ir
 { Update, Compare, IndirectCall, HostCall } = gen.gen_ir
+TakeAddress = gen.gen_ir.Address
+{ coalesce, retarget } = gen.gen_asm_coalesce
 { MachineCall } = gen.gen_ir_machine
 { Flow, flow, reads, written, exit_read, successors, pure, clobbers, aggregate, zeros, group, NONE } = gen.gen_asm_flow
 
@@ -407,7 +409,10 @@ Propagate = {
             )),
             Text(_)          => instruction,
             Cast(v)          => self.fold(v.out, self.at(v.input)),
-            AddressOf(_)     => instruction,
+            AddressOf(v)     => Instruction.AddressOf(TakeAddress(
+                out: v.out,
+                slot: self.at(v.slot)
+            )),
             LoadValue(v)     => Instruction.LoadValue(Load(
                 out: v.out,
                 base: self.at(v.base),
@@ -586,8 +591,10 @@ Propagate = {
 propagate = (alloc: Alloc, info: Flow) Res<Func, AllocError> {
     function = info.function;
     slots    = function.slots.len;
+    // Records start from those `coalesce` merges; words are added below.
+    merged = coalesce(alloc, function).try();
     alias ::= alloc.Vec<usize>();
-    Range(0, slots).loop((i) { alias.add(i).try(); });
+    Range(0, slots).loop((i) { alias.add(merged.get(i).value_or(i)).try(); });
     function.blocks.loop((block) {
         block.code.loop((instruction) {
             instruction.match({
@@ -636,7 +643,7 @@ propagate = (alloc: Alloc, info: Flow) Res<Func, AllocError> {
         state.stamp = b + 1;
         code ::= alloc.Vec<Instruction>();
         block.code.loop((instruction) {
-            renamed = state.rename(alloc, instruction).try();
+            renamed = retarget(state.rename(alloc, instruction).try(), merged);
             renamed.match({
                 Copy(v) => (v.out != v.source).then(() {
                     code.add(renamed).try();

@@ -214,12 +214,20 @@ named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
                 decl.kind.match({
                     // A struct of functions without storage is a bound: its
                     // values are an implementor tag and a receiver pointer.
-                    Struct(s) => behaviour_only(s).match({
-                        true  => Ok(Shape(
-                            class: Scalar.Block(Layout(size: 16, align: 8)),
-                            form: Form.Handle(n.decl)
+                    // A `c.record` takes its layout from the C header; only
+                    // the legacy C backend checks and spells it.
+                    Struct(s) => s.native_record.match({
+                        true  => Err(unsupported(
+                            nowhere(),
+                            "a native C record"
                         )),
-                        false => lo.record(n, s),
+                        false => behaviour_only(s).match({
+                            true  => Ok(Shape(
+                                class: Scalar.Block(Layout(size: 16, align: 8)),
+                                form: Form.Handle(n.decl)
+                            )),
+                            false => lo.record(n, s),
+                        }),
                     }),
                     Enum(_)   => {
                         found ::= lo.alloc.Vec<Case>();

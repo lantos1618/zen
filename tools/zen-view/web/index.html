@@ -516,6 +516,10 @@ function messageEdges(g, pos, nw, nh, rates, count){
 // between frames, so each frame only refines the last.
 const fpos = new Map(), fsim = {key:"", still:0};
 function settle(list, W, H, nw){
+  // A hidden or tiny canvas (narrow window) has no room to lay out in, and a
+  // zero spring length would turn every position into NaN for good.
+  if (W < nw + 24 || H < 60) return;
+  for (const [i, p] of fpos) if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) fpos.delete(i);
   const keep = new Set(list.map(a => a.i)), ids = [...keep];
   // Settled with the same actors and size: rest, re-checking now and then as
   // edge weights drift.

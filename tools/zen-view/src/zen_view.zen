@@ -142,7 +142,7 @@ Chunk = { start: usize, text: str }
 // poll costs the same on a multi-gigabyte trace as on a small one.
 chunk = (a: Alloc, trace: str, from: usize) Res<Chunk, AllocError | FileError> {
     file = open_read(a, trace).try();
-    @scope.defer(() { file.close(); });
+    @scope.defer(() { file.close().ignore(); });
     size  = file.size().try();
     start = (from <= size).match({ true => from, false => 0 });
     n     = (size - start > CHUNK_MAX).match({ true => CHUNK_MAX, false => size - start });

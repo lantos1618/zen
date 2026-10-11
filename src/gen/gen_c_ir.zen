@@ -10,7 +10,7 @@
 { Vec } = std.collections
 { Res, Ok, Range } = std.core
 { Span } = std.source
-{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print, Move } = gen.gen_ir
 { Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
 { trap_message, width, signed, integer, float } = gen.gen_ir
 { IrFeature } = gen.gen_ir_feature
@@ -37,6 +37,16 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         escaped: a.Vec<bool>(),
         stored: a.Vec<bool>(),
         direct: a.Vec<bool>(),
+        writes: a.Vec<usize>(),
+        aliased: a.Vec<bool>(),
+        reads: a.Vec<usize>(),
+        addressed: a.Vec<bool>(),
+        home: a.Vec<usize>(),
+        earliest: a.Vec<usize>(),
+        latest: a.Vec<usize>(),
+        scattered: a.Vec<bool>(),
+        target: a.Vec<usize>(),
+        named: a.Vec<bool>(),
         copies: 0
     );
     writer.program(program).try();
@@ -66,11 +76,26 @@ C = {
     // From `survey`, per slot of one function: the slot an address slot
     // points at (plus one; zero for none), whether that slot's address
     // leaves loads (`escaped`), is stored through (`stored`), and whether an
-    // instruction writes the slot itself (`direct`).
+    // instruction writes the slot itself (`direct`, `writes` times), and
+    // whether the slot is another one renamed (`aliased`, see `same`).
     origin :: Vec<usize>,
     escaped :: Vec<bool>,
     stored :: Vec<bool>,
     direct :: Vec<bool>,
+    writes :: Vec<usize>,
+    aliased :: Vec<bool>,
+    // From `places`, per slot: operand reads, whether its address is taken,
+    // the one block that mentions it (plus one) unless `scattered`, and its
+    // first and last instruction there. An aliased slot names `target` (plus
+    // one); a `named` slot is some alias's target.
+    reads :: Vec<usize>,
+    addressed :: Vec<bool>,
+    home :: Vec<usize>,
+    earliest :: Vec<usize>,
+    latest :: Vec<usize>,
+    scattered :: Vec<bool>,
+    target :: Vec<usize>,
+    named :: Vec<bool>,
     // `zc` copies made for borrowed arguments in the current function.
     copies :: usize,
 
@@ -172,11 +197,31 @@ C = {
         self.escaped.clear();
         self.stored.clear();
         self.direct.clear();
+        self.writes.clear();
+        self.aliased.clear();
+        self.reads.clear();
+        self.addressed.clear();
+        self.home.clear();
+        self.earliest.clear();
+        self.latest.clear();
+        self.scattered.clear();
+        self.target.clear();
+        self.named.clear();
         Range(0, count).loop((_) {
             self.origin.add(0).try();
             self.escaped.add(false).try();
             self.stored.add(false).try();
             self.direct.add(false).try();
+            self.writes.add(0).try();
+            self.aliased.add(false).try();
+            self.reads.add(0).try();
+            self.addressed.add(false).try();
+            self.home.add(0).try();
+            self.earliest.add(0).try();
+            self.latest.add(0).try();
+            self.scattered.add(false).try();
+            self.target.add(0).try();
+            self.named.add(false).try();
         });
         function.blocks.loop((block) {
             block.code.loop((instruction) {
@@ -205,6 +250,7 @@ C = {
             self.escaped.set(slot, true);
         });
         self.origin.set(out, slot + 1);
+        self.addressed.set(slot, true);
     }
 
     // A load base or copy source only reads through an address; any other
@@ -310,7 +356,158 @@ C = {
         (at != 0).then(() { self.stored.set(at - 1, true); });
     }
 
-    wrote = (self :: @Self, slot: usize) { self.direct.set(slot, true); }
+    wrote = (self :: @Self, slot: usize) {
+        self.direct.set(slot, true);
+        self.writes.set(slot, self.writes.get(slot).value_or(0) + 1);
+    }
+
+    // A block copied from a slot that never changes again, into a slot only
+    // that copy writes, holds the source's value wherever it is read: the
+    // verifier puts the copy before every read, and the source before it.
+    same = (self: @Self, f: Func, copy: Move) bool {
+        is_block(slot_ty(f, copy.out)) && copy.out != copy.source
+            && copy.out >= f.parameters
+            && self.writes.get(copy.out).value_or(2) == 1
+            && self.fixed(copy.out)
+            && self.fixed(copy.source)
+            && self.once(f, copy.source)
+    }
+
+
+    // The copy's source, a block local no alias has claimed whose address
+    // stays put, is read only by the copy, so its storage can be the
+    // destination's.
+    plain = (self: @Self, f: Func, copy: Move) bool {
+        is_block(slot_ty(f, copy.out)) && copy.out != copy.source
+            && copy.source >= f.parameters
+            && copy.out >= f.parameters
+            && self.target.get(copy.source).value_or(1) == 0
+            && !self.named.get(copy.source).value_or(true)
+            && !self.escaped.get(copy.source).value_or(true)
+            && self.reads.get(copy.source).value_or(0) == 1
+    }
+
+    // Nothing runs between a copy into the returned slot and the return.
+    returned = (self: @Self, f: Func, b: usize, k: usize, copy: Move) bool {
+        f.blocks.get(b).match({
+            Ok(block) => k + 1 == block.code.len && self.plain(f, copy)
+                && self.target.get(copy.out).value_or(1) == 0
+                && !self.named.get(copy.out).value_or(true)
+                && !self.addressed.get(copy.out).value_or(true)
+                && self.reads.get(copy.out).value_or(0) == 1
+                && self.writes.get(copy.out).value_or(0) == 1
+                && returns(f, block.exit, copy.out),
+            None      => false,
+        })
+    }
+
+
+    // A source mentioned only in the copy's block, up to the copy, is built
+    // in the destination if nothing in between touches the destination.
+    into = (self: @Self, f: Func, b: usize, k: usize, copy: Move) bool {
+        dest = self.root(copy.out);
+        self.plain(f, copy)
+            && !self.scattered.get(copy.source).value_or(true)
+            && self.home.get(copy.source).value_or(0) == b + 1
+            && self.latest.get(copy.source).value_or(0) == k
+            && !self.escaped.get(dest).value_or(true)
+            && self.untouched(
+                f,
+                b,
+                self.earliest.get(copy.source).value_or(0),
+                k,
+                dest
+            )
+    }
+
+    untouched = (self: @Self, f: Func, b: usize, from: usize, to: usize,
+                 dest: usize) bool {
+        clear ::= true;
+        f.blocks.get(b).match({
+            Ok(block) => Range(from, to).loop((k) {
+                block.code.get(k).match({
+                    Ok(instruction) => mentions(instruction, (slot, read) {
+                        self.touches(slot, dest).then(() { clear = false; });
+                    }),
+                    None            => (),
+                });
+            }),
+            None      => { clear = false; },
+        });
+        clear
+    }
+
+    touches = (self: @Self, slot: usize, dest: usize) bool {
+        at = self.origin.get(slot).value_or(0);
+        self.root(slot) == dest || (at != 0 && self.root(at - 1) == dest)
+    }
+
+    root = (self: @Self, slot: usize) usize {
+        to = self.target.get(slot).value_or(0);
+        (to == 0).match({ true => slot, false => self.root(to - 1) })
+    }
+
+    rename = (self :: @Self, from: usize, to: usize) Res<(), AllocError> {
+        self.target.set(from, to + 1);
+        self.named.set(to, true);
+        self.out.fmt("#define v{} v{}\n", from, to)
+    }
+
+    places = (self :: @Self, function: Func) {
+        function.blocks.loop((h, b, block) {
+            block.code.loop((g, k, instruction) {
+                mentions(
+                    instruction,
+                    (slot, read) { self.mention(slot, read, b, k); }
+                );
+            });
+            block.exit.match({
+                Return(slot)   => self.mention(slot, true, b, block.code.len),
+                Branch(branch) => self.mention(
+                    branch.value,
+                    true,
+                    b,
+                    block.code.len
+                ),
+                _              => (),
+            });
+        });
+    }
+
+    mention = (self :: @Self, slot: usize, read: bool, b: usize, k: usize) {
+        read.then(() {
+            self.reads.set(slot, self.reads.get(slot).value_or(0) + 1);
+        });
+        self.mark(slot, b, k);
+        at = self.origin.get(slot).value_or(0);
+        (at != 0).then(() { self.mark(at - 1, b, k); });
+    }
+
+    mark = (self :: @Self, slot: usize, b: usize, k: usize) {
+        (self.home.get(slot).value_or(0) == 0).match({
+            true  => {
+                self.home.set(slot, b + 1);
+                self.earliest.set(slot, k);
+                self.latest.set(slot, k);
+            },
+            false => (self.home.get(slot).value_or(0) == b + 1).match({
+                true  => { self.latest.set(slot, k); },
+                false => { self.scattered.set(slot, true); },
+            }),
+        });
+    }
+
+    once = (self: @Self, f: Func, slot: usize) bool {
+        self.writes.get(slot).value_or(2)
+            + (slot < f.parameters).match({ true => 1, false => 0 })
+            <= 1
+    }
+
+    // No address of the slot is stored through or leaves loads.
+    fixed = (self: @Self, slot: usize) bool {
+        !self.escaped.get(slot).value_or(true)
+            && !self.stored.get(slot).value_or(true)
+    }
 
     // The typedef for an aggregate class, once per layout.
     need = (self :: @Self, ty: Scalar) Res<(), AllocError> {
@@ -350,18 +547,46 @@ C = {
         });
         self.survey(function).try();
         self.copies = 0;
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    Copy(copy) => self.same(function, copy).then(() {
+                        self.aliased.set(copy.out, true);
+                        self.target.set(copy.out, copy.source + 1);
+                        self.named.set(copy.source, true);
+                        self.out.fmt("#define v{} v{}\n", copy.out, copy.source)
+                            .try();
+                    }),
+                    _          => (),
+                });
+            });
+        });
+        self.places(function);
+        function.blocks.loop((h, b, block) {
+            block.code.loop((g, k, instruction) {
+                instruction.match({
+                    Copy(copy) => (self.returned(function, b, k, copy)
+                        || self.into(function, b, k, copy)).then(() {
+                        self.rename(copy.source, copy.out).try();
+                    }),
+                    _          => (),
+                });
+            });
+        });
         // The verifier has proved every read follows a write, so zeroing is
         // only a hint: an optimizer folds the zeroed scalars well, while an
         // unoptimized build would store each one on every call (ZR_Z).
         Range(function.parameters, function.slots.len).loop((i) {
             ty = slot_ty(function, i);
             self.need(ty).try();
-            self.out.add("  ZR_U ").try();
-            self.out.ctype(ty).try();
-            is_block(ty).match({
-                true  => self.out.fmt(" v{};\n", i),
-                false => self.out.fmt(" v{} ZR_Z;\n", i),
-            }).try();
+            (self.target.get(i).value_or(0) == 0).then(() {
+                self.out.add("  ZR_U ").try();
+                self.out.ctype(ty).try();
+                is_block(ty).match({
+                    true  => self.out.fmt(" v{};\n", i),
+                    false => self.out.fmt(" v{} ZR_Z;\n", i),
+                }).try();
+            });
         });
         self.labels.clear();
         function.blocks.loop((_) { self.labels.add(false).try(); });
@@ -393,6 +618,11 @@ C = {
         self.out.add("}\n").try();
         Range(0, function.parameters).loop((i) {
             self.by_pointer(index, i).then(() {
+                self.out.fmt("#undef v{}\n", i).try();
+            });
+        });
+        Range(function.parameters, function.slots.len).loop((i) {
+            (self.target.get(i).value_or(0) != 0).then(() {
                 self.out.fmt("#undef v{}\n", i).try();
             });
         });
@@ -454,11 +684,11 @@ C = {
                   Res<(), AllocError> {
         instruction.match({
             Constant(value)     => self.constant(f, value.out, value.value),
-            Copy(value)         => self.out.fmt(
-                "  v{} = v{};\n",
-                value.out,
-                value.source
-            ),
+            Copy(value)         => (self.root(value.source)
+                == self.root(value.out)).match({
+                true  => Ok,
+                false => self.out.fmt("  v{} = v{};\n", value.out, value.source),
+            }),
             UnaryValue(value)   => self.unary(f, value),
             BinaryValue(value)  => self.binary(f, value),
             Invoke(value)       => self.invoke(f, value),
@@ -608,7 +838,8 @@ C = {
 
     copied = (self: @Self, call: Invocation, i: usize, slot: usize) bool {
         self.by_pointer(call.function, i)
-            && (self.escaped.get(slot).value_or(true) || slot == call.out)
+            && (self.escaped.get(self.root(slot)).value_or(true)
+                || self.root(slot) == self.root(call.out))
     }
 
     args = (self :: @Self, args: Vec<usize>) Res<(), AllocError> {
@@ -1328,4 +1559,117 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  return 0;\n").try();
     out.add("}\n").try();
     Ok
+}
+
+// Every slot an instruction names, and whether it reads that slot.
+mentions = (instruction: Instruction, visit: (slot: usize, read: bool) ()) {
+    instruction.match({
+        Constant(v)     => visit(v.out, false),
+        Copy(v)         => {
+            visit(v.out, false);
+            visit(v.source, true);
+        },
+        UnaryValue(v)   => {
+            visit(v.out, false);
+            visit(v.input, true);
+        },
+        BinaryValue(v)  => {
+            visit(v.out, false);
+            visit(v.left, true);
+            visit(v.right, true);
+        },
+        Invoke(v)       => {
+            visit(v.out, false);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        PrintValue(v)   => visit(v.value, true),
+        Text(_)         => (),
+        Cast(v)         => {
+            visit(v.out, false);
+            visit(v.input, true);
+        },
+        AddressOf(v)    => {
+            visit(v.out, false);
+            visit(v.slot, false);
+        },
+        LoadValue(v)    => {
+            visit(v.out, false);
+            visit(v.base, true);
+        },
+        StoreValue(v)   => {
+            visit(v.base, true);
+            visit(v.value, true);
+        },
+        CopyBytes(v)    => {
+            visit(v.dest, true);
+            visit(v.source, true);
+            visit(v.bytes, true);
+        },
+        Bytes(v)        => visit(v.out, false),
+        WriteOut(v)     => {
+            visit(v.data, true);
+            visit(v.len, true);
+        },
+        System(v)       => {
+            visit(v.out, false);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        Startup(v)      => visit(v.out, false),
+        MapPages(v)     => {
+            visit(v.out, false);
+            visit(v.bytes, true);
+        },
+        UnmapPages(s)   => visit(s, true),
+        SysConst(v)     => visit(v.out, false),
+        Flush           => (),
+        Machine(v)      => {
+            v.outs.loop((slot) { visit(slot, false); });
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        Host(v)         => {
+            visit(v.out, false);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        Wait(s)         => visit(s, false),
+        AtomicLoad(v)   => {
+            visit(v.out, false);
+            visit(v.base, true);
+        },
+        AtomicStore(v)  => {
+            visit(v.base, true);
+            visit(v.value, true);
+        },
+        AtomicUpdate(v) => {
+            visit(v.out, false);
+            visit(v.base, true);
+            visit(v.value, true);
+        },
+        CompareSwap(v)  => {
+            visit(v.out, false);
+            visit(v.base, true);
+            visit(v.expected, true);
+            visit(v.desired, true);
+        },
+        CodeAddress(v)  => visit(v.out, false),
+        InvokeAt(v)     => {
+            visit(v.out, false);
+            visit(v.target, true);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+    })
+}
+
+returns = (f: Func, exit: Terminator, slot: usize) bool {
+    exit.match({
+        Return(value) => value == slot,
+        Jump(to)      => f.blocks.get(to).match({
+            Ok(next) => next.code.len == 0
+                && next.exit.match({
+                    Return(value) => value == slot,
+                    _             => false,
+                }),
+            None     => false,
+        }),
+        _             => false,
+    })
 }

@@ -49,6 +49,30 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(selected.returncode, 0, selected.stdout + selected.stderr)
         self.assertNotIn("ok first", selected.stdout)
 
+    def test_seed_sweep_reports_the_first_failing_seed_and_its_rerun(self):
+        self.write("flaky.zen", '{ Env } = std.env\n'
+                   'main = (env: Env) i32 {\n'
+                   '    seed   = env.var("ZEN_ACTOR_SEED").value_or("");\n'
+                   '    faults = env.var("ZEN_ACTOR_FAULTS").value_or("");\n'
+                   '    (seed.eq("3") || (seed.eq("2") && faults.eq("9"))).match({ true => 1, false => 0 })\n'
+                   '}\n')
+        self.build_file('b.exe_test("steady", {src: Path("pass.zen"), deps: []}).try();\n'
+                        'b.exe_test("flaky", {src: Path("flaky.zen"), deps: []}).try();')
+        swept = self.run_zen("test", "--seeds", "5")
+        self.assertEqual(swept.returncode, 1, swept.stdout + swept.stderr)
+        self.assertIn("ok steady (5 seeds)\nnot ok flaky (seed 3, exit 1)\n", swept.stdout)
+        self.assertIn("  rerun: ZEN_ACTOR_SEED=3 ", swept.stdout)
+        self.assertIn("zen test: 1 passed, 1 failed (8 runs)", swept.stdout)
+        rerun = swept.stdout.split("  rerun: ", 1)[1].splitlines()[0].split()
+        replay = subprocess.run(["env", *rerun], cwd=self.root, capture_output=True, timeout=30)
+        self.assertEqual(replay.returncode, 1)
+        faulted = self.run_zen("test", "flaky", "--seeds", "5", "--faults", "9")
+        self.assertIn("not ok flaky (seed 2, exit 1)", faulted.stdout)
+        self.assertIn("  rerun: ZEN_ACTOR_SEED=2 ZEN_ACTOR_FAULTS=9 ", faulted.stdout)
+        unseeded = self.run_zen("test", "--faults", "9")
+        self.assertEqual(unseeded.returncode, 1, unseeded.stdout + unseeded.stderr)
+        self.assertIn("--faults needs --seeds", unseeded.stdout)
+
     def test_chaining_requires_error_propagation(self):
         self.build_file('b.exe("app", {src: Path("pass.zen"), deps: []})\n'
                         ' .exe("other", {src: Path("pass.zen"), deps: []}).try();')

@@ -1,0 +1,291 @@
+// std.proc's POSIX floor on the kernel interface, for the native backend.
+// Each function is the native meaning of one bodiless `zg_os_proc_*`
+// declaration in std.proc; the C backend supplies its own over libc.
+
+{ Alloc, Ptr } = std.mem
+{ str } = std.text
+{ Res, Ok, Err, None, Range, loop } = std.core
+{ read, write, close, exit_group, envp, env_var, c_view, read_full } = std.sys
+{ platform_darwin, eintr, o_cloexec, Pages, NO_MEMORY, STDOUT, STDERR } = std.sys
+{ pipe2, fork, execve, dup3, chdir, wait4, kill, ppoll, poll, ioctl } = std.sys
+
+SIGCHLD: usize = 17
+SIGKILL: i32 = 9
+EACCES: i64 = 13
+ENOENT: i64 = 2
+// Darwin's FIOCLEX: mark a descriptor close-on-exec.
+FIOCLEX_DARWIN: usize = 536897025
+
+darwin = () bool { platform_darwin() == 1 }
+
+// A kernel -errno as the positive error number posix_spawn reports.
+errno_of = (rc: i64) i32 { (0 - rc).to_i32().value_or(1) }
+
+// -2 when interrupted, -1 for any other failure.
+failed = (rc: i64) i32 {
+    (rc == 0 - eintr()).match({ true => -2, false => -1 })
+}
+
+// A close-on-exec pipe into fds[0] (read) and fds[1] (write); 0 or -1.
+proc_pipe* = (fds: Ptr<i32>) i32 {
+    flags = darwin().match({ true => 0, false => o_cloexec() });
+    (pipe2(fds, flags) < 0).match({
+        true  => -1,
+        false => darwin().match({
+            true  => (ioctl(fds.read(0), FIOCLEX_DARWIN) < 0 || ioctl(fds.read(1), FIOCLEX_DARWIN) < 0).match({
+                true  => {
+                    close(fds.read(0));
+                    close(fds.read(1));
+                    -1
+                },
+                false => 0,
+            }),
+            false => 0,
+        }),
+    })
+}
+
+proc_close* = (fd: i32) {
+    (fd >= 0).then(() { close(fd); });
+}
+
+// Run argv[0] (searched on PATH unless it names a path) in `cwd` when given,
+// with stdout/stderr on `out`/`err` when >= 0. 0 with the child's id in
+// `pid`, or the error number: a failed exec is reported, as by posix_spawnp.
+proc_spawn* = (
+    cwd  : Ptr<u8>,
+    argv : Ptr<Ptr<u8>>,
+    out  : i32,
+    err  : i32,
+    pid  : Ptr<i32>
+) i32 {
+    scratch = Pages();
+    scratch.raw(8, 4).match({
+        Err(_)  => 12,
+        Ok(buf) => {
+            report = buf.to<i32>();
+            rc     = spawn_reporting(cwd, argv, out, err, pid, report);
+            scratch.free(buf);
+            rc
+        },
+    })
+}
+
+// The child writes its exec failure into a close-on-exec pipe; a clean
+// exec closes it with nothing written.
+spawn_reporting = (
+    cwd    : Ptr<u8>,
+    argv   : Ptr<Ptr<u8>>,
+    out    : i32,
+    err    : i32,
+    pid    : Ptr<i32>,
+    report : Ptr<i32>
+) i32 {
+    (proc_pipe(report) == 0).match({
+        false => 24,
+        true  => {
+            child = fork(SIGCHLD, 0, 0, 0, 0);
+            (child == 0).then(() {
+                exec_child(cwd, argv, out, err, report.read(1));
+            });
+            close(report.read(1));
+            (child < 0).match({
+                true  => {
+                    close(report.read(0));
+                    errno_of(child)
+                },
+                false => {
+                    id   = child.to_i32().value_or(-1);
+                    code = exec_failure(report.read(0));
+                    close(report.read(0));
+                    (code == 0).match({
+                        true  => pid.write(0, id),
+                        false => reap(id),
+                    });
+                    code
+                },
+            })
+        },
+    })
+}
+
+// The error number the child reported, or 0 when exec succeeded.
+exec_failure = (fd: i32) i32 {
+    scratch = Pages();
+    scratch.raw(4, 4).match({
+        Err(_)  => 0,
+        Ok(buf) => {
+            got  = read_full(fd, buf, 4).match({
+                Ok(n)  => n,
+                Err(_) => 0,
+            });
+            code = (got == 4).match({
+                true  => buf.to<i32>().read(0),
+                false => 0,
+            });
+            scratch.free(buf);
+            code
+        },
+    })
+}
+
+// Collect a child whose exec failed.
+reap = (id: i32) {
+    scratch = Pages();
+    scratch.raw(4, 4).match({
+        Ok(buf) => {
+            rc ::= wait4(id, buf.to<i32>(), 0, 0);
+            loop(() { rc == 0 - eintr() }, (h) {
+                rc = wait4(id, buf.to<i32>(), 0, 0);
+            });
+            scratch.free(buf);
+        },
+        Err(_)  => (),
+    });
+}
+
+// In the forked child: set up and exec, or report why not and exit 127.
+exec_child = (
+    cwd    : Ptr<u8>,
+    argv   : Ptr<Ptr<u8>>,
+    out    : i32,
+    err    : i32,
+    report : i32
+) {
+    rc :: i64 = 0;
+    (!cwd.is_null()).then(() { rc = chdir(cwd); });
+    (rc >= 0 && out >= 0).then(() { rc = dup3(out, STDOUT, 0); });
+    (rc >= 0 && err >= 0).then(() { rc = dup3(err, STDERR, 0); });
+    (rc >= 0).then(() { rc = exec_search(argv); });
+    scratch = Pages();
+    scratch.raw(4, 4).match({
+        Ok(buf) => {
+            buf.to<i32>().write(0, errno_of(rc));
+            write(report, buf, 4);
+        },
+        Err(_)  => (),
+    });
+    exit_group(127);
+}
+
+// execve argv[0] directly when it holds a '/', else each PATH entry in
+// turn. Returns only on failure: -EACCES if any candidate was denied,
+// else -ENOENT.
+exec_search = (argv: Ptr<Ptr<u8>>) i64 {
+    file = argv.read(0);
+    name = c_view(file);
+    name.contains("/").match({
+        true  => execve(file, argv, envp()),
+        false => {
+            dirs    = env_var("PATH").value_or("/bin:/usr/bin");
+            scratch = Pages();
+            scratch.raw(dirs.len + name.len + 3, 1).match({
+                Err(_)  => NO_MEMORY,
+                Ok(buf) => {
+                    denied :: bool = false;
+                    start  :: usize = 0;
+                    Range<usize>(0, dirs.len + 1).loop((i) {
+                        (i == dirs.len || dirs.index(i) == ':').then(() {
+                            dir = dirs.slice(start, i);
+                            at :: usize = 1;
+                            buf.write(0, '.');
+                            (dir.len > 0).then(() {
+                                buf.copy_from(dir.ptr(), dir.len);
+                                at = dir.len;
+                            });
+                            buf.write(at, '/');
+                            buf.offset(at + 1).copy_from(name.ptr(), name.len);
+                            buf.write(at + 1 + name.len, 0);
+                            (execve(buf, argv, envp()) == 0 - EACCES).then(() {
+                                denied = true;
+                            });
+                            start = i + 1;
+                        });
+                    });
+                    denied.match({ true => 0 - EACCES, false => 0 - ENOENT })
+                },
+            })
+        },
+    })
+}
+
+// Readiness of the two pipes: bit 1 stdout, bit 2 stderr (hang-up counts,
+// so the caller drains to EOF); -2 when interrupted, -1 on failure.
+proc_poll* = (out: i32, err: i32) i32 {
+    scratch = Pages();
+    scratch.raw(16, 8).match({
+        Err(_)  => -1,
+        Ok(buf) => {
+            fds = buf.to<i32>();
+            // struct pollfd { int fd; short events = POLLIN; short revents; }
+            fds.write(0, out);
+            fds.write(1, 1);
+            fds.write(2, err);
+            fds.write(3, 1);
+            rc     = darwin().match({
+                true  => poll(buf, 2, -1),
+                false => ppoll(buf, 2, 0, 0, 8),
+            });
+            first  = fds.read(1) / 65536;
+            second = fds.read(3) / 65536;
+            scratch.free(buf);
+            (rc < 0).match({
+                true  => failed(rc),
+                false => ((first / 32) % 2 == 1 || (second / 32) % 2 == 1).match({
+                    true  => -1,
+                    false => (first != 0).match({ true => 1, false => 0 }) + (second != 0).match({ true => 2, false => 0 }),
+                }),
+            })
+        },
+    })
+}
+
+// 1 with `count` bytes read, 0 at EOF; -2 when interrupted, -1 on failure.
+proc_read* = (fd: i32, buf: Ptr<u8>, cap: usize, count: Ptr<usize>) i32 {
+    n = read(fd, buf, cap);
+    (n < 0).match({
+        true  => failed(n),
+        false => {
+            count.write(0, n.to_usize().value_or(0));
+            (n > 0).match({ true => 1, false => 0 })
+        },
+    })
+}
+
+// Wait for `pid` and store its exit code (128 + signal when killed).
+// pid <= 0 names a process group, never one child: refuse it.
+proc_wait* = (pid: i32, code: Ptr<i32>) i32 {
+    (pid <= 0).match({
+        true  => -1,
+        false => {
+            scratch = Pages();
+            scratch.raw(4, 4).match({
+                Err(_)  => -1,
+                Ok(buf) => {
+                    status = buf.to<i32>();
+                    rc     = wait4(pid, status, 0, 0);
+                    s      = status.read(0);
+                    scratch.free(buf);
+                    (rc < 0).match({
+                        true  => failed(rc),
+                        false => {
+                            signal = s % 128;
+                            code.write(0, (signal == 0).match({
+                                true  => (s / 256) % 256,
+                                false => (signal == 127).match({
+                                    true  => 127,
+                                    false => 128 + signal,
+                                }),
+                            }));
+                            0
+                        },
+                    })
+                },
+            })
+        },
+    })
+}
+
+proc_kill* = (pid: i32) {
+    (pid > 0).then(() { kill(pid, SIGKILL); });
+}

@@ -56,6 +56,22 @@ variables `zen help` lists are:
 | `ZEN_BUILD_OUTPUT` | executable path for the one selected target |
 | `ZEN_SYMBOL_MAP` | also write the generated symbol map to this path |
 
+`zen test --seeds N` runs each test target N times, under
+`ZEN_ACTOR_SEED=1` to `N`, discarding the output of passing runs; at a
+target's first failing seed it prints that run's output and the command that
+replays it, then goes on to the next target. `--faults K` adds
+`ZEN_ACTOR_FAULTS=K` to those runs (seeded faults, see
+[ACTOR_RUNTIME.md](ACTOR_RUNTIME.md)); it needs `--seeds`.
+
+```text
+$ zen test --seeds 1000 --faults 50
+ok ledger (1000 seeds)
+not ok chat_server (seed 417, exit 3)
+...the failing run's output...
+  rerun: ZEN_ACTOR_SEED=417 ZEN_ACTOR_FAULTS=50 bin/chat_server
+zen test: 1 passed, 1 failed (1417 runs)
+```
+
 The modes, the toolchain fields of `build.zen` and build reuse are described
 under "How the compiler gets built" in [DESIGN.md](DESIGN.md).
 

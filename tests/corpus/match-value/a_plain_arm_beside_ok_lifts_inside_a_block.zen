@@ -1,0 +1,33 @@
+// A match nested in a block arm may answer a plain value in one arm and
+// `Ok(..)` in another when the context wants a `Res`: the plain arm is
+// lifted into `Ok`, on every backend.
+{ Env } = std.env
+{ AllocError } = std.mem
+{ Res, Ok, None } = std.core
+{ println } = std.io
+
+pick = (flag: bool, r: Res<i32>) Res<i32, AllocError> {
+    flag.match({
+        true  => Ok(1),
+        false => {
+            x = 3;
+            r.match({
+                None      => x + 2,
+                Ok(value) => {
+                    doubled = value * 2;
+                    Ok(doubled)
+                },
+            })
+        },
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println(
+        "{} {} {}",
+        pick(true, None).try(),
+        pick(false, None).try(),
+        pick(false, Ok(21)).try()
+    );
+    Ok(0)
+}

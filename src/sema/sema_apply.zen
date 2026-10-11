@@ -13,7 +13,7 @@
 { has_var, inst_of_named, decl_tparam_vars } = sema.sema_inst
 { Cand, TBound, Actual, ty_at, signature_matches, cands_of } = sema.sema_cand
 { tparam_bounds } = sema.sema_cand
-{ impl_bound_type, LocalImpl, local_impls } = sema.sema_supply
+{ impl_bound_type, LocalImpl, local_impls, prim_named } = sema.sema_supply
 { type_of } = sema.sema_type
 { spelled_lambda } = sema.sema_call
 { type_from_ast } = sema.sema_denote
@@ -1016,6 +1016,11 @@ infer_impl_bound = (c :: Checker, bound: TyId, g: TyId, inst :: Inst)
                    Res<AllocError> {
     c.types.at(g).match({
         Named(n) => c.infer_named_impl(bound, n, inst),
+        // A primitive's impls attach to std.core's declaration of its name.
+        Prim(p)  => c.prim_named(p).try().match({
+            Ok(pn) => c.infer_named_impl(bound, pn, inst),
+            None   => Ok,
+        }),
         Array(a) => c.infer_array_bound(bound, a.elem, inst),
         Var(v)   => c.infer_var_bound(bound, v.name, g, inst),
         _        => Ok,

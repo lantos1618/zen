@@ -2065,8 +2065,13 @@ ambiguous = (c :: Checker, name: str, a: Cand, b: Cand) Res<AllocError> {
 // The function a struct or enum body declares under `name`, for its
 // parameter list.
 member_fn* = (c: Checker, ty: TyId, name: str, at: Span) Res<Function> {
-    c.types.at(ty).match({
-        Named(n) => c.tree.decl_at(n.decl).match({
+    owner: Res<DeclId> = c.types.at(ty).match({
+        Named(n) => Ok(n.decl),
+        Prim(p)  => prim_struct(c, p.name),
+        _        => None,
+    });
+    owner.match({
+        Ok(decl_id) => c.tree.decl_at(decl_id).match({
             Ok(decl) => decl.body_members().match({
                 Ok(members) => members.find((m) {
                     m.named(name) && member_span_eq(m.span, at)
@@ -2081,7 +2086,20 @@ member_fn* = (c: Checker, ty: TyId, name: str, at: Span) Res<Function> {
             }),
             None     => None,
         }),
-        _        => None,
+        None        => None,
+    })
+}
+
+// std.core's declaration of a primitive's name (`str* = {...}`), which
+// holds its members.
+prim_struct = (c: Checker, name: str) Res<DeclId> {
+    defs ::= c.alloc.Vec<Def>();
+    c.world.core_of(name, defs).match({
+        Ok(_)  => defs.get(0).match({
+            Ok(d) => Ok(d.id),
+            None  => None,
+        }),
+        Err(_) => None,
     })
 }
 

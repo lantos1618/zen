@@ -57,6 +57,14 @@ runtime status fails that target and subsequent targets still run. An empty
 selection or unknown target fails. Selected targets must have distinct output
 paths. Ordinary `zen build` builds executable application targets, not tests.
 
+`zen test --seeds N [--faults K]` runs each target under `ZEN_ACTOR_SEED=1`
+to `N` (and `ZEN_ACTOR_FAULTS=K`), quietly, and stops a target at its first
+failing seed: it prints that run's output and the command line that replays
+the same schedule and faults (`rerun: ZEN_ACTOR_SEED=417 ZEN_ACTOR_FAULTS=50
+build/.../chat_server`). Seeded runs fix the order of actor turns, virtual
+timer time and injected faults; they do not fix plain threads or time the
+program reads itself, so sweep tests whose concurrency is actors.
+
 A test entry can use the standard assertion suite:
 
 ```zen

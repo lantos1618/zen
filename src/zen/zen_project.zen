@@ -16,7 +16,7 @@
 { BuildPlan, ExeNode, LibNode, plan, PlanFault } = zen.zen_build_plan
 { resolve, PackageFault } = zen.zen_packages
 { Env } = std.env
-{ println } = std.io
+{ print, println } = std.io
 
 Action* = { Build | Run | Test }
 
@@ -291,6 +291,8 @@ select_exe = (planned: BuildPlan, named: str, execute: bool)
 }
 
 PreparedTest = { target: ExeNode, executable: String }
+// One test's seed sweep: how many seeds ran, and whether all passed.
+Swept = { runs: usize, passed: bool }
 
 // One planned project: what every compile, link, and run step shares.
 Project = {
@@ -402,26 +404,128 @@ Project = {
 
     execute_tests = (self: @Self, programs: Vec<PreparedTest>)
                     Res<i32, AllocError> {
+        (self.job.faults > 0 && self.job.seeds == 0).match({
+            true  => {
+                println("zen test: --faults needs --seeds");
+                Ok(1)
+            },
+            false => self.execute_each(programs),
+        })
+    }
+
+    execute_each = (self: @Self, programs: Vec<PreparedTest>)
+                   Res<i32, AllocError> {
         failed :: usize = 0;
+        runs   :: usize = 0;
         programs.loop((test) {
-            code = self.run_program(
-                test.executable.view(),
-                test.target.spec.backend
-            ).try();
-            (code == 0).match({
-                true  => println("ok {}", test.target.name),
+            passed = (self.job.seeds == 0).match({
+                true  => {
+                    code = self.run_program(
+                        test.executable.view(),
+                        test.target.spec.backend
+                    ).try();
+                    runs = runs + 1;
+                    (code == 0).match({
+                        true  => println("ok {}", test.target.name),
+                        false => println(
+                            "not ok {} (exit {})",
+                            test.target.name,
+                            code
+                        ),
+                    });
+                    code == 0
+                },
                 false => {
-                    failed = failed + 1;
-                    println("not ok {} (exit {})", test.target.name, code);
+                    swept = self.sweep(test).try();
+                    runs  = runs + swept.runs;
+                    swept.passed
                 },
             });
+            (!passed).then(() { failed = failed + 1; });
         });
-        println(
-            "zen test: {} passed, {} failed",
-            programs.len - failed,
-            failed
-        );
+        (self.job.seeds == 0).match({
+            true  => println(
+                "zen test: {} passed, {} failed",
+                programs.len - failed,
+                failed
+            ),
+            false => println(
+                "zen test: {} passed, {} failed ({} runs)",
+                programs.len - failed,
+                failed,
+                runs
+            ),
+        });
         Ok((failed == 0).match({ true => 0, false => 1 }))
+    }
+
+    // Runs one test under ZEN_ACTOR_SEED=1..seeds, quietly, until a seed
+    // fails; that run's output is shown with the line that replays it.
+    sweep = (self: @Self, test: PreparedTest) Res<Swept, AllocError> {
+        program = test.executable.view();
+        argv    = self.program_argv(program, test.target.spec.backend).try();
+        out     ::= self.a.String().try();
+        err     ::= self.a.String().try();
+        runs    :: usize = 0;
+        failing :: Res<i32> = None;
+        Range(1, self.job.seeds + 1).loop((h, seed) {
+            seed_var  = self.a.String("ZEN_ACTOR_SEED={}", seed).try();
+            fault_var = self.a.String(
+                "ZEN_ACTOR_FAULTS={}",
+                self.job.faults
+            ).try();
+            vars ::= self.a.Vec<str>();
+            vars.add(seed_var.view()).try();
+            (self.job.faults > 0).then(
+                () { vars.add(fault_var.view()).try(); }
+            );
+            // POSIX env(1) sets them for the child alone.
+            command ::= self.a.Vec<str>();
+            command.add("env").try();
+            vars.loop((word) { command.add(word).try(); });
+            argv.loop((word) { command.add(word).try(); });
+            out.clear();
+            err.clear();
+            code = self.env.proc.run_argv_into(
+                self.a,
+                "",
+                command,
+                out,
+                err
+            ).match({
+                Ok(c)  => c,
+                Err(_) => {
+                    println("zen: could not run `{}`", program);
+                    1
+                },
+            });
+            runs = runs + 1;
+            (code != 0).then(() {
+                println(
+                    "not ok {} (seed {}, exit {})",
+                    test.target.name,
+                    seed,
+                    code
+                );
+                print("{}", out.view());
+                print("{}", err.view());
+                print("  rerun:");
+                vars.loop((word) { print(" {}", word); });
+                argv.loop((word) { print(" {}", word); });
+                println("");
+                failing = Ok(code);
+                h.break();
+            });
+        });
+        passed = failing.match({ Ok(_) => false, None => true });
+        passed.then(
+            () { println(
+                "ok {} ({} seeds)",
+                test.target.name,
+                self.job.seeds
+            ); }
+        );
+        Ok(Swept(runs: runs, passed: passed))
     }
 
     build_selected = (self: @Self, selected: Res<ExeNode>)
@@ -1287,15 +1391,7 @@ Project = {
     run_program = (self: @Self, program: str, backend: Codegen)
                   Res<i32, AllocError> {
         self.trace.say(self.a.String("run {}", program).try().view());
-        argv ::= self.a.Vec<str>();
-        backend.match({ Js => argv.add("node").try(), _ => () });
-        argv.add(program).try();
-        Range(self.job.args_at, self.job.argv.len).loop((h, i) {
-            self.job.argv.get(i).match({
-                Ok(arg) => argv.add(arg).try(),
-                None    => {},
-            });
-        });
+        argv = self.program_argv(program, backend).try();
         self.env.proc.run_argv_inherit(self.a, "", argv).match({
             Err(_)   => {
                 backend.match({
@@ -1309,6 +1405,21 @@ Project = {
             },
             Ok(code) => Ok(code),
         })
+    }
+
+    // A test program's command line: Node for JS, then the words after `--`.
+    program_argv = (self: @Self, program: str, backend: Codegen)
+                   Res<Vec<str>, AllocError> {
+        argv ::= self.a.Vec<str>();
+        backend.match({ Js => argv.add("node").try(), _ => () });
+        argv.add(program).try();
+        Range(self.job.args_at, self.job.argv.len).loop((h, i) {
+            self.job.argv.get(i).match({
+                Ok(arg) => argv.add(arg).try(),
+                None    => {},
+            });
+        });
+        Ok(argv)
     }
 
     output_path = (self: @Self, exe: ExeNode) Res<String, AllocError> {

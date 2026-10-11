@@ -1,0 +1,41 @@
+// Seeded faults also make `try_send` answer Full with room left and `spawn`
+// answer OutOfMemory; the counts are the seed's and replay exactly. A
+// refused message is not admitted, so the sinks see only accepted ones.
+
+{ Res, Ok, Err, Range } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Sink = { got :: u64 = 0 }
+
+Sink.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, n: u64) { self.got = self.got + n; }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    refused :: u64 = 0;
+    full    :: u64 = 0;
+    sent    :: u64 = 0;
+    Range(0, 30).loop((i) {
+        env.spawn(Sink()).match({
+            Err(_) => { refused = refused + 1; },
+            Ok(s)  => {
+                Range(0, 3).loop((k) {
+                    s.try_send(1).match({
+                        Ok(_)  => { sent = sent + 1; },
+                        Err(_) => { full = full + 1; },
+                    });
+                });
+                s.stop();
+                s.join();
+            },
+        });
+    });
+    println("spawns refused {}", refused);
+    println("sends full {}", full);
+    println("sends accepted {}", sent);
+    Ok(0)
+}

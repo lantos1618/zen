@@ -263,8 +263,10 @@ behaviour_only* = (s: Struct) bool {
     functions = s.members.find(
         (m) { m.kind.match({ Function(_) => true, _ => false }) }
     );
-    fields    = s.members.find(
-        (m) { m.kind.match({ Field(_) => true, _ => false }) }
+    // A constant makes the type a value (a record of no fields), not a
+    // namespace of functions.
+    fields = s.members.find(
+        (m) { m.kind.match({ Function(_) => false, _ => true }) }
     );
     functions.match({ Ok(_) => true, None => false }) && fields.match({ Ok(_) => false, None => true })
 }

@@ -270,3 +270,4 @@ tests/corpus/actor/seed_runs_timers_on_virtual_time # UNSUPPORTED: error: unsupp
 tests/corpus/actor/seed_reports_a_deadlock # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/seed_faults_fail_turns_through_watch # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/seed_faults_answer_full_and_refuse_spawns # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/join_waits_for_stopped # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma

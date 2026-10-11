@@ -1051,7 +1051,10 @@ document.querySelectorAll("#fTable th").forEach(th => th.onclick = () => { const
   FL.sortD = FL.sortK === k ? -FL.sortD : k === "name" ? 1 : -1; FL.sortK = k; dirty = true; });
 $("fRows").onclick = e => { const tr = e.target.closest("tr"), r = tr && FL.tableRows[+tr.dataset.i]; if (r && r.best){ const a = topActor(r.best); if (a){ selected = a; dirty = true; } } };
 $("fRows").ondblclick = e => { const tr = e.target.closest("tr"), r = tr && FL.tableRows[+tr.dataset.i]; if (!r) return;
-  $("fSearch").value = r.name; FL.q = r.name.toLowerCase(); FL.cur = r.best ? pathOf(r.best) : FL.cur; $("fViewFlame").click(); };
+  $("fSearch").value = r.name; FL.q = r.name.toLowerCase(); FL.cur = r.best ? pathOf(r.best) : FL.cur;
+  // A row outside the focused frame would stay hidden: show all frames.
+  if (FL.zoom && FL.cur !== FL.zoom && !FL.cur.startsWith(FL.zoom + "\u0001")) FL.zoom = "";
+  $("fViewFlame").click(); };
 
 // ---------------------------------------------------------------- polling
 let dirty = true, polling = false;

@@ -320,6 +320,46 @@ LendScan.impl(WalkVisitor, {
     }
 })
 
+parameter_consumed* = (c :: Checker, f: Function, parameter: usize)
+                       Res<bool, AllocError> {
+    f.body.match({
+        None     => Ok(false),
+        Ok(body) => f.params.get(parameter).match({
+            None  => Ok(false),
+            Ok(p) => {
+                scan ::= ConsumeScan(check: c, name: p.name.text, found: false);
+                c.tree.walk(c.alloc, WalkNode.Block(body), scan).try();
+                Ok(scan.found)
+            },
+        }),
+    })
+}
+
+ConsumeScan = { check: Checker, name: str, found :: bool }
+
+ConsumeScan.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id) => self.check.tree.expr_at(id).kind.match({
+                    Consume(k) => self.check.tree.expr_at(
+                        k.operand
+                    ).kind.match({
+                        Name(n) => {
+                            n.text.eq(self.name).then(() { self.found = true; });
+                            Ok
+                        },
+                        _       => Ok,
+                    }),
+                    _          => Ok,
+                }),
+                _        => Ok,
+            }),
+            Leave(_)    => Ok,
+        })
+    }
+})
+
 call_stores* = (c :: Checker, own :: Own, id: ExprId, call: Call)
                Res<AllocError> {
     c.store_effects.selected_summary(c, id).when_ok((summary) {

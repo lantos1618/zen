@@ -61,6 +61,14 @@ mailbox_byte_buffer* = (c: Checker, ty: TyId) bool {
     })
 }
 
+// `std.actor.Bytes`: a pool-backed Drop buffer a mailbox moves whole.
+mailbox_owned_bytes* = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Named(n) => c.named_as(n, "Bytes", "std.actor.actor_bytes"),
+        _        => false,
+    })
+}
+
 // Whether a value of this type can hold a bound value (a receiver pointer
 // plus function pointers) inside it. Only such a value can carry a bound
 // built over this frame's storage out of the frame; a `str` or a `Ptr<u8>`

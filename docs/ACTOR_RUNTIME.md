@@ -53,6 +53,15 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
 - A str argument is copied into the message; a consumed `Vec<u8>` is copied
   into the message and moved into the receiver's allocator before its
   behaviour runs.
+- A consumed `std.actor.Bytes` is not copied: the message carries its
+  pointer, length and capacity, and the receiver owns the pool block. Bytes
+  is Drop, so the sender has no second name left for it. The turn frees it
+  when the behaviour only reads it, leaves it to the behaviour when the
+  behaviour consumes it, and otherwise keeps it on the actor (`B_KEPT`) until
+  the actor ends, since a view of it may have been stored. Known gap: a
+  Bytes stored inside a field such as `Res<Bytes>` is not dropped yet (the
+  C backend has no drop glue for nested Drop values), so it leaks rather
+  than being freed. The asm backend refuses a Bytes send for now.
 - Preemption: a sysmon thread flags a turn that outlives one tick
   (`ZEN_ACTOR_SYSMON_US`, default 1000; 0 turns it off). The runtime's
   `actor_yield_check` (for compiler-inserted loop checks) then hands the

@@ -346,9 +346,13 @@ ActorSend = {
                 formal = sig.get(i - skip + 2).ok_or(AllocError.OutOfMemory).try();
                 actual = be.ty_of(arg.value, self.ctx, formal).try();
                 buffer = be.check.actor_byte_buffer(formal);
+                moved  = be.check.actor_owned_bytes(formal);
                 safe   = safe && (buffer == be.check.actor_byte_buffer(actual))
+                    && (moved == be.check.actor_owned_bytes(actual))
                     && (is_direct_str(be, formal) == is_direct_str(be, actual))
-                    && (buffer || !be.check.actor_payload_unsafe(formal).try());
+                    && (buffer || moved || !be.check.actor_payload_unsafe(
+                        formal
+                    ).try());
             });
         });
         Ok(safe)
@@ -450,6 +454,11 @@ write_turn = (
         body.write_usize(i - 2).try();
     });
     body.add("));\n").try();
+    Range(2, sig.len).loop((h, i) {
+        be.check.actor_owned_bytes(sig.ty_at(i)).then(() {
+            be.write_bytes_after_turn(hit.f, i, body).try();
+        });
+    });
     be.add_function(name, proto, body).try();
     be.name_turn(name.view(), actor_ty, hit.f.name.text).try();
     Ok(name)
@@ -1325,6 +1334,36 @@ write_buffer_lend = (
         field.view(),
         field.view()
     )
+}
+
+// A received Bytes the behaviour only reads is freed when the turn ends;
+// one it consumes is its own from then on; any other the actor keeps until
+// it ends, since a view of it may have been stored.
+write_bytes_after_turn = (
+    be   :: CBackend,
+    f    : Function,
+    i    : usize,
+    body :: String
+) Res<AllocError> {
+    be.check.consumes_parameter(f, i).try().match({
+        true  => Ok,
+        false => {
+            entry = be.check.lends_parameter(f, i).try().match({
+                true  => "actor_bytes_free",
+                false => "actor_bytes_keep",
+            });
+            sym   = be.runtime_symbol(entry).try();
+            data  = be.actor_field("data").try();
+            field ::= be.alloc.String("zg_msg->zg_arg").try();
+            field.write_usize(i - 2).try();
+            body.fmt(
+                "    if ({}.{data}) {}({}.{data});\n",
+                field.view(),
+                sym.view(),
+                field.view()
+            )
+        },
+    })
 }
 
 // The turn a message sent through a message-typed Ref runs: the actor's

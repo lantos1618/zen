@@ -426,6 +426,32 @@ alloc_large = (central: Ptr<u8>, bytes: usize) Ptr<u8> {
     })
 }
 
+// A large-form mapping no cache knows of, for a block wanted before the
+// runtime (and its central part) exists. `free` takes it like any large
+// block; `free_mapped` frees it when there is still no central part.
+alloc_mapped* = (bytes: usize) Ptr<u8> {
+    (bytes <= usize.MAX - SLAB_HEADER - SLAB_BYTES).match({
+        false => null_ptr<u8>(),
+        true  => {
+            total = (bytes + SLAB_HEADER + 4095) / 4096 * 4096;
+            base  = grab(total, SLAB_BYTES);
+            base.is_null().match({
+                true  => base,
+                false => {
+                    store(base, 0, LARGE);
+                    store(base, 1, total);
+                    base.offset(SLAB_HEADER)
+                },
+            })
+        },
+    })
+}
+
+free_mapped* = (block: Ptr<u8>) {
+    slab = slab_of(block);
+    give_back(slab, load(slab, 1));
+}
+
 // The large-block cache, inside the runtime's globals: per bin a lock
 // (u32), the newest kept mapping (linked through its header's third
 // word), and how many are kept. Bin b holds mappings of LARGE_MIN << b.

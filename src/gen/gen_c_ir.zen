@@ -361,11 +361,12 @@ C = {
         self.writes.set(slot, self.writes.get(slot).value_or(0) + 1);
     }
 
-    // A block copied from a slot that never changes again, into a slot only
+    // A slot copied from a slot that never changes again, into a slot only
     // that copy writes, holds the source's value wherever it is read: the
     // verifier puts the copy before every read, and the source before it.
     same = (self: @Self, f: Func, copy: Move) bool {
-        is_block(slot_ty(f, copy.out)) && copy.out != copy.source
+        alike(slot_ty(f, copy.out), slot_ty(f, copy.source))
+            && copy.out != copy.source
             && copy.out >= f.parameters
             && self.writes.get(copy.out).value_or(2) == 1
             && self.fixed(copy.out)
@@ -1705,5 +1706,33 @@ returns = (f: Func, exit: Terminator, slot: usize) bool {
             None     => false,
         }),
         _             => false,
+    })
+}
+
+alike = (a: Scalar, b: Scalar) bool {
+    a.match({
+        Block(x) => b.match({
+            Block(y) => x.size == y.size && x.align == y.align,
+            _        => false,
+        }),
+        _        => class_of(a) == class_of(b),
+    })
+}
+
+class_of = (ty: Scalar) usize {
+    ty.match({
+        I32      => 0,
+        Bool     => 1,
+        Unit     => 2,
+        I8       => 3,
+        U8       => 4,
+        I16      => 5,
+        U16      => 6,
+        U32      => 7,
+        I64      => 8,
+        U64      => 9,
+        Ptr      => 10,
+        F64      => 11,
+        Block(_) => 12,
     })
 }

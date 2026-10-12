@@ -93,9 +93,22 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   live. `./zen build tools/zen-view --std src`, then
   `tools/zen-view/build/zen-view <file>` and open http://127.0.0.1:7878/.
   The page plays the recorded trace back at a chosen speed. Messages in
-  flight are dots on their edges, and the flame tab stacks each turn on the
-  turn whose send caused it. `tools/zen-view/demo/market.zen` is a nested
-  pipeline, one strategy of which fails, to try it on.
+  flight are dots on their edges. The flame tab merges the causal call tree
+  into an icicle under `(root)`: each turn sits under the turn whose send
+  caused it, sibling turns with the same `Type.behaviour` are merged, and
+  width is busy time or turn count (toggle). Recursion (a behaviour under
+  itself) is folded unless "fold recursion" is off; "over time" keeps the
+  time-ordered chart with one bar per turn. "Table" lists behaviours by
+  self time, total time and turns, sorted by any column. The search box
+  highlights matching frames, dims the rest and shows the match count and
+  share. Arrow keys move between frames (up: parent, down: first child,
+  left/right: siblings), Enter or Space focuses a frame to fill the width,
+  Escape shows all frames again. Colours are stable per actor type, hover
+  gives full name, self/total time, count and percentages, and clicking a
+  frame selects its actor. The tree is built from the retained window up to
+  the playback cursor, on demand, not every frame.
+  `tools/zen-view/demo/market.zen` is a nested pipeline, one strategy of
+  which fails, to try it on.
 - Flight recorder, on unless `ZEN_ACTOR_RECORDER=0`: every message carries
   `M_CAUSE`, the id of the message whose turn sent it (0 from main or any
   other thread outside a turn). Each thread that runs turns keeps a ring of

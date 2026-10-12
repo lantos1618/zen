@@ -42,6 +42,10 @@ main = (env: Env) Res<i32, AllocError | FileError | FsError | Failure> {
     (reader.size().try() == 8).ensure(Failure.Check).try();
     reader.read_exact(bytes.offset(2), 6).try();
     (str_at(bytes, 8) == "abcdefgh").ensure(Failure.Check).try();
+    reader.seek(3).try();
+    reader.read_exact(bytes, 2).try();
+    (str_at(bytes, 2) == "de").ensure(Failure.Check).try();
+    reader.seek(8).try();
     reader.read_exact(bytes, 1).match({
         Ok(_)      => Err(Failure.Check),
         Err(error) => error.match({

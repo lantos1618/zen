@@ -26,7 +26,9 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   then Drop of the state and of the actor's allocator, then the memory is
   freed. Senders still waiting for room in a stopped actor are refused.
 - `join()` waits until that has happened; from the actor itself it returns
-  at once. A worker thread that joins hands its worker to another thread
+  at once. The generation bump that closes admission also sets the slot's
+  `FINALIZING` life bit, cleared only after the memory is freed, so a join
+  that sees the new generation still waits for `stopped`. A worker thread that joins hands its worker to another thread
   while it waits.
 - `r.try_send(m)` is `send` that never waits: a full mailbox answers
   `Full` at once, through the runtime's `actor_offer`. A send to the sender

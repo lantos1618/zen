@@ -197,6 +197,8 @@ S_WATCH*: usize = 3          // watch entries, under G_WATCH_LOCK
 //   bit   34     blocked: senders wait in an outbox for room elsewhere
 //   bit   35     waited on: senders are queued on this mailbox
 //   bit   36     watched: S_WATCH holds entries for this generation
+//   bit   37     finalising: the previous generation's `stopped` and
+//                  free are still running; set with the bump
 //   bits 40..63  generation, bumped when the actor is finalised
 COUNT_MASK*: usize = 4294967295
 CLOSED*: usize = 4294967296
@@ -204,6 +206,7 @@ SCHED*: usize = 8589934592
 BLOCKED*: usize = 17179869184
 WAITED*: usize = 34359738368
 WATCHED*: usize = 68719476736
+FINALIZING*: usize = 137438953472
 GEN_SHIFT*: usize = 40
 GEN_ONE*: usize = 1099511627776
 GEN_MASK*: usize = 16777215

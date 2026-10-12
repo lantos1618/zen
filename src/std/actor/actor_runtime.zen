@@ -67,7 +67,7 @@
 { W_HEAD, W_TAIL, W_NEXT, W_TURNS, W_IN_TURN, W_PREEMPT, W_SEEN, W_TICK, W_ID } = std.actor.actor_layout
 { W_RANDOM, W_SPINNING, W_PARKER, W_RING, WORKER_BYTES } = std.actor.actor_layout
 { S_LIFE, S_BODY, S_WAITING } = std.actor.actor_layout
-{ COUNT_MASK, CLOSED, SCHED, BLOCKED, WAITED, GEN_SHIFT, GEN_MASK } = std.actor.actor_layout
+{ COUNT_MASK, CLOSED, SCHED, BLOCKED, WAITED, FINALIZING, GEN_SHIFT, GEN_MASK } = std.actor.actor_layout
 { B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_FAILED, B_RECEIVE, B_NAME, B_KEPT, B_DROP, B_RECORD } = std.actor.actor_layout
 { D_OUTBOX, D_OUT_N, D_OUT_CAP, D_FIRST, D_LAST, D_LOCK, SIDE_BYTES } = std.actor.actor_layout
 { OUTBOX_ENTRY, PENDING, DONE, REFUSED, WAITER_BYTES, M_NEXT, M_TURN, M_CAUSE, M_PAYLOAD } = std.actor.actor_layout
@@ -1259,10 +1259,12 @@ requeue = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, yielded: bool) {
 
 // The actor is stopped, drained and owned by this worker: retire its
 // generation in one step, so every later send sees Closed, then refuse its
-// waiting senders, run `stopped`, and free it. False when a short-lived pin
-// or a late sender's count got in first; the turn is simply retried.
+// waiting senders, run `stopped`, and free it. FINALIZING stays set on the
+// new generation until then, so `join` waits for `stopped`. False when a
+// short-lived pin or a late sender's count got in first; the turn is simply
+// retried.
 finalize = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, slot: Ptr<u8>, v: usize) bool {
-    next = ((gen_of(v) + 1) & GEN_MASK) << GEN_SHIFT;
+    next = (((gen_of(v) + 1) & GEN_MASK) << GEN_SHIFT) | FINALIZING;
     (acas(slot, S_LIFE, v, next) == v).match({
         false => false,
         true  => {
@@ -1300,6 +1302,7 @@ finalize = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, slot: Ptr<u8>, v: usize) bool {
             index = ref_index(load(a, B_REF));
             astore(slot, S_BODY, 0);
             free_block(g, l, a);
+            aclear(slot, S_LIFE, FINALIZING).ignore_word();
             give_slot(g, l, index);
             stat(g, S_FINALIZED);
             (!watchers.is_null()).then(() { notify(g, l, watchers, failed); });
@@ -2621,7 +2624,7 @@ stop_ref = (g: Ptr<u8>, l: Ptr<u8>, r: usize) {
     (!slot.is_null()).then(() {
         loop((h) {
             v = aload(slot, S_LIFE);
-            (gen_of(v) != gen || (v & CLOSED) != 0).then(() { h.break(); });
+            (gen_of(v) != gen || (v & (CLOSED | FINALIZING)) != 0).then(() { h.break(); });
             take = (v & (SCHED | BLOCKED)) == 0;
             want = v | CLOSED | take.match({ true => SCHED, false => 0 });
             (acas(slot, S_LIFE, v, want) == v).then(() {
@@ -2630,6 +2633,13 @@ stop_ref = (g: Ptr<u8>, l: Ptr<u8>, r: usize) {
             });
         });
     });
+}
+
+// Generation `gen` has not finished: it still holds the slot, or the next
+// generation's word says its `stopped` and free are still running.
+lives = (life: usize, gen: usize) bool {
+    gen_of(life) == gen
+        || ((life & FINALIZING) != 0 && gen_of(life) == ((gen + 1) & GEN_MASK))
 }
 
 // Wait until the actor has stopped and run `stopped`. From the actor
@@ -2647,15 +2657,15 @@ actor_join* = (r: u64) {
         sim  = load(g, G_SIM) != 0;
         (sim && !own && !slot.is_null()).then(() {
             loop(
-                () { gen_of(aload(slot, S_LIFE)) == gen },
+                () { lives(aload(slot, S_LIFE), gen) },
                 (h) { sim_wait(g, l); }
             );
         });
-        (!sim && !own && !slot.is_null() && gen_of(aload(slot, S_LIFE)) == gen).then(() {
+        (!sim && !own && !slot.is_null() && lives(aload(slot, S_LIFE), gen)).then(() {
             (load(l, L_WORKER) != 0).then(() { detach(g, l); });
             aadd(g, G_JOINERS, 1);
             mutex_lock(g.offset(G_JOIN_LOCK));
-            loop(() { gen_of(aload(slot, S_LIFE)) == gen }, (h) {
+            loop(() { lives(aload(slot, S_LIFE), gen) }, (h) {
                 cond_wait(g.offset(G_JOIN_COND), g.offset(G_JOIN_LOCK));
             });
             mutex_unlock(g.offset(G_JOIN_LOCK));

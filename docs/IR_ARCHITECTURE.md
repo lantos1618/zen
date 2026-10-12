@@ -420,9 +420,12 @@ renderer with no semantic work:
   asm backend's `prepare` (with `simplify`), then `gen_jit_decode` encodes each
   function once into 64-byte word steps: frame offsets, block targets, call
   argument tables and parameter sizes are resolved, comparisons are fused with
-  the branch that reads them, and rare instructions keep a slow path through
+  the branch that reads them, a jump to the next block falls through, slots
+  only ever set to one constant are filled once per call from a per-function
+  image instead of by a step, and rare instructions keep a slow path through
   the original IR. `tests/bench/jit/run.py` measures it against C -O0/-O2,
-  asm, node and CPython.
+  asm, node and CPython on crypto, call-heavy and hash-map workloads, round
+  robin over backends, with a least-squares slope and its 95% interval.
 - **Tier 1:** an in-memory encoder that reuses the asm backend's instruction
   selection and register allocation, and writes machine code bytes instead of
   text into `mmap`ed pages (W^X, with `MAP_JIT` plus

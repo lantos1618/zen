@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>zen-view</title>
+<link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#0b0e14;--panel:#11151d;--line:#1f2633;--text:#c9d1d9;--dim:#6b7686;--accent:#4cc2ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--violet:#a371f7}
@@ -52,6 +53,33 @@ td.r,th.r{text-align:right}
 #views>div{display:none;height:100%}
 #views>div.on{display:block}
 #tl,#sched,#flame{width:100%;height:100%;display:block}
+#views>#vFlame.on{display:flex;flex-direction:column}
+.fbar{display:flex;align-items:center;gap:8px;padding:6px 10px 4px}
+.fbar>span{white-space:nowrap}
+#fNote{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.fsearch{position:relative;flex:0 1 360px;display:flex}
+.fsearch input{width:100%;background:#0d1219;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 8px 4px 26px;font:inherit}
+.fsearch input:focus{outline:none;border-color:var(--accent)}
+.fsearch svg{position:absolute;left:8px;top:50%;transform:translateY(-50%)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;flex:none}
+.seg button{border:0;border-radius:0;background:#0d1219;padding:2px 9px;color:var(--dim)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.sel{background:#1f2a3a;color:#fff}
+#fHint{padding:0 12px 4px;color:var(--dim);font-size:10px}
+#fBody{flex:1;min-height:0;position:relative;overflow:auto;margin:0 10px 8px;border:1px solid var(--line);border-radius:6px;background:#0d1219}
+#flame{outline:none}
+#fTable th{top:0;cursor:pointer;user-select:none;background:#0d1219}
+#fTable th[data-dir]:not([data-dir=""])::after{content:" " attr(data-dir);color:var(--accent)}
+#fTable tr:hover td{background:#141b26}
+#fTable td{cursor:default}
+#fTable .sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:7px}
+#fTable td.pc{position:relative;width:90px}
+#fTable td.pc em{position:relative;font-style:normal;color:var(--dim)}
+#fTable .fbarc{position:absolute;left:4px;top:5px;bottom:5px;background:#1f3a55;border-radius:2px}
+#fTip{position:fixed;display:none;pointer-events:none;z-index:10;background:#161c27;border:1px solid #2b3546;border-radius:6px;padding:7px 10px;box-shadow:0 6px 20px rgba(0,0,0,.45);max-width:420px}
+#fTip b{display:block;color:#fff;margin-bottom:4px;word-break:break-all}
+#fTip div span{display:inline-block;width:62px;color:var(--dim)}
+#fTip i{color:var(--dim);font-style:normal}
 #empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13px;text-align:center;line-height:1.8}
 </style>
 </head>
@@ -91,13 +119,28 @@ td.r,th.r{text-align:right}
   </div>
   <div id="views">
     <div id="vTl" class="on"><canvas id="tl"></canvas></div>
-    <div id="vFlame"><canvas id="flame"></canvas></div>
+    <div id="vFlame">
+      <div class="fbar">
+        <label class="fsearch"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#6b7686" stroke-width="2"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg><input id="fSearch" type="search" placeholder="Search behaviours (Type.behaviour)…" spellcheck="false" autocomplete="off"></label>
+        <span class="dim" id="fMatch"></span>
+        <span style="flex:1"></span>
+        <span class="dim" id="fNote"></span>
+        <span class="seg" title="merged: the causal tree of turns, same-named siblings merged · over time: one bar per turn"><button id="fLayMerged" class="sel">merged</button><button id="fLayTime">over time</button></span>
+        <span class="seg" title="frame width"><button id="fWTime" class="sel">busy time</button><button id="fWCount">turns</button></span>
+        <span class="seg"><button id="fFold" class="sel" title="a turn that re-enters a behaviour already on its stack (Peer.talk -> Peer.talk -> ...) is merged into that frame">fold recursion</button></span>
+        <span class="seg"><button id="fViewFlame" class="sel">Flamegraph</button><button id="fViewTable">Table</button></span>
+      </div>
+      <div id="fHint"></div>
+      <div id="fBody"><canvas id="flame" tabindex="0"></canvas>
+        <table id="fTable" style="display:none"><thead><tr><th data-k="name">behaviour</th><th class="r" data-k="self">self</th><th class="r pcol" data-k="self">self %</th><th class="r" data-k="total">total</th><th class="r pcol" data-k="total">total %</th><th class="r" data-k="n">turns</th><th class="r pcol" data-k="n">turns %</th><th class="r" data-k="fails">failed</th></tr></thead><tbody id="fRows"></tbody></table></div>
+    </div>
     <div id="vMsg"><table><thead><tr><th>t (ms)</th><th>from</th><th>to</th><th>behaviour</th><th class="r">queued</th><th class="r">ran</th><th>worker</th></tr></thead><tbody id="msgRows"></tbody></table></div>
     <div id="vSched"><canvas id="sched"></canvas></div>
     <div id="vFail"><table><thead><tr><th>t (ms)</th><th>what</th><th>actor</th><th>detail</th></tr></thead><tbody id="failRows"></tbody></table></div>
   </div>
 </div>
 </div>
+<div id="fTip"></div>
 <div id="empty" style="display:none"></div>
 <script>
 "use strict";
@@ -105,17 +148,23 @@ td.r,th.r{text-align:right}
 // One event per line: index ns kind from to message (see docs/ACTOR_RUNTIME.md).
 const K = {SEND:1,PARK:2,RELEASE:3,REFUSE:4,TAKE:5,BREAK:6,BLOCK:7,UNBLOCK:8,SLEEP:9,WAKE:10,CLOSED:11,WAIT:12,SPAWN:13,DONE:14,FAIL:15,STOP:16,DROP:17};
 // took[i]: for a send or park, when its message was taken (0 while queued).
-const T = {n:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null};
-const queued = new Map();
+// base: how many earlier events were trimmed off the front (see trim).
+// up[i]: for a take, how many events back the take of its cause is (0: none
+// kept), from the id/cause columns.
+// sc[i]: sends and parks before event i over the whole run, so a window's
+// send count is two lookups (sendsBefore), not a scan.
+const T = {n:0, base:0, cap:0, ns:null, kind:null, from:null, to:null, msg:null, took:null, up:null, sc:null};
+const KEEP = 4000000;
+const queued = new Map(), takeAt = new Map();
 const meta = {workers:0, bound:256, names:new Map(), ended:false, lost:0};
-let offset = 0;
+let offset = 0, sends = 0;
 
 function grow(need){
   if (need <= T.cap) return;
   let cap = Math.max(65536, T.cap * 2); while (cap < need) cap *= 2;
   const re = (A, old) => { const a = new A(cap); if (old) a.set(old.subarray(0, T.n)); return a; };
   T.ns = re(Float64Array, T.ns); T.kind = re(Uint8Array, T.kind); T.from = re(Uint32Array, T.from);
-  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.took = re(Float64Array, T.took); T.cap = cap;
+  T.to = re(Uint32Array, T.to); T.msg = re(Float64Array, T.msg); T.took = re(Float64Array, T.took); T.up = re(Int32Array, T.up); T.sc = re(Float64Array, T.sc); T.cap = cap;
 }
 
 function ingest(text){
@@ -127,11 +176,30 @@ function ingest(text){
     const f = line.split(" ");
     if (f.length < 6) continue;
     const i = T.n++;
-    T.ns[i] = +f[1]; T.kind[i] = +f[2]; T.from[i] = +f[3]; T.to[i] = +f[4]; T.msg[i] = +f[5]; T.took[i] = 0;
+    T.ns[i] = +f[1]; T.kind[i] = +f[2]; T.from[i] = +f[3]; T.to[i] = +f[4]; T.msg[i] = +f[5]; T.took[i] = 0; T.up[i] = 0;
     const k = T.kind[i];
-    if (k === K.SEND || k === K.PARK) queued.set(T.msg[i], i);
-    else if (k === K.TAKE || k === K.REFUSE || k === K.CLOSED || k === K.DROP){ const s = queued.get(T.msg[i]); if (s !== undefined){ T.took[s] = T.ns[i]; queued.delete(T.msg[i]); } }
+    if (k === K.TAKE && f.length >= 8){ const id = +f[6], c = +f[7], g = T.base + i;
+      if (c){ const p = takeAt.get(c); if (p !== undefined && p >= T.base) T.up[i] = g - p; }
+      if (id) takeAt.set(id, g); }
+    T.sc[i] = sends;
+    if (k === K.SEND || k === K.PARK){ sends++; queued.set(T.msg[i], T.base + i); }
+    else if (k === K.TAKE || k === K.REFUSE || k === K.CLOSED || k === K.DROP){ const s = queued.get(T.msg[i]); if (s !== undefined){ if (s >= T.base) T.took[s - T.base] = T.ns[i]; queued.delete(T.msg[i]); } }
   }
+  if (T.n > KEEP * 1.5) trim(T.n - KEEP);
+}
+
+// A long trace keeps only its last KEEP events for scrubbing, playback,
+// dots and flame. The d events falling off the front are folded into
+// `base`, the model as of the first kept event, so per-actor counts,
+// failures and the tree still cover the whole run.
+let base = null;
+function trim(d){
+  const cur = M; M = base || fresh(); apply(d); base = M; M = cur;
+  for (const k of ["ns", "kind", "from", "to", "msg", "took", "up", "sc"]) T[k].copyWithin(0, d, T.n);
+  T.n -= d; T.base += d; base.upto = 0;
+  for (const [id, g] of takeAt) if (g < T.base) takeAt.delete(id);
+  FL.tree = null;
+  if (M){ M.upto -= d; if (M.upto < 0) M = null; }
 }
 
 function header(line){
@@ -145,7 +213,7 @@ function header(line){
 // Replays events 0..upto into per-actor state; live mode appends.
 let M;
 function fresh(){
-  return {upto:0, actors:new Map(), edges:new Map(), pending:new Map(), running:new Map(),
+  return {upto:0, actors:new Map(), edges:new Map(), eby:new Map(), pending:new Map(), running:new Map(), busy:new Map(),
           workers:[], bars:[], msgs:[], fails:[], latency:[], done:0, cause:new Map(), turnId:0};
 }
 function actor(i){
@@ -170,10 +238,11 @@ function apply(upto){
     case K.SEND: case K.PARK: {
       const a = actor(to); if (from) actor(from).sent++;
       if (k === K.SEND) a.mail++; else a.parked++;
-      const key = from + ">" + to, e = M.edges.get(key) || {from, to, n:0};
-      e.n++; M.edges.set(key, e);
+      let em = M.eby.get(from); if (!em) M.eby.set(from, em = new Map());
+      let e = em.get(to); if (!e){ e = {from, to, n:0}; em.set(to, e); M.edges.set(from + ">" + to, e); }
+      e.n++;
       M.pending.set(m, {t, from}); a.last = t;
-      if (from){ for (const r of M.running.values()) if (r.actor === from){ M.cause.set(m, r); break; } }
+      if (from){ const r = M.busy.get(from); if (r) M.cause.set(m, r); }
       break; }
     case K.RELEASE: { const a = actor(to); a.parked = Math.max(0, a.parked - 1); a.mail++; break; }
     case K.REFUSE: { const a = actor(to); a.parked = Math.max(0, a.parked - 1); M.pending.delete(m);
@@ -185,11 +254,12 @@ function apply(upto){
       const p = M.pending.get(m); M.pending.delete(m);
       const q = p ? t - p.t : 0;
       const parent = M.cause.get(m); M.cause.delete(m);
-      M.running.set(from, {t, actor:to, q, src:p ? p.from : 0, id:++M.turnId, parent:parent || null, depth:parent ? parent.depth + 1 : 0});
+      const run = {t, actor:to, q, src:p ? p.from : 0, id:++M.turnId, depth:parent ? parent.depth + 1 : 0};
+      M.running.set(from, run); M.busy.set(to, run);
       keep(a.q, q, SAMPLE); keep(M.latency, {t, q}, 4096);
       worker(from).busyFrom = t; break; }
     case K.DONE: case K.FAIL: {
-      const r = M.running.get(from); M.running.delete(from);
+      const r = M.running.get(from); M.running.delete(from); if (r && M.busy.get(r.actor) === r) M.busy.delete(r.actor);
       const a = actor(to), start = r ? r.t : t, dur = t - start, name = nameOf(m);
       if (!a.type) a.type = typeOf(m);
       a.turns++; a.busy += dur; keep(a.run, dur, SAMPLE); M.done++;
@@ -227,8 +297,7 @@ function status(a){
   if (a.failed) return "failed";
   if (a.stop >= 0) return "stopped";
   if (a.blocked) return "blocked";
-  for (const r of M.running.values()) if (r.actor === a.i) return "run";
-  return "idle";
+  return M.busy.has(a.i) ? "run" : "idle";
 }
 function pct(arr, p){ if (!arr.length) return 0; const s = arr.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
 function ms(ns){ return ns >= 1e9 ? (ns / 1e9).toFixed(2) + " s" : ns >= 1e6 ? (ns / 1e6).toFixed(1) + " ms" : ns >= 1e3 ? (ns / 1e3).toFixed(1) + " µs" : Math.round(ns) + " ns"; }
@@ -241,7 +310,7 @@ function startNs(){ return T.n ? T.ns[0] : 0; }
 function indexAt(ns){ let lo = 0, hi = T.n; while (lo < hi){ const mid = (lo + hi) >> 1; if (T.ns[mid] <= ns) lo = mid + 1; else hi = mid; } return lo; }
 function sync(){
   const upto = live ? T.n : indexAt(cursorNs);
-  if (!M || upto < M.upto) M = fresh();
+  if (!M || upto < M.upto) M = base ? structuredClone(base) : fresh();
   apply(upto);
   if (live) cursorNs = lastActivity();
 }
@@ -250,23 +319,42 @@ function lastActivity(){
   for (let i = T.n - 1; i >= 0 && i >= T.n - 500000; i--){ const k = T.kind[i]; if (k === K.DONE || k === K.FAIL) return T.ns[i]; }
   return endNs();
 }
-function windowRate(ns, span){
-  const lo = indexAt(ns - span), hi = indexAt(ns); let n = 0;
-  for (let i = lo; i < hi; i++){ const k = T.kind[i]; if (k === K.SEND || k === K.PARK) n++; }
-  return n * 1e9 / span;
+function sendsBefore(i){ return i >= T.n ? sends : T.sc[i]; }
+function windowRate(ns, span){ return (sendsBefore(indexAt(ns)) - sendsBefore(indexAt(ns - span))) * 1e9 / span; }
+// Per-edge sends in the window before the cursor, as a sliding window over
+// global event indices: moving the cursor on only adds the events it passed
+// and drops those that fell out. Returns rate(from, to) in sends/s.
+const ER = {lo:0, hi:0, by:new Map()};
+function erAdd(i, d){
+  const k = T.kind[i]; if (k !== K.SEND && k !== K.PARK) return;
+  let m = ER.by.get(T.from[i]); if (!m) ER.by.set(T.from[i], m = new Map());
+  m.set(T.to[i], (m.get(T.to[i]) || 0) + d);
 }
 function edgeRates(ns, span){
-  const lo = indexAt(ns - span), hi = indexAt(ns), r = new Map();
-  for (let i = lo; i < hi; i++){ const k = T.kind[i]; if (k === K.SEND || k === K.PARK){ const key = T.from[i] + ">" + T.to[i]; r.set(key, (r.get(key) || 0) + 1); } }
-  for (const [k, v] of r) r.set(k, v * 1e9 / span);
-  return r;
+  const lo = T.base + indexAt(ns - span), hi = T.base + indexAt(ns);
+  if (lo < ER.lo || hi < ER.hi || lo > ER.hi || ER.lo < T.base){ ER.by.clear(); ER.lo = ER.hi = lo; }
+  for (let g = ER.hi; g < hi; g++) erAdd(g - T.base, 1);
+  for (let g = ER.lo; g < lo; g++) erAdd(g - T.base, -1);
+  ER.lo = lo; ER.hi = hi;
+  const s = 1e9 / span;
+  return (from, to) => { const m = ER.by.get(from); return m ? (m.get(to) || 0) * s : 0; };
 }
 
 // ---------------------------------------------------------------- render
 const $ = id => document.getElementById(id);
-function fit(c){ const r = c.getBoundingClientRect(), d = devicePixelRatio || 1;
+// Canvas sizes come from a ResizeObserver: reading getBoundingClientRect
+// every frame forces a layout after each DOM update.
+const sizes = new Map(), sizer = new ResizeObserver(es => { for (const e of es) sizes.set(e.target, e.target.getBoundingClientRect()); dirty = true; });
+function fit(c){ let r = sizes.get(c); if (!r){ r = c.getBoundingClientRect(); sizes.set(c, r); sizer.observe(c); } const d = devicePixelRatio || 1;
   if (c.width !== Math.round(r.width * d) || c.height !== Math.round(r.height * d)){ c.width = Math.round(r.width * d); c.height = Math.round(r.height * d); }
-  const g = c.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); return [g, r.width, r.height]; }
+  // Opaque canvases: the compositor can skip blending them over the page
+  // behind, so each frame starts by painting the panel's own background.
+  const g = c.getContext("2d", {alpha:false}); g.setTransform(d, 0, 0, d, 0, 0);
+  g.fillStyle = bgOf(c); g.fillRect(0, 0, r.width, r.height); return [g, r.width, r.height]; }
+const bgs = new Map();
+function bgOf(c){ let b = bgs.get(c);
+  if (!b){ for (let e = c; e && (!b || b === "rgba(0, 0, 0, 0)"); e = e.parentElement) b = getComputedStyle(e).backgroundColor; bgs.set(c, b); }
+  return b; }
 
 function spark(id, vals, color){
   const c = $(id), g = c.getContext("2d"), w = c.width, h = c.height; g.clearRect(0, 0, w, h);
@@ -276,7 +364,11 @@ function spark(id, vals, color){
   g.stroke();
 }
 
+// The header's numbers and sparklines redraw at most ten times a second.
+let headerAt = 0, panelsAt = 0;
 function renderHeader(){
+  if (playing && performance.now() - headerAt < 100) return;
+  headerAt = performance.now();
   const span = 1e9, now = cursorNs, acts = [...M.actors.values()];
   const liveActs = acts.filter(a => a.stop < 0);
   $("sActors").textContent = liveActs.length + (acts.length > liveActs.length ? " / " + acts.length : "");
@@ -287,10 +379,10 @@ function renderHeader(){
   $("sBlocked").textContent = acts.filter(a => a.blocked).length;
   $("sFail").textContent = acts.filter(a => a.failed).length;
   $("sFail").className = acts.some(a => a.failed) ? "bad" : "";
-  $("sEvents").textContent = T.n.toLocaleString() + (meta.lost ? " (" + meta.lost + " lost)" : "");
-  const step = Math.max(endNs() / 40, 1e6), rates = [], lats = [];
-  for (let i = 39; i >= 0; i--){ const t = now - i * step; rates.push(windowRate(t, step));
-    const qs = M.latency.filter(l => l.t > t - step && l.t <= t).map(l => l.q); lats.push(qs.length ? pct(qs, .95) : 0); }
+  $("sEvents").textContent = (T.base + T.n).toLocaleString() + (T.base ? " · last " + (T.n / 1e6).toFixed(1) + "M kept" : "") + (meta.lost ? " (" + meta.lost + " lost)" : "");
+  const step = Math.max(endNs() / 40, 1e6), rates = [], lats = [], qb = Array.from({length:40}, () => []);
+  for (const l of M.latency){ const j = Math.floor((now - l.t) / step); if (j >= 0 && j < 40) qb[j].push(l.q); }
+  for (let i = 39; i >= 0; i--){ rates.push(windowRate(now - i * step, step)); lats.push(qb[i].length ? pct(qb[i], .95) : 0); }
   spark("sparkRate", rates, "#4cc2ff"); spark("sparkLat", lats, "#d29922");
 }
 
@@ -302,16 +394,18 @@ function order(){
   return out;
 }
 
+let treeHtml = "";
 function renderTree(rows){
   const html = rows.slice(0, 1500).map(([a, d]) =>
     `<div class="row${a.i === selected ? " sel" : ""}" data-i="${a.i}" style="padding-left:${8 + d * 12}px">` +
     `<span class="st ${status(a)}"></span>${label(a.i)}<span class="n">${a.mail + a.parked}</span></div>`).join("");
-  $("treeRows").innerHTML = html + (rows.length > 1500 ? `<div class="row dim">+${rows.length - 1500} more</div>` : "");
+  const out = html + (rows.length > 1500 ? `<div class="row dim">+${rows.length - 1500} more</div>` : "");
+  if (out !== treeHtml){ treeHtml = out; $("treeRows").innerHTML = out; }
 }
 
 let nodes = [], topoMode = "tree";
 function renderTopo(rows){
-  const [g, W, H] = fit($("topoC")); g.clearRect(0, 0, W, H);
+  const [g, W, H] = fit($("topoC"));
   if (!rows.length) return;
   // Busiest actors only when there are many, plus the selected one.
   const MAXN = 60; let shown = rows;
@@ -321,7 +415,7 @@ function renderTopo(rows){
     shown = rows.filter(r => keepSet.has(r[0].i));
     $("topoNote").textContent = `· busiest ${shown.length} of ${rows.length}`;
   } else $("topoNote").textContent = "";
-  nodes = []; const pos = new Map();
+  nodes = []; ringCenter = null; const pos = new Map();
   let nw = 112, nh = 30, route = null;
   const put = (a, x, y) => { pos.set(a.i, [x, y]); nodes.push({a, x, y, w:nw, h:nh}); };
   const rates = edgeRates(cursorNs, 1e9);
@@ -361,7 +455,7 @@ function renderTopo(rows){
     const load = new Map(), hotLinks = new Set();
     for (const e of M.edges.values()){
       if (!pos.has(e.from) || !pos.has(e.to) || e.from === e.to) continue;
-      const r = rates.get(e.from + ">" + e.to) || 0; if (!r) continue;
+      const r = rates(e.from, e.to); if (!r) continue;
       const hot = e.from === selected || e.to === selected;
       for (const c of route(e.from, e.to).links){ load.set(c, (load.get(c) || 0) + r); if (hot) hotLinks.add(c); }
     }
@@ -380,12 +474,15 @@ function renderTopo(rows){
     for (const a of list){ const q = fpos.get(a.i); put(a, q.x - nw / 2, q.y - nh / 2); }
     messageEdges(g, pos, nw, nh, rates, shown.length);
   } else {
-    // The roundtable: spawners in the middle, the rest on a ring.
-    const hubs = shown.filter(r => r[0].kids.length).map(r => r[0]), ring = shown.map(r => r[0]).filter(a => !a.kids.length);
-    const cx = W / 2 - nw / 2, cy = H / 2 - nh / 2;
-    hubs.forEach((a, j) => put(a, cx + (j - (hubs.length - 1) / 2) * (nw + 10), cy));
-    const rx = W / 2 - nw / 2 - 10, ry = H / 2 - nh / 2 - 8;
-    ring.forEach((a, j) => { const th = -Math.PI / 2 + 2 * Math.PI * j / ring.length; put(a, cx + rx * Math.cos(th), cy + ry * Math.sin(th)); });
+    // The roundtable: every actor evenly around one circle, in spawn-tree
+    // order so siblings sit together; messages bend through the middle.
+    const ring = shown.map(r => r[0]), n = Math.max(1, ring.length);
+    const R0 = Math.min(W, H) / 2 - 12, gap = 2 * Math.PI * R0 / n;
+    nw = Math.max(40, Math.min(112, gap - 8)); nh = gap < 40 ? 16 : 30;
+    const R = Math.max(20, Math.min(W / 2 - nw / 2 - 8, H / 2 - nh / 2 - 8));
+    ringCenter = [W / 2, H / 2];
+    ring.forEach((a, j) => { const th = -Math.PI / 2 + 2 * Math.PI * j / n;
+      put(a, W / 2 + R * Math.cos(th) - nw / 2, H / 2 + R * Math.sin(th) - nh / 2); });
     messageEdges(g, pos, nw, nh, rates, shown.length);
   }
   dots(g, pos, nw, nh, route);
@@ -395,7 +492,7 @@ function renderTopo(rows){
     g.lineWidth = a.i === selected ? 2 : 1;
     g.beginPath(); g.roundRect(n.x, n.y, n.w, n.h, 5); g.fill(); g.stroke();
     g.fillStyle = s === "stopped" ? "#666" : "#e6edf3"; g.font = "11px ui-monospace,monospace";
-    g.fillText(label(a.i).slice(0, Math.max(3, Math.floor((n.w - 10) / 6.6))), n.x + 5, n.y + Math.min(13, n.h - 2));
+    g.fillText(shortLabel(label(a.i), Math.max(3, Math.floor((n.w - 10) / 6.6))), n.x + 5, n.y + Math.min(13, n.h - 2));
     if (n.h < 24) continue;
     const fill = Math.min(1, (a.mail + a.parked) / meta.bound);
     g.fillStyle = "#1f2633"; g.fillRect(n.x + 7, n.y + 20, n.w - 14, 4);
@@ -408,7 +505,7 @@ function messageEdges(g, pos, nw, nh, rates, count){
     const maxN = Math.max(1, ...[...M.edges.values()].map(e => e.n));
     for (const e of M.edges.values()){
       const p = pos.get(e.from), q = pos.get(e.to); if (!p || !q) continue;
-      const r = rates.get(e.from + ">" + e.to) || 0, hot = e.from === selected || e.to === selected;
+      const r = rates(e.from, e.to), hot = e.from === selected || e.to === selected;
       g.strokeStyle = r > 0 ? (hot ? "rgba(76,194,255,.95)" : "rgba(76,194,255,.45)") : "rgba(120,130,150,.18)";
       g.lineWidth = 1 + 3 * Math.sqrt(e.n / maxN);
       const c = curve(p, q, nw, nh);
@@ -417,16 +514,25 @@ function messageEdges(g, pos, nw, nh, rates, count){
       else { g.moveTo(c[0], c[1]); g.quadraticCurveTo(c[2], c[3], c[4], c[5]); }
       g.stroke();
       if (r > 0 && (hot || count < 25)){ g.fillStyle = "#8fd8ff"; g.font = "10px ui-monospace,monospace";
-        g.fillText(Math.round(r) + "/s", (c[0] + c[4]) / 2 - 12, (c[1] + c[5]) / 2 - 4); }
+        g.fillText(Math.round(r) + "/s", (c[0] + 2 * c[2] + c[4]) / 4 - 12, (c[1] + 2 * c[3] + c[5]) / 4 - 4); }
     }
 }
 
 // Force layout for the graph view: actors repel, message edges pull by how
 // many messages crossed them, spawn links pull a little. Positions persist
 // between frames, so each frame only refines the last.
-const fpos = new Map();
+const fpos = new Map(), fsim = {key:"", still:0};
 function settle(list, W, H, nw){
+  // A hidden or tiny canvas (narrow window) has no room to lay out in, and a
+  // zero spring length would turn every position into NaN for good.
+  if (W < nw + 24 || H < 60) return;
+  for (const [i, p] of fpos) if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) fpos.delete(i);
   const keep = new Set(list.map(a => a.i)), ids = [...keep];
+  // Settled with the same actors and size: rest, re-checking now and then as
+  // edge weights drift.
+  const key = ids.join(",") + "|" + W + "|" + H;
+  if (key === fsim.key && fsim.still > 0 && fsim.still++ % 30) return;
+  fsim.key = key;
   for (const a of list) if (!fpos.has(a.i)){
     const p = fpos.get(a.parent || 0) || {x:W / 2, y:H / 2};
     fpos.set(a.i, {x:p.x + (Math.random() - .5) * 120, y:p.y + (Math.random() - .5) * 120});
@@ -437,6 +543,7 @@ function settle(list, W, H, nw){
   for (const s of springs) s[2] /= maxW;
   for (const a of list) if (keep.has(a.parent)) springs.push([a.i, a.parent, .3]);
   const k = Math.sqrt(W * H / Math.max(1, ids.length)) * .55;
+  let moved = 0;
   for (let it = 0; it < 10; it++){
     const f = new Map(ids.map(i => [i, [0, 0]]));
     for (let x = 0; x < ids.length; x++) for (let y = x + 1; y < ids.length; y++){
@@ -453,17 +560,29 @@ function settle(list, W, H, nw){
     }
     for (const i of ids){ const p = fpos.get(i), v = f.get(i);
       v[0] += (W / 2 - p.x) * .02; v[1] += (H / 2 - p.y) * .04;
-      const m = Math.hypot(v[0], v[1]), step = Math.min(8, m) / Math.max(m, 1e-9);
+      const m = Math.hypot(v[0], v[1]), step = Math.min(8, m) / Math.max(m, 1e-9), ox = p.x, oy = p.y;
       p.x = Math.min(W - nw / 2 - 6, Math.max(nw / 2 + 6, p.x + v[0] * step));
-      p.y = Math.min(H - 24, Math.max(24, p.y + v[1] * step)); }
+      p.y = Math.min(H - 24, Math.max(24, p.y + v[1] * step));
+      if (it === 9) moved = Math.max(moved, Math.abs(p.x - ox) + Math.abs(p.y - oy)); }
   }
-  dirty = true;
+  if (moved > .3){ fsim.still = 0; dirty = true; } else if (!fsim.still) fsim.still = 1;
 }
 
 // Message edges bow to one side so a pair's two directions don't overlap.
+// A label cut to k characters keeps its `#index`, so small nodes stay
+// distinguishable: `Strategy#513` becomes `Str#513`.
+function shortLabel(text, k){
+  if (text.length <= k) return text;
+  const h = text.lastIndexOf("#");
+  return h < 0 ? text.slice(0, k) : text.slice(0, Math.max(1, k - (text.length - h))) + text.slice(h);
+}
+// On the ring, edges bow toward its centre; elsewhere to one side.
+let ringCenter = null;
 function curve(p, q, nw, nh){
-  const x1 = p[0] + nw / 2, y1 = p[1] + nh / 2, x2 = q[0] + nw / 2, y2 = q[1] + nh / 2;
-  return [x1, y1, (x1 + x2) / 2 + (y2 - y1) * .2, (y1 + y2) / 2 - (x2 - x1) * .2, x2, y2];
+  const x1 = p[0] + nw / 2, y1 = p[1] + nh / 2, x2 = q[0] + nw / 2, y2 = q[1] + nh / 2, mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  if (ringCenter){ const [cx, cy] = ringCenter, side = .06;
+    return [x1, y1, mx + (cx - mx) * .7 + (y2 - y1) * side, my + (cy - my) * .7 - (x2 - x1) * side, x2, y2]; }
+  return [x1, y1, mx + (y2 - y1) * .2, my - (x2 - x1) * .2, x2, y2];
 }
 // The point a fraction f of the way along a route.
 function along(r, f){
@@ -474,7 +593,7 @@ function along(r, f){
 }
 // One dot per message in flight at the cursor: it leaves the sender when sent
 // and reaches the receiver when a worker takes it.
-const MAX_DOTS = 600;
+const MAX_DOTS = 600, DOT_STYLE = [["#8fd8ff", 2.2], ["#ffffff", 3], ["#d29922", 2.2]], dotXY = [[], [], []];
 function dots(g, pos, nw, nh, route){
   const now = cursorNs, look = Math.max(windowNs() / 4, 1e6), lo = indexAt(now - look), hi = indexAt(now);
   let n = 0;
@@ -490,14 +609,19 @@ function dots(g, pos, nw, nh, route){
     else { const c = curve(p, q, nw, nh), u = 1 - f;
       x = u * u * c[0] + 2 * u * f * c[2] + f * f * c[4]; y = u * u * c[1] + 2 * u * f * c[3] + f * f * c[5]; }
     const hot = T.from[i] === selected || T.to[i] === selected;
-    g.fillStyle = k === K.PARK ? "#d29922" : hot ? "#ffffff" : "#8fd8ff";
-    g.beginPath(); g.arc(x, y, hot ? 3 : 2.2, 0, Math.PI * 2); g.fill(); n++;
+    (k === K.PARK ? dotXY[2] : hot ? dotXY[1] : dotXY[0]).push(x, y); n++;
   }
+  // One path and one fill per colour, not one per dot.
+  DOT_STYLE.forEach(([color, rad], j) => { const xy = dotXY[j]; if (!xy.length) return;
+    g.fillStyle = color; g.beginPath();
+    for (let m = 0; m < xy.length; m += 2){ g.moveTo(xy[m] + rad, xy[m + 1]); g.arc(xy[m], xy[m + 1], rad, 0, Math.PI * 2); }
+    g.fill(); xy.length = 0; });
 }
 
+let inspHtml = "";
 function renderInspector(){
   const a = M.actors.get(selected);
-  if (!a){ $("inspBody").innerHTML = '<div class="kv"><span>select an actor</span></div>'; return; }
+  if (!a){ inspHtml = ""; $("inspBody").innerHTML = '<div class="kv"><span>select an actor</span></div>'; return; }
   const life = (a.stop >= 0 ? a.stop : cursorNs) - a.spawn, s = status(a), fill = (a.mail + a.parked) / meta.bound;
   const oldest = [...M.pending.entries()].length && a.mail ? oldestFor(a.i) : 0;
   const kv = (k, v, c) => `<div class="kv"><span>${k}</span><span class="${c || ""}">${v}</span></div>`;
@@ -514,7 +638,7 @@ function renderInspector(){
     (a.dropped ? kv("dropped", a.dropped, "bad") : "") +
     `<h3>recent messages</h3><table>` +
     a.recent.slice(-14).reverse().map(r => `<tr><td>${r.name.split(".").pop()}</td><td class="dim">${label(r.from)}</td><td class="r">${ms(r.q)}</td><td class="r${r.failed ? " bad" : ""}">${ms(r.dur)}</td></tr>`).join("") + `</table>`;
-  $("inspBody").innerHTML = h;
+  if (h !== inspHtml){ inspHtml = h; $("inspBody").innerHTML = h; }
 }
 function oldestFor(i){
   // Messages still pending to `i`: the earliest send among them.
@@ -530,47 +654,328 @@ let zoom = 1;
 function windowNs(){ return Math.max(2e4, zoom * Math.min(endNs(), playing ? speed * 4e9 : 200e6)); }
 
 function renderTimeline(rows){
-  const [g, W, H] = fit($("tl")); g.clearRect(0, 0, W, H);
+  const [g, W, H] = fit($("tl"));
   const lanes = rows.map(r => r[0]).slice(0, Math.floor((H - 20) / 16));
   const span = windowNs(), t1 = cursorNs, t0 = t1 - span, lx = 150;
   const x = t => lx + (t - t0) / span * (W - lx - 10), lane = new Map(lanes.map((a, j) => [a.i, j]));
   g.font = "10px ui-monospace,monospace";
   lanes.forEach((a, j) => { const y = 16 + j * 16; g.fillStyle = a.i === selected ? "#173149" : j % 2 ? "#121721" : "#0f141c";
     g.fillRect(0, y, W, 16); g.fillStyle = "#9aa4b2"; g.fillText(label(a.i).slice(0, 20), 6, y + 11); });
-  for (const b of M.bars){
-    if (b.t1 < t0 || b.t0 > t1) continue; const j = lane.get(b.to); if (j === undefined) continue;
-    const y = 16 + j * 16, xa = Math.max(lx, x(b.t0)), xb = Math.max(xa + 1.5, x(b.t1));
-    if (b.q > 0){ g.fillStyle = "rgba(210,153,34,.25)"; g.fillRect(Math.max(lx, x(b.t0 - b.q)), y + 7, xa - Math.max(lx, x(b.t0 - b.q)), 2); }
-    g.fillStyle = b.failed ? "#f85149" : "#3fb9a0"; g.fillRect(xa, y + 3, xb - xa, 10);
-    if (xb - xa > 50){ g.fillStyle = "#0b0e14"; g.fillText(b.name.split(".").pop(), xa + 3, y + 11); }
+  // Bars end in time order, so skip straight to the first one still in view.
+  // Bars and queue waits closer than half a pixel in a lane merge into one
+  // rectangle: thousands of sub-pixel turns cost one fillRect, not thousands.
+  const bars = M.bars; let lo = 0, hi = bars.length;
+  while (lo < hi){ const mid = (lo + hi) >> 1; if (bars[mid].t1 < t0) lo = mid + 1; else hi = mid; }
+  const runs = lanes.map(() => [0, -1, false, 0, -1]), labels = [];
+  const flushBar = (r, y) => { if (r[1] > r[0]){ g.fillStyle = r[2] ? "#f85149" : "#3fb9a0"; g.fillRect(r[0], y + 3, r[1] - r[0], 10); } };
+  const flushQ = (r, y) => { if (r[4] > r[3]){ g.fillStyle = "rgba(210,153,34,.25)"; g.fillRect(r[3], y + 7, r[4] - r[3], 2); } };
+  for (let i = lo; i < bars.length; i++){
+    const b = bars[i]; if (b.t0 > t1) continue; const j = lane.get(b.to); if (j === undefined) continue;
+    const y = 16 + j * 16, xa = Math.max(lx, x(b.t0)), xb = Math.max(xa + 1.5, x(b.t1)), r = runs[j];
+    if (b.q > 0){ const qa = Math.max(lx, x(b.t0 - b.q));
+      if (qa > r[4] + .5){ flushQ(r, y); r[3] = qa; } r[4] = Math.max(r[4], xa); }
+    if (xa > r[1] + .5 || r[2] !== b.failed){ flushBar(r, y); r[0] = xa; r[1] = xb; r[2] = b.failed; } else r[1] = Math.max(r[1], xb);
+    if (xb - xa > 50) labels.push([b, xa, y]);
   }
+  runs.forEach((r, j) => { flushQ(r, 16 + j * 16); flushBar(r, 16 + j * 16); });
+  g.fillStyle = "#0b0e14"; for (const [b, xa, y] of labels) g.fillText(b.name.split(".").pop(), xa + 3, y + 11);
   g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(1) + " ms", x(t) - 16, 11); }
 }
 
-// Causality flame chart: x is time, a turn sits one row under the turn whose
-// send caused it, so a stack is a chain of messages.
-let flameBars = [];
+// ---------------------------------------------------------------- flame
+// Two flame views over the kept window. "merged" is a classic icicle: the
+// causal tree of turns (a turn hangs under the turn whose send caused it,
+// from the take's id/cause columns), sibling turns with the same
+// Type.behaviour merged, width = busy time or turn count. "over time" is
+// the original chart: x is time, one bar per turn, stacked by cause.
+const FL = {layout:"merged", width:"time", fold:true, view:"flame", q:"", sortK:"self", sortD:-1,
+            tree:null, key:"", builtAt:0, cost:0, at:null, frames:[], rows:[], cur:"", zoom:"", hover:null, rowH:18, stats:null};
+const MAX_DEPTH = 96;
+const PALETTE = [["#5b8def", "#fff"], ["#f2b443", "#1d1500"], ["#e8679b", "#fff"], ["#9a6cf0", "#fff"],
+                 ["#43bfa8", "#032019"], ["#de7a3c", "#fff"], ["#62b0f0", "#04121f"], ["#86c26a", "#0c1a05"]];
+// A type's colour is its name's hash on the palette; types are placed in
+// name order and step past colours already taken, so a program's types
+// get the same, distinct colours on every load.
+const typeColors = new Map();
+let colorNames = -1;
+function typeColor(type){
+  if (colorNames !== meta.names.size){ colorNames = meta.names.size; typeColors.clear();
+    const types = [...new Set([...meta.names.values()].map(n => n.split(".")[0]))].sort(), used = new Set();
+    for (const t of types){ let k = fnv(t) % PALETTE.length;
+      for (let s = 0; s < PALETTE.length && used.has(k); s++) k = (k + 1) % PALETTE.length;
+      used.add(k); if (used.size === PALETTE.length) used.clear(); typeColors.set(t, PALETTE[k]); } }
+  let c = typeColors.get(type);
+  if (!c){ c = PALETTE[fnv(type) % PALETTE.length]; typeColors.set(type, c); }
+  return c;
+}
+function fnv(s){ let h = 2166136261; for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function fnode(parent, key, label){
+  return {key, label, type:label.split(/[. ]/)[0], parent, depth:parent ? parent.depth + 1 : 0, kids:new Map(), list:[],
+          self:0, n:0, fails:0, running:0, folded:0, actors:new Map(), total:0, tn:0};
+}
+
+// Replays takes and dones in events 0..upto into the merged tree. A turn is
+// placed once its cause's node is known; until then it waits on the cause.
+function buildFlame(upto){
+  const root = fnode(null, "", "(root)"), nodes = [root];
+  if (!FL.at || FL.at.length < upto) FL.at = new Int32Array(Math.max(65536, Math.ceil(upto * 1.25)));
+  const at = FL.at; at.fill(0, 0, upto);
+  const turn = [], wait = new Map(), work = [];
+  let turns = 0, t0 = Infinity, t1 = 0;
+  const one = (j, d, code) => {
+    const p = T.up[j] ? j - T.up[j] : -1;
+    let parent = root;
+    if (p >= 0){ const v = at[p]; if (!v){ let w = wait.get(p); if (!w) wait.set(p, w = []); w.push(j, d, code); return; } parent = nodes[v - 1]; }
+    const a = T.to[j], ran = d >= 0, dur = (ran ? T.ns[d] : cursorNs) - T.ns[j];
+    const ty = (M.actors.get(a) || {}).type || "actor", key = code !== undefined ? code : "~" + ty;
+    let node = null;
+    if (FL.fold) for (let q = parent; q; q = q.parent) if (q.key === key){ node = q; node.folded++; break; }
+    if (!node && parent.depth >= MAX_DEPTH) node = parent.key === "…" ? parent : parent.kids.get("…") || null;
+    if (!node){
+      const k = parent.depth >= MAX_DEPTH ? "…" : key;
+      node = parent.kids.get(k);
+      if (!node){
+        node = fnode(parent, k, k === "…" ? "(deeper turns)" : code !== undefined ? nameOf(code) : ty + " (running)");
+        parent.kids.set(k, node); node.id = nodes.push(node);
+      }
+    }
+    at[j] = node.id;
+    node.self += Math.max(0, dur); node.n++; turns++;
+    if (ran && T.kind[d] === K.FAIL) node.fails++;
+    if (!ran) node.running++;
+    node.actors.set(a, (node.actors.get(a) || 0) + Math.max(0, dur));
+    if (T.ns[j] < t0) t0 = T.ns[j]; if ((ran ? T.ns[d] : cursorNs) > t1) t1 = ran ? T.ns[d] : cursorNs;
+    const w = wait.get(j); if (w){ wait.delete(j); for (let k = 0; k < w.length; k += 3) work.push(w[k], w[k + 1], w[k + 2]); }
+  };
+  const settle = (j, d, code) => { one(j, d, code); while (work.length){ const c = work.pop(), dd = work.pop(), jj = work.pop(); one(jj, dd, c); } };
+  root.id = 1;
+  for (let i = 0; i < upto; i++){
+    const k = T.kind[i];
+    if (k === K.TAKE) turn[T.from[i]] = i + 1;
+    else if (k === K.DONE || k === K.FAIL){ const j = (turn[T.from[i]] || 0) - 1; turn[T.from[i]] = 0; if (j >= 0) settle(j, i, T.msg[i]); }
+  }
+  // Turns still running at the cursor: their name is on the done past it, if kept.
+  const open = [];
+  turn.forEach((v, w) => { if (v) open.push([v - 1, w]); });
+  open.sort((x, y) => x[0] - y[0]);
+  for (const [j, w] of open){
+    let code;
+    for (let i = upto; i < T.n && i < upto + 500000; i++) if (T.from[i] === w && (T.kind[i] === K.DONE || T.kind[i] === K.FAIL)){ code = T.msg[i]; break; }
+    settle(j, -1, code);
+  }
+  // A cause whose own turn never finished in the window: its turns go under the root.
+  while (wait.size){ const p = wait.keys().next().value; at[p] = 1; const w = wait.get(p); wait.delete(p);
+    for (let k = 0; k < w.length; k += 3) settle(w[k], w[k + 1], w[k + 2]); }
+  // Inclusive totals, children before parents (nodes are created parent first).
+  for (let i = nodes.length - 1; i >= 0; i--){ const n = nodes[i]; n.total += n.self; n.tn += n.n;
+    if (n.parent){ n.parent.total += n.total; n.parent.tn += n.tn; } }
+  return {root, nodes, turns, t0:t0 === Infinity ? 0 : t0, t1, upto};
+}
+const metric = n => FL.width === "time" ? n.total : n.tn;
+function sortFlame(t){ for (const n of t.nodes) n.list = [...n.kids.values()].sort((a, b) => metric(b) - metric(a) || (a.label < b.label ? -1 : 1)); }
+function pathOf(n){ const ks = []; for (; n && n.parent; n = n.parent) ks.push(n.key); return ks.reverse().join("\u0001"); }
+function findPath(t, p){ let n = t.root; if (!p) return n;
+  for (const s of p.split("\u0001")){ const k = n.kids.get(s) || n.kids.get(+s); if (!k) return null; n = k; } return n; }
+function topActor(n){ let best = 0, bv = -1; for (const [a, v] of n.actors) if (v > bv){ bv = v; best = a; } return best; }
+const fmatch = n => !!FL.q && n.label.toLowerCase().includes(FL.q);
+
+// Rebuilt only when the cursor, the window or a setting moved; while live or
+// playing at most a fifth of the time goes to rebuilding.
+let flameTimer = 0;
+function flameTree(){
+  const key = [M.upto, T.base, meta.names.size, FL.fold].join("|");
+  if (FL.tree && FL.key === key) return FL.tree;
+  const now = performance.now();
+  if (FL.tree && (live || playing) && now - FL.builtAt < FL.cost * 4){
+    if (!flameTimer) flameTimer = setTimeout(() => { flameTimer = 0; dirty = true; }, FL.cost * 4);
+    return FL.tree;
+  }
+  const t = buildFlame(M.upto); sortFlame(t);
+  FL.cost = performance.now() - now; FL.builtAt = performance.now(); FL.tree = t; FL.key = key; FL.stats = null;
+  return t;
+}
+function flameStats(t){
+  const sk = FL.q + "|" + FL.width;
+  if (FL.stats && FL.stats.k === sk && FL.stats.t === t) return FL.stats;
+  let n = 0, share = 0;
+  const walk = (x, under) => { const m = fmatch(x); if (m) n++; if (m && !under) share += metric(x); for (const c of x.list) walk(c, under || m); };
+  if (FL.q) walk(t.root, false);
+  return FL.stats = {k:sk, t, n, share:metric(t.root) ? share / metric(t.root) : 0};
+}
+
 function renderFlame(){
-  const [g, W, H] = fit($("flame")); g.clearRect(0, 0, W, H);
+  const tbl = FL.view === "table", timeView = FL.layout === "time";
+  $("flame").style.display = tbl ? "none" : "block"; $("fTable").style.display = tbl ? "" : "none";
+  $("fHint").textContent = tbl ? "Click a column to sort · double-click a row to find it in the flamegraph" :
+    timeView ? "Each bar is a turn; the bar under it is the turn whose send caused it · wheel to zoom · click to select the actor" :
+    "Use the arrow keys to move between frames, Enter or Space to focus a frame, and Escape to show all frames.";
+  if (timeView && !tbl){ renderFlameTime(); return; }
+  const t = flameTree(), s = flameStats(t);
+  $("fMatch").textContent = FL.q ? `${s.n.toLocaleString()} match${s.n === 1 ? "" : "es"} · ${(100 * s.share).toFixed(1)}% of ${FL.width === "time" ? "busy time" : "turns"}` : "";
+  $("fNote").textContent = `${t.turns.toLocaleString()} turns · ${ms(t.root.total)} busy over ${ms(Math.max(0, t.t1 - t.t0))}` +
+    (T.base ? ` · last ${(T.n / 1e6).toFixed(1)}M events` : "");
+  if (tbl) renderFlameTable(t); else renderIcicle(t);
+}
+
+function layoutIcicle(t, W){
+  const frames = [], z = (FL.zoom && findPath(t, FL.zoom)) || t.root;
+  const anc = []; for (let a = z; a; a = a.parent) anc.unshift(a);
+  for (const a of anc) frames.push({n:a, x:0, w:W, d:a.depth, anc:a !== z});
+  const place = (n, x, w) => {
+    const m = metric(n); if (!m) return; let cx = x;
+    for (const c of n.list){ const cw = metric(c) / m * w;
+      if (cw >= 0.35){ frames.push({n:c, x:cx, w:cw, d:c.depth}); if (cw >= 1) place(c, cx, cw); }
+      cx += cw; }
+  };
+  place(z, 0, W);
+  const rows = [];
+  for (const f of frames){ (rows[f.d] || (rows[f.d] = [])).push(f); }
+  return {frames, rows, z};
+}
+function ellipsis(g, s, w){
+  const cw = g.measureText("M").width, k = Math.floor(w / cw);
+  if (k >= s.length) return s; if (k < 3) return "";
+  const head = Math.ceil((k - 1) / 2), tail = k - 1 - head;
+  return s.slice(0, head) + "…" + (tail ? s.slice(-tail) : "");
+}
+function renderIcicle(t){
+  const c = $("flame"), body = $("fBody"), rh = FL.rowH;
+  const z = (FL.zoom && findPath(t, FL.zoom)) || t.root;
+  let deep = 0; for (const n of t.nodes) if (n.depth > deep && metric(n)) deep = n.depth;
+  c.style.height = Math.max(body.clientHeight - 2, 12 + (deep + 1) * rh) + "px";
+  const L = layoutIcicle(t, c.getBoundingClientRect().width - 8);
+  if (!z.parent) c.style.height = Math.max(body.clientHeight - 2, 12 + L.rows.length * rh) + "px";
+  FL.frames = L.frames; FL.rows = L.rows; FL.z = L.z; FL.t = t;
+  if (!findPath(t, FL.cur)) FL.cur = "";
+  drawIcicle();
+}
+function drawIcicle(){
+  const [g, W, H] = fit($("flame"));
+  const rh = FL.rowH, q = !!FL.q, cur = FL.t ? findPath(FL.t, FL.cur) : null;
+  g.font = "11px ui-monospace,SFMono-Regular,Menlo,monospace"; g.textBaseline = "middle";
+  for (const f of FL.frames){
+    const n = f.n, x = 4 + f.x, y = 6 + f.d * rh, w = Math.max(0.8, f.w - 1.5), h = rh - 2;
+    const [bg, fg] = n.parent ? typeColor(n.type) : ["#3d7be0", "#fff"];
+    g.globalAlpha = q && !fmatch(n) ? 0.18 : f.anc ? 0.6 : 1;
+    g.fillStyle = bg;
+    if (w > 5){ g.beginPath(); g.roundRect(x, y, w, h, 3); g.fill(); } else g.fillRect(x, y, w, h);
+    if (n === FL.hover){ g.fillStyle = "rgba(255,255,255,.22)"; g.fillRect(x, y, w, h); }
+    if (n.fails && w > 3){ g.strokeStyle = "#ff4d4f"; g.lineWidth = 1.5; g.strokeRect(x + .75, y + .75, w - 1.5, h - 1.5); }
+    if (w > 22){
+      let s = n.parent ? n.label : "(root)";
+      if (n.running && n.running === n.n) s += " (running)";
+      s = ellipsis(g, s, w - 10);
+      if (s){ g.fillStyle = fg; g.fillText(s, x + 5, y + h / 2 + .5); }
+    }
+    g.globalAlpha = 1;
+    if (n === cur){ g.strokeStyle = "#fff"; g.lineWidth = 2; g.strokeRect(x + 1, y + 1, Math.max(1, w - 2), h - 2); }
+  }
+}
+function frameAt(e){
+  const b = $("flame").getBoundingClientRect(), x = e.clientX - b.left - 4, y = e.clientY - b.top - 6;
+  const row = FL.rows[Math.floor(y / FL.rowH)]; if (!row || y % FL.rowH > FL.rowH - 2) return null;
+  return row.find(f => x >= f.x && x < f.x + Math.max(f.w, 1)) || null;
+}
+function flameTip(e, f){
+  const tip = $("fTip");
+  if (!f){ tip.style.display = "none"; return; }
+  const n = f.n, r = FL.t.root, pc = (a, b) => b ? (100 * a / b).toFixed(1) + "%" : "-";
+  const who = n.actors.size > 1 ? `${n.actors.size} actors · most busy ${label(topActor(n))}` : n.actors.size ? label(topActor(n)) : "";
+  tip.innerHTML = `<b>${n.parent ? n.label : "(root)"}</b>` +
+    `<div><span>total</span>${ms(n.total)} <i>${pc(n.total, r.total)}</i></div>` +
+    `<div><span>self</span>${ms(n.self)} <i>${pc(n.self, r.total)}</i></div>` +
+    `<div><span>turns</span>${n.tn.toLocaleString()} <i>${pc(n.tn, r.tn)}</i>${n.parent ? ` · own ${n.n.toLocaleString()}` : ""}</div>` +
+    (who ? `<div><span>actor</span>${who}</div>` : "") +
+    (n.fails ? `<div class="bad"><span>failed</span>${n.fails.toLocaleString()}</div>` : "") +
+    (n.running ? `<div class="warn"><span>running</span>${n.running} at the cursor</div>` : "") +
+    (n.folded ? `<div class="dim"><span>folded</span>${n.folded.toLocaleString()} re-entries of this frame below it</div>` : "");
+  tip.style.display = "block";
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  tip.style.left = Math.min(innerWidth - tw - 8, e.clientX + 14) + "px";
+  tip.style.top = Math.max(8, Math.min(innerHeight - th - 8, e.clientY + 14) - (e.clientY + th + 22 > innerHeight ? th + 20 : 0)) + "px";
+}
+function flameCursor(n, sel){
+  FL.cur = pathOf(n); if (sel && n.parent){ const a = topActor(n); if (a){ selected = a; dirty = true; } }
+  drawIcicle();
+  const f = FL.frames.find(f => f.n === n), body = $("fBody");
+  if (f){ const y = 6 + f.d * FL.rowH; if (y < body.scrollTop) body.scrollTop = y - 4; else if (y + FL.rowH > body.scrollTop + body.clientHeight) body.scrollTop = y + FL.rowH - body.clientHeight + 4; }
+}
+function flameKey(e){
+  if (FL.layout !== "merged" || FL.view !== "flame" || !FL.t) return;
+  const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", " ", "Escape"];
+  if (!keys.includes(e.key)) return;
+  e.preventDefault(); e.stopPropagation();
+  const n = findPath(FL.t, FL.cur) || FL.t.root;
+  if (e.key === "Escape"){ FL.zoom = ""; dirty = true; return; }
+  if (e.key === "Enter" || e.key === " "){ FL.zoom = n.parent ? pathOf(n) : ""; FL.cur = pathOf(n); dirty = true; return; }
+  let to = null;
+  if (e.key === "ArrowUp") to = n.parent;
+  else if (e.key === "ArrowDown"){ const f = FL.frames.find(f => f.n.parent === n && !f.anc); to = f ? f.n : null; }
+  else {
+    const row = FL.rows[n.depth] || [], k = row.findIndex(f => f.n === n);
+    if (k >= 0) { const f = row[k + (e.key === "ArrowLeft" ? -1 : 1)]; to = f ? f.n : null; }
+  }
+  if (to) flameCursor(to, true);
+}
+
+function renderFlameTable(t){
+  const agg = new Map(), on = new Map();
+  const walk = n => {
+    if (n.parent){
+      let r = agg.get(n.label); if (!r) agg.set(n.label, r = {name:n.label, type:n.type, self:0, total:0, n:0, fails:0, best:null});
+      r.self += n.self; r.n += n.n; r.fails += n.fails;
+      if (!r.best || n.self > r.best.self) r.best = n;
+      if (!on.get(n.label)) r.total += n.total;
+      on.set(n.label, (on.get(n.label) || 0) + 1);
+    }
+    for (const c of n.list) walk(c);
+    if (n.parent) on.set(n.label, on.get(n.label) - 1);
+  };
+  walk(t.root);
+  const tot = t.root.total || 1, tn = t.root.tn || 1, k = FL.sortK, d = FL.sortD;
+  const rows = [...agg.values()].filter(r => !FL.q || r.name.toLowerCase().includes(FL.q))
+    .sort((a, b) => (k === "name" ? (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) : a[k] - b[k]) * d);
+  FL.tableRows = rows;
+  document.querySelectorAll("#fTable th").forEach(th => th.classList.toggle("sorted", th.dataset.k === k));
+  document.querySelectorAll("#fTable th").forEach(th => th.dataset.dir = th.dataset.k === k && !th.classList.contains("pcol") ? (d < 0 ? "▼" : "▲") : "");
+  const bar = (v, of) => `<i class="fbarc" style="width:${Math.min(100, 100 * v / of).toFixed(1)}%"></i>`;
+  $("fRows").innerHTML = rows.map((r, i) => { const [bg] = typeColor(r.type);
+    return `<tr data-i="${i}"><td><span class="sw" style="background:${bg}"></span>${r.name}</td>` +
+      `<td class="r">${ms(r.self)}</td><td class="r pc">${bar(r.self, tot)}<em>${(100 * r.self / tot).toFixed(1)}%</em></td>` +
+      `<td class="r">${ms(r.total)}</td><td class="r pc">${bar(r.total, tot)}<em>${(100 * r.total / tot).toFixed(1)}%</em></td>` +
+      `<td class="r">${r.n.toLocaleString()}</td><td class="r pc"><em>${(100 * r.n / tn).toFixed(1)}%</em></td>` +
+      `<td class="r${r.fails ? " bad" : " dim"}">${r.fails || "-"}</td></tr>`; }).join("") ||
+    `<tr><td class="dim" colspan="8">${FL.q ? "no behaviour matches the search" : "no turns in the window yet"}</td></tr>`;
+}
+
+// Time-ordered causality chart (the original flame view).
+let flameBars = [];
+function renderFlameTime(){
+  const c = $("flame"); c.style.height = ($("fBody").clientHeight - 2) + "px";
+  const [g, W, H] = fit(c);
   const span = windowNs(), t1 = cursorNs, t0 = t1 - span, x = t => (t - t0) / span * W, rowH = 16;
-  g.font = "10px ui-monospace,monospace"; flameBars = [];
-  const hues = new Map(); let hue = 0;
+  g.font = "10px ui-monospace,monospace"; g.textBaseline = "alphabetic"; flameBars = [];
+  let hits = 0, all = 0;
   for (const b of M.bars){
     if (b.t1 < t0 || b.t0 > t1) continue;
-    const y = H - 18 - (b.depth + 1) * rowH; if (y < 14) continue;
-    const xa = Math.max(0, x(b.t0)), xb = Math.max(xa + 1, x(b.t1));
-    const ty = (M.actors.get(b.to) || {}).type || "";
-    if (!hues.has(ty)) hues.set(ty, (hue += 67) % 360);
-    g.fillStyle = b.failed ? "#f85149" : `hsl(${hues.get(ty)},55%,${b.to === selected ? 62 : 44}%)`;
+    const y = H - 18 - (b.depth + 1) * rowH; if (y < 2) continue;
+    const xa = Math.max(0, x(b.t0)), xb = Math.max(xa + 1, x(b.t1)), m = FL.q && b.name.toLowerCase().includes(FL.q);
+    const [bg, fg] = typeColor(b.name.split(".")[0]);
+    all++; if (m) hits++;
+    g.globalAlpha = FL.q && !m ? 0.18 : 1;
+    g.fillStyle = b.failed ? "#f85149" : bg;
     g.fillRect(xa, y, xb - xa - .5, rowH - 1); flameBars.push([xa, y, xb, b]);
-    if (xb - xa > 60){ g.fillStyle = "#0b0e14"; g.fillText((label(b.to) + " " + b.name.split(".").pop()).slice(0, Math.floor((xb - xa) / 6.2)), xa + 3, y + 11); }
+    if (b.to === selected){ g.strokeStyle = "#fff"; g.lineWidth = 1; g.strokeRect(xa + .5, y + .5, xb - xa - 1.5, rowH - 2); }
+    if (xb - xa > 60){ g.fillStyle = fg; g.fillText(ellipsis(g, label(b.to) + " " + b.name.split(".").pop(), xb - xa - 6), xa + 3, y + 11); }
+    g.globalAlpha = 1;
   }
   g.fillStyle = "#6b7686"; for (let k = 0; k <= 5; k++){ const t = t0 + span * k / 5; g.fillText((t / 1e6).toFixed(2) + " ms", Math.min(W - 60, x(t)), H - 4); }
-  g.fillText("each bar is a turn; the bar under it is the turn whose send caused it · wheel to zoom", 6, 11);
+  $("fMatch").textContent = FL.q ? `${hits.toLocaleString()} of ${all.toLocaleString()} turns match` : "";
+  $("fNote").textContent = `${all.toLocaleString()} turns in ${ms(span)}`;
 }
 
 function renderSched(){
-  const [g, W, H] = fit($("sched")); g.clearRect(0, 0, W, H);
+  const [g, W, H] = fit($("sched"));
   const span = windowNs(), t1 = cursorNs, t0 = t1 - span, lx = 90;
   const x = t => lx + (t - t0) / span * (W - lx - 10), lh = Math.min(28, (H - 20) / Math.max(1, M.workers.length));
   g.font = "10px ui-monospace,monospace";
@@ -599,7 +1004,11 @@ function render(){
   empty.style.display = "none";
   if (!selected && M.actors.size) selected = [...M.actors.keys()][0];
   const rows = order();
-  renderHeader(); renderTree(rows); renderTopo(rows); renderInspector();
+  // The side panels are DOM: while playing they refresh at 10 Hz, since a
+  // relayout and repaint every frame costs more than the canvases.
+  const now = performance.now();
+  if (!playing || now - panelsAt >= 100){ panelsAt = now; renderTree(rows); renderInspector(); }
+  renderHeader(); renderTopo(rows);
   if (view === "vTl") renderTimeline(rows); else if (view === "vSched") renderSched(); else if (view === "vFlame") renderFlame(); else renderTables();
   $("tCursor").textContent = "t = " + (cursorNs / 1e6).toFixed(2) + " ms";
   const span = endNs() - startNs();
@@ -629,27 +1038,54 @@ $("speed").onchange = e => { speed = +e.target.value; dirty = true; };
 addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT"){ e.preventDefault(); setPlaying(!playing); } });
 addEventListener("resize", () => dirty = true);
 // Wheel over the lanes zooms the time window.
-for (const id of ["tl", "sched", "flame"]) $(id).addEventListener("wheel", e => { e.preventDefault();
+for (const id of ["tl", "sched", "flame"]) $(id).addEventListener("wheel", e => { if (id === "flame" && FL.layout !== "time") return; e.preventDefault();
   zoom = Math.min(4, Math.max(1e-4, zoom * (e.deltaY > 0 ? 1.25 : 0.8))); dirty = true; }, {passive:false});
 const MODES = [["mTree", "tree"], ["mGraph", "graph"], ["mRing", "ring"]];
 for (const [id, mode] of MODES) $(id).onclick = () => { topoMode = mode;
   for (const [other, m] of MODES) $(other).classList.toggle("sel", m === mode); dirty = true; };
-$("flame").onclick = e => { const b = e.target.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
-  const hit = flameBars.find(([xa, ya, xb]) => x >= xa && x <= xb && y >= ya && y <= ya + 16); if (hit){ selected = hit[3].to; dirty = true; } };
+$("flame").onclick = e => {
+  if (FL.layout === "time"){ const b = e.target.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+    const hit = flameBars.find(([xa, ya, xb]) => x >= xa && x <= xb && y >= ya && y <= ya + 16); if (hit){ selected = hit[3].to; dirty = true; } return; }
+  const f = frameAt(e); if (f) flameCursor(f.n, true); };
+$("flame").ondblclick = e => { if (FL.layout !== "merged") return; const f = frameAt(e); if (f){ FL.cur = pathOf(f.n); FL.zoom = f.n.parent ? FL.cur : ""; dirty = true; } };
+$("flame").onmousemove = e => { if (FL.layout !== "merged"){ flameTip(e, null); return; }
+  const f = frameAt(e), n = f ? f.n : null; flameTip(e, f); $("flame").style.cursor = n ? "pointer" : "default";
+  if (n !== FL.hover){ FL.hover = n; drawIcicle(); } };
+$("flame").onmouseleave = e => { flameTip(e, null); if (FL.hover){ FL.hover = null; if (FL.layout === "merged") drawIcicle(); } };
+$("flame").addEventListener("keydown", flameKey);
+$("fSearch").oninput = e => { FL.q = e.target.value.trim().toLowerCase(); dirty = true; };
+$("fSearch").onkeydown = e => { if (e.key === "Escape"){ e.target.value = ""; FL.q = ""; dirty = true; } else if (e.key === "Enter") $("flame").focus(); };
+const FLAME_TOGGLES = [["fLayMerged", "layout", "merged"], ["fLayTime", "layout", "time"], ["fWTime", "width", "time"], ["fWCount", "width", "count"],
+                       ["fViewFlame", "view", "flame"], ["fViewTable", "view", "table"]];
+for (const [id, k, v] of FLAME_TOGGLES) $(id).onclick = () => { FL[k] = v; FL.hover = null;
+  for (const [o, ok, ov] of FLAME_TOGGLES) if (ok === k) $(o).classList.toggle("sel", ov === v);
+  if (k === "width" && FL.tree){ sortFlame(FL.tree); FL.stats = null; }
+  dirty = true; };
+$("fFold").onclick = () => { FL.fold = !FL.fold; $("fFold").classList.toggle("sel", FL.fold); FL.cur = FL.zoom = ""; dirty = true; };
+document.querySelectorAll("#fTable th").forEach(th => th.onclick = () => { const k = th.dataset.k;
+  FL.sortD = FL.sortK === k ? -FL.sortD : k === "name" ? 1 : -1; FL.sortK = k; dirty = true; });
+$("fRows").onclick = e => { const tr = e.target.closest("tr"), r = tr && FL.tableRows[+tr.dataset.i]; if (r && r.best){ const a = topActor(r.best); if (a){ selected = a; dirty = true; } } };
+$("fRows").ondblclick = e => { const tr = e.target.closest("tr"), r = tr && FL.tableRows[+tr.dataset.i]; if (!r) return;
+  $("fSearch").value = r.name; FL.q = r.name.toLowerCase(); FL.cur = r.best ? pathOf(r.best) : FL.cur;
+  // A row outside the focused frame would stay hidden: show all frames.
+  if (FL.zoom && FL.cur !== FL.zoom && !FL.cur.startsWith(FL.zoom + "\u0001")) FL.zoom = "";
+  $("fViewFlame").click(); };
 
 // ---------------------------------------------------------------- polling
 let dirty = true, polling = false;
 async function poll(){
-  if (polling) return; polling = true;
+  if (polling) return; polling = true; let more = false;
   try {
     const r = await fetch("/trace?from=" + offset, {cache:"no-store"});
     const start = +(r.headers.get("X-Trace-Start") || 0), text = await r.text();
-    if (start !== offset){ T.n = 0; queued.clear(); offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
-    if (text.length){ ingest(text); offset += new TextEncoder().encode(text).length; dirty = true; }
+    if (start !== offset){ T.n = 0; T.base = 0; base = null; queued.clear(); takeAt.clear(); FL.tree = null; sends = 0; ER.by.clear(); ER.lo = ER.hi = 0; offset = start; meta.names.clear(); meta.ended = false; meta.lost = 0; M = null; }
+    if (text.length){ more = text.length > 1048576; ingest(text); offset += new TextEncoder().encode(text).length; dirty = true; }
     $("liveDot").classList.toggle("on", !meta.ended);
     $("liveText").textContent = meta.ended ? "program exited" : "running";
   } catch (e) { $("liveDot").classList.remove("on"); $("liveText").textContent = "server gone"; }
   polling = false;
+  // Still behind a long trace: fetch the next chunk now, not in 400 ms.
+  if (more) poll();
 }
 setInterval(poll, 400); poll();
 (function frame(){
@@ -659,7 +1095,7 @@ setInterval(poll, 400); poll();
     dirty = true;
   }
   if (dirty){ dirty = false; render(); }
-  setTimeout(() => requestAnimationFrame(frame), playing ? 33 : 120);
+  if (playing) requestAnimationFrame(frame); else setTimeout(() => requestAnimationFrame(frame), 120);
 })();
 </script>
 </body>

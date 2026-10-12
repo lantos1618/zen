@@ -568,6 +568,12 @@ Project = {
         exe.spec.backend.match({
             C   => self.build_native(exe, "c"),
             Js  => self.build_script(exe),
+            Jit => {
+                println(
+                    "zen: a jit target has no executable; run its source with `zen build --backend jit <root>`"
+                );
+                Ok(None)
+            },
             Asm => asm_native(self.planned.target).match({
                 true  => self.build_native(exe, "s"),
                 false => {
@@ -805,7 +811,7 @@ Project = {
             head.word(args.std_root).try();
             head.word(args.target).try();
             head.word(
-                args.backend.match({ C => "c", Js => "js", Asm => "asm" })
+                args.backend.match({ C => "c", Js => "js", Asm => "asm", Jit => "jit" })
             ).try();
             exe.spec.deps.loop((dep) {
                 self.planned.libs.find((lib) { lib.name.eq(dep.name) }).match({

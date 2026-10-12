@@ -9,6 +9,10 @@
 //
 //   native-corpus <zen> <target> [filter] [shard] [shards] [runs]
 //
+// The target `jit` runs each program through the IR interpreter
+// (`zen build --backend jit`) instead, and reports its refusals and
+// compile failures as UNSUPPORTED.
+//
 // [filter] keeps the tests whose path contains any of its comma-separated
 // parts. With [runs] above one, each program is built once and run that
 // many times, for concurrent programs: a test is PASS only if every run
@@ -51,6 +55,8 @@ target_of = (name: str, host_arch: str) Res<Target> {
             runner: host_arch.eq("x86_64").match({ true => "qemu-aarch64", false => "" })
         )),
         "arm64-darwin"  => Ok(Target(arch: "arm64", os: "darwin", cross: "", runner: "")),
+        // The IR interpreter: `prog` is a script that runs the source.
+        "jit"           => Ok(Target(arch: host_arch, os: "jit", cross: "", runner: "")),
         _               => None,
     })
 }
@@ -87,8 +93,15 @@ Runner = {
         self.env.fs.read(self.a, path).match({ Ok(s) => Ok(s.view()), Err(_) => None })
     }
 
-    // Compile with the native backend; None when the compiler refused.
+    jit = (self: @Self) bool { self.target.os.eq("jit") }
+
+    // Compile with the native backend; None when the compiler refused. The
+    // jit backend compiles as it runs, so its refusals are found then.
     compile = (self: @Self, c: Case, source: str) Res<Res<str>, AllocError> {
+        self.jit().match({ true => Ok(None), false => self.assembly(c, source) })
+    }
+
+    assembly = (self: @Self, c: Case, source: str) Res<Res<str>, AllocError> {
         argv ::= self.a.Vec<str>();
         [self.zen, "build", c.root, "--entry", c.entry, "--std", "src", "--backend", "asm", "--target", self.target_name, "-o", source].loop((w) {
             argv.add(w).try();
@@ -129,6 +142,10 @@ Runner = {
     }
 
     link = (self: @Self, source: str, object: str, binary: str) Res<Res<str>, AllocError> {
+        self.jit().match({ true => Ok(None), false => self.native_link(source, object, binary) })
+    }
+
+    native_link = (self: @Self, source: str, object: str, binary: str) Res<Res<str>, AllocError> {
         first = self.run(self.assemble_argv(source, object).try()).try();
         (first.code == 0).match({
             false => Ok(Ok(first.err.view())),
@@ -137,6 +154,19 @@ Runner = {
                 (second.code == 0).match({ true => Ok(None), false => Ok(Ok(second.err.view())) })
             },
         })
+    }
+
+    // The jit backend's stand-in for a binary: a script that runs the
+    // program's source through the interpreter, named as the binary is.
+    wrap = (self: @Self, c: Case, binary: str) Res<AllocError> {
+        here = self.env.fs.cwd(self.a).match({ Ok(s) => s.view(), Err(_) => "." });
+        zen = self.zen.starts_with("/").match({ true => self.a.String("{}", self.zen).try(), false => self.a.String("{}/{}", here, self.zen).try() });
+        script = self.a.String("#!/bin/sh\nexec '{}' build '{}/{}' --entry '{}' --std '{}/src' --backend jit --argv0 \"$0\" -- \"$@\"\n", zen.view(), here, c.root, c.entry, here).try();
+        self.env.fs.write(binary, script.view()).ignore();
+        chmod ::= self.a.Vec<str>();
+        ["chmod", "+x", binary].loop((w) { chmod.add(w).try(); });
+        self.run(chmod).try();
+        Ok
     }
 
     // Launch under a 10 s alarm, with the test's arguments, environment
@@ -261,13 +291,18 @@ Runner = {
                         self.keep(dir.view(), c.base, "BROKEN", commands.view(), "", reason, first_line(reason));
                     },
                     None       => {
+                        self.jit().then(() { self.wrap(c, binary.view()).try(); });
                         command = self.launch(c, binary.view(), dir.view()).try();
                         commands.fmt("{}\n", command.view()).try();
                         // The first differing run is the one kept.
                         failed :: usize = 0;
                         first ::= "";
-                        Range(0, self.runs).loop((_) {
+                        refusal ::= "";
+                        Range(0, self.runs).loop((h, run) {
                             result = self.shell(command.view()).try();
+                            self.jit().then(() {
+                                refused(result.out.view()).when_ok((reason) { refusal = reason; h.break(); });
+                            });
                             verdict = self.compare(c, result).try();
                             (!verdict.is_empty()).then(() {
                                 (failed == 0).then(() {
@@ -277,7 +312,12 @@ Runner = {
                                 failed = failed + 1;
                             });
                         });
-                        (failed == 0).match({
+                        (!refusal.is_empty()).then(() {
+                            tally.unsupported = tally.unsupported + 1;
+                            println("UNSUPPORTED {} :: {}", c.base, refusal);
+                            self.keep(dir.view(), c.base, "UNSUPPORTED", commands.view(), "", refusal, refusal);
+                        });
+                        (refusal.is_empty() && failed == 0).match({
                             true  => {
                                 tally.pass = tally.pass + 1;
                                 passed = true;
@@ -288,8 +328,8 @@ Runner = {
                                     self.run(remove).try();
                                 });
                             },
-                            false => (failed == self.runs).match({
-                                true  => { tally.fail = tally.fail + 1; println("FAIL {} :: {}", c.base, first); },
+                            false => (!refusal.is_empty() || failed == self.runs).match({
+                                true  => refusal.is_empty().then(() { tally.fail = tally.fail + 1; println("FAIL {} :: {}", c.base, first); }),
                                 false => {
                                     tally.flaky = tally.flaky + 1;
                                     println("FLAKY {} :: {} of {} runs differ; first: {}", c.base, failed, self.runs, first);
@@ -368,6 +408,18 @@ quoted = (a: Alloc, argv: Vec<str>) Res<String, AllocError> {
     });
     line.add("\n").try();
     Ok(line)
+}
+
+// Why the jit backend did not run a program: its refusal, or the first
+// diagnostic of a compile that failed. None when the program ran.
+refused = (out: str) Res<str> {
+    out.find("error: unsupported by").match({
+        Ok(at) => Ok(first_line(out.slice(at, out.len))),
+        None   => (out.contains("zen: ") && out.ends_with("diagnostic(s)\n")).match({
+            true  => Ok(first_line(out)),
+            false => None,
+        }),
+    })
 }
 
 max_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }

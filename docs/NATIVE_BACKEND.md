@@ -320,6 +320,9 @@ re-run with less parallelism.
 
 Run it: `cd tests/native && ../../zen build`, then from the repository root
 `tests/native/build/<os>-<arch>/native-corpus ./zen <target> [filter] [shard shards]`.
+The target `jit` runs each program through the IR interpreter
+(`--backend jit`) instead of assembling it, as a third oracle beside C and
+asm.
 
 Refused constructs on `shared-lowering`, by the first one each unsupported
 program reaches (x86_64-linux, 269 programs): compiler-internal test roots

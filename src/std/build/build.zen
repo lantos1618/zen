@@ -251,16 +251,16 @@ mode_named* = (text: str) Res<Mode> {
 
 // Generator choice is independent of artifact delivery and OS/arch/ABI.
 // Only implemented generators are admitted; unknown names never fall back.
-Codegen* = { C | Js | Asm }
+Codegen* = { C | Js | Asm | Jit }
 
 Codegen* = (name: str) Res<Codegen> {
     name.match({
-        "c" => Ok(Codegen.C), "js" => Ok(Codegen.Js), "asm" => Ok(Codegen.Asm), _ => None
+        "c" => Ok(Codegen.C), "js" => Ok(Codegen.Js), "asm" => Ok(Codegen.Asm), "jit" => Ok(Codegen.Jit), _ => None
     })
 }
 
 Codegen.impl(StableName, {
-    stable_name = (self: @Self) str { self.match({ C => "c", Js => "js", Asm => "asm" }) }
+    stable_name = (self: @Self) str { self.match({ C => "c", Js => "js", Asm => "asm", Jit => "jit" }) }
 })
 
 // Check emits nothing. Other modes describe where generated artifacts go.
@@ -320,6 +320,9 @@ BuildArgs* = {
     permute* :: Permutation = Permutation.Natural,
     // A target spelling for native generators; empty selects the host.
     target* :: str = "",
+    // The whole command line, the program's name first, when the jit
+    // backend runs the program; None when the build runs nothing.
+    run_args* :: Res<Vec<str>> = None,
 
     emits* = (self: @Self) bool {
         self.emission.match({ Check => false, _ => true })

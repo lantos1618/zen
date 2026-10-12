@@ -20,6 +20,9 @@
 { Arm64, Arm64Os } = gen.gen_asm_arm64
 { verify, message } = gen.gen_verify
 { Res, Ok, Err, None } = std.core
+{ Vec } = std.collections
+{ execute, refused_by_jit } = gen.gen_jit_interp
+{ Platform } = gen.gen_sys
 
 Layout* = { Single | Modules }
 ArtifactKind* = { Source | Symbols }
@@ -66,6 +69,12 @@ Generation* = {
                 report,
                 (artifact) { publish(artifact) }
             ),
+            Jit => {
+                report.add(
+                    "error: the jit backend runs a program and emits no source; give no output file\n"
+                ).try();
+                Ok(1)
+            },
             C   => (self.layout.match({ Single => true, Modules => false }) && !self.symbols && !self.ffi).match({
                 true  => self.c_ir(report, (artifact) { publish(artifact) }),
                 false => self.legacy_c(
@@ -158,24 +167,9 @@ Generation* = {
                      report :: String,
                      publish: (artifact: Artifact) Res<usize, AllocError>)
                     Res<usize, AllocError> {
-        program.verify(self.alloc).match({
-            Err(error) => error.match({
-                OutOfMemory    => Err(AllocError.OutOfMemory),
-                Invalid(fault) => {
-                    name = program.functions.get(
-                        fault.function
-                    ).match({ Ok(f) => f.name, None => "?" });
-                    report.fmt(
-                        "compiler error: invalid IR at function {} ({}), block {}: {}\n",
-                        fault.function,
-                        name,
-                        fault.block,
-                        fault.reason.message()
-                    ).try();
-                    Ok(1)
-                },
-            }),
-            Ok(_)      => backend.match({
+        self.valid(program, report).try().match({
+            false => Ok(1),
+            true  => backend.match({
                 Js  => program.refused((feature) { supports(feature) }).match({
                     Ok(refusal) => {
                         report.fmt(
@@ -243,6 +237,103 @@ Generation* = {
                         (artifact) { publish(artifact) }
                     ),
                 }),
+            }),
+        })
+    }
+
+    // False after reporting why `program` is not valid IR.
+    valid = (self: @Self, program: Program, report :: String)
+            Res<bool, AllocError> {
+        program.verify(self.alloc).match({
+            Err(error) => error.match({
+                OutOfMemory    => Err(AllocError.OutOfMemory),
+                Invalid(fault) => {
+                    name = program.functions.get(
+                        fault.function
+                    ).match({ Ok(f) => f.name, None => "?" });
+                    report.fmt(
+                        "compiler error: invalid IR at function {} ({}), block {}: {}\n",
+                        fault.function,
+                        name,
+                        fault.block,
+                        fault.reason.message()
+                    ).try();
+                    Ok(false)
+                },
+            }),
+            Ok(_)      => Ok(true),
+        })
+    }
+
+    // The jit backend runs the one lowering in this process with `argv` as
+    // its command line instead of publishing it. The result is the
+    // program's exit status; None when it was refused or cannot run on
+    // this host, after the report says why.
+    run* = (self: @Self, report :: String, argv: Vec<str>)
+           Res<Res<i32>, AllocError> {
+        lower(self.alloc, self.tree, self.check, self.entry).match({
+            Err(error)  => error.match({
+                OutOfMemory        => Err(AllocError.OutOfMemory),
+                Unsupported(fault) => {
+                    report.fmt(
+                        "{}:{}:{}: error: unsupported by this backend: {}\n",
+                        fault.span.file,
+                        fault.span.start.line,
+                        fault.span.start.col,
+                        fault.what
+                    ).try();
+                    Ok(None)
+                },
+            }),
+            Ok(program) => self.valid(program, report).try().match({
+                false => Ok(None),
+                true  => refused_by_jit(program).match({
+                    Ok(refusal) => {
+                        report.fmt(
+                            "error: unsupported by the jit backend: {} (in `{}`)\n",
+                            refusal.what,
+                            refusal.function
+                        ).try();
+                        Ok(None)
+                    },
+                    None        => self.platform().match({
+                        None         => {
+                            report.add(
+                                "error: the jit backend runs on x86_64-linux, aarch64-linux and arm64-darwin hosts\n"
+                            ).try();
+                            Ok(None)
+                        },
+                        Ok(platform) => execute(
+                            self.alloc,
+                            program,
+                            platform,
+                            argv
+                        ).try().match({
+                            None       => {
+                                report.add(
+                                    "error: the jit backend could not map its memory\n"
+                                ).try();
+                                Ok(None)
+                            },
+                            Ok(status) => Ok(Ok(status)),
+                        }),
+                    }),
+                }),
+            }),
+        })
+    }
+
+    // The host's system interface, from the resolved target.
+    platform = (self: @Self) Res<Platform> {
+        self.target.match({
+            None        => None,
+            Ok(machine) => machine.os.match({
+                Macos => Ok(Platform.Darwin),
+                Linux => machine.arch.match({
+                    X86_64 => Ok(Platform.LinuxX86_64),
+                    Arm64  => Ok(Platform.LinuxArm64),
+                }),
+                _     => None,
             }),
         })
     }

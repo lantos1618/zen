@@ -67,16 +67,22 @@ write_sys = (be :: CBackend, out :: Emit) Res<AllocError> {
     ).try();
     out.say("#include <errno.h>").try();
     out.say("#include <fcntl.h>").try();
+    out.say("#include <poll.h>").try();
     out.say("#include <pthread.h>").try();
     out.say("#include <sched.h>").try();
+    out.say("#include <signal.h>").try();
     out.say("#include <stdio.h>").try();
     out.say("#include <string.h>").try();
     out.say("#include <time.h>").try();
     out.say("#include <unistd.h>").try();
     out.say("#include <sys/file.h>").try();
+    out.say("#include <sys/ioctl.h>").try();
     out.say("#include <sys/mman.h>").try();
     out.say("#include <sys/random.h>").try();
+    out.say("#include <sys/resource.h>").try();
     out.say("#include <sys/socket.h>").try();
+    out.say("#include <sys/stat.h>").try();
+    out.say("#include <sys/wait.h>").try();
     out.say("#if defined(__linux__)").try();
     out.say("#include <sys/epoll.h>").try();
     out.say("#include <sys/syscall.h>").try();
@@ -161,6 +167,45 @@ sys_body = (name: str) Res<str> {
         ),
         "munmap"                     => Ok(
             "return zg_sys_result((int64_t)munmap((void *)(uintptr_t)a0, (size_t)a1));"
+        ),
+        "getcwd"                     => Ok(
+            "char *p = getcwd((char *)a0, a1);\n#if defined(__APPLE__)\n    return p ? (int64_t)(uintptr_t)p : 0;\n#else\n    return p ? (int64_t)strlen(p) + 1 : -(int64_t)errno;\n#endif"
+        ),
+        "mkdirat"                    => Ok(
+            "return zg_sys_result((int64_t)mkdirat((int)a0, (const char *)a1, (mode_t)a2));"
+        ),
+        "unlinkat"                   => Ok(
+            "return zg_sys_result((int64_t)unlinkat((int)a0, (const char *)a1, (int)a2));"
+        ),
+        "pipe2"                      => Ok(
+            "#if defined(__linux__)\n    return zg_sys_result((int64_t)syscall(SYS_pipe2, a0, a1));\n#else\n    if (pipe((int *)a0) < 0) return -(int64_t)errno;\n    if (a1 & O_CLOEXEC) { fcntl(((int *)a0)[0], F_SETFD, FD_CLOEXEC); fcntl(((int *)a0)[1], F_SETFD, FD_CLOEXEC); }\n    return 0;\n#endif"
+        ),
+        "fork"                       => Ok(
+            "return zg_sys_result((int64_t)fork());"
+        ),
+        "execve"                     => Ok(
+            "return zg_sys_result((int64_t)execve((const char *)a0, (char *const *)a1, (char *const *)a2));"
+        ),
+        "dup3"                       => Ok(
+            "#if defined(__linux__)\n    return zg_sys_result((int64_t)syscall(SYS_dup3, a0, a1, a2));\n#else\n    int r = dup2((int)a0, (int)a1);\n    if (r < 0) return -(int64_t)errno;\n    if (a2 & O_CLOEXEC) fcntl(r, F_SETFD, FD_CLOEXEC);\n    return r;\n#endif"
+        ),
+        "chdir"                      => Ok(
+            "return zg_sys_result((int64_t)chdir((const char *)a0));"
+        ),
+        "wait4"                      => Ok(
+            "return zg_sys_result((int64_t)wait4((pid_t)a0, (int *)a1, (int)a2, (struct rusage *)(uintptr_t)a3));"
+        ),
+        "kill"                       => Ok(
+            "return zg_sys_result((int64_t)kill((pid_t)a0, (int)a1));"
+        ),
+        "ppoll"                      => Ok(
+            "#if defined(__linux__)\n    return zg_sys_result((int64_t)syscall(SYS_ppoll, a0, a1, a2, a3, a4));\n#else\n    const struct timespec *t = (const struct timespec *)(uintptr_t)a2;\n    int ms = t ? (int)(t->tv_sec * 1000 + t->tv_nsec / 1000000) : -1;\n    return zg_sys_result((int64_t)poll((struct pollfd *)a0, (nfds_t)a1, ms));\n#endif"
+        ),
+        "poll"                       => Ok(
+            "return zg_sys_result((int64_t)poll((struct pollfd *)a0, (nfds_t)a1, (int)a2));"
+        ),
+        "ioctl"                      => Ok(
+            "return zg_sys_result((int64_t)ioctl((int)a0, (unsigned long)a1));"
         ),
         "mprotect"                   => Ok(
             "return zg_sys_result((int64_t)mprotect((void *)(uintptr_t)a0, (size_t)a1, (int)a2));"

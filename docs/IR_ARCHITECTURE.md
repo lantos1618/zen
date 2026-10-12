@@ -406,8 +406,18 @@ renderer with no semantic work:
   embedding. It has the lowest priority.
 
 **JIT**
-- **Tier 0:** an IR interpreter (§8 Q5). It is also the differential oracle,
-  and potentially the comptime engine.
+- **Tier 0:** an IR interpreter (§8 Q5), `src/gen/gen_jit_interp.zen`. It is
+  also the differential oracle, and potentially the comptime engine.
+  `zen build --backend jit <root> [--entry FILE] [-- args]` lowers and verifies
+  the program, then runs it in the compiler: every slot is a cell in a mapped
+  frame stack, memory is real host memory, and system calls go through
+  `std.sys` with the IR's -errno convention. Output buffering, trap reports,
+  exit 134 and the exit hook follow the C runtime. `refused_by_jit` refuses
+  threads, JavaScript host calls, machine instructions, printing f64 and f64
+  `%` before anything runs. On x86_64-linux the native corpus runner's `jit`
+  target passes 868 of 1136 programs; 265 are refused, 2 exceed the 10 s alarm
+  (it does not yet predecode the IR), and 1 needs a fixture that only
+  tests/run.py stages.
 - **Tier 1:** an in-memory encoder that reuses the asm backend's instruction
   selection and register allocation, and writes machine code bytes instead of
   text into `mmap`ed pages (W^X, with `MAP_JIT` plus

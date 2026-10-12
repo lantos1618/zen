@@ -1,0 +1,286 @@
+// The interpreter's form of a function: the IR decoded once into one flat
+// run of operations whose operands are byte offsets into the frame, whose
+// jumps are operation indices, and whose kind already says the width and
+// signedness, so running one does no lookup, copy or type dispatch. What
+// is rare or carries a payload (system calls, printing, startup values,
+// atomics) stays an IR instruction behind `Slow`.
+
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, None, Range } = std.core
+{ pointer_at } = std.sys
+{ Func, Scalar, Instruction, Terminator, Op, Fault, width, signed, integer, float } = gen.gen_ir
+
+Kind* = { ConstWord
+    | CopyWord
+    | CopyBlock
+    | AddressOf
+    | AddSigned
+    | SubSigned
+    | MulSigned
+    | AddUnsigned
+    | SubUnsigned
+    | MulUnsigned
+    | CompareSigned
+    | CompareUnsigned
+    | Bits
+    | Call
+    | Jump
+    | Branch
+    | Return
+    | Trap
+    | Slow }
+
+// `a`, `b` and `c` are cell offsets (or operation indices for jumps); `n`
+// is a constant, a size, a function number or a side-table index; `w` is
+// a width in bytes or an operator code; `ty` is the result's class.
+// `slow` indexes the instruction itself in `Code.slow`, which a fast step
+// falls back to when its fast path cannot finish (an overflow trap).
+Step* = { kind*: Kind, a*: usize, b*: usize, c*: usize, n*: u64, w*: usize, ty*: Scalar, slow* :: usize = 0 }
+
+Code* = {
+    steps* :: Vec<Step>,
+    // Argument cell offsets of every `Call`, `n` of them from `b`.
+    args* :: Vec<usize>,
+    // The instructions `Slow` steps run, and the faults `Trap` reports.
+    slow* :: Vec<Instruction>,
+    faults* :: Vec<Fault>,
+    // Parameter cell offsets and sizes, for the caller's argument copies.
+    params* :: Vec<usize>,
+    sizes* :: Vec<usize>,
+}
+
+// Comparison operators as `w` codes.
+operator* = (op: Op) usize {
+    op.match({
+        Equal => 0, NotEqual => 1, Less => 2, LessEqual => 3, Greater => 4,
+        GreaterEqual => 5, WrapAdd => 6, WrapSub => 7, WrapMul => 8, And => 9,
+        Or => 10, Xor => 11, Shl => 12, Shr => 13, Rotr => 14, _ => 15,
+    })
+}
+
+decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
+           scratch : usize)
+          Res<Code, AllocError> {
+    code ::= Code(
+        steps: a.Vec<Step>(),
+        args: a.Vec<usize>(),
+        slow: a.Vec<Instruction>(),
+        faults: a.Vec<Fault>(),
+        params: a.Vec<usize>(),
+        sizes: a.Vec<usize>()
+    );
+    Range(0, f.parameters).loop((i) {
+        code.params.add(cell_of(offsets, base, i)).try();
+        code.sizes.add(
+            class_of(f, i).match({ Unit => 0, Block(l) => l.size, _ => 8 })
+        ).try();
+    });
+    // Each block's first step, then jumps patched from block numbers.
+    starts ::= a.Vec<usize>();
+    f.blocks.loop((block) {
+        starts.add(code.steps.len).try();
+        block.code.loop((instruction) {
+            step: Step = instruction.match({
+                Constant(v)    => float(class_of(f, v.out)).match({
+                    true  => Step(
+                        kind: Kind.ConstWord,
+                        a: cell_of(offsets, base, v.out),
+                        b: 0,
+                        c: 0,
+                        n: bits_of(scratch, v.value),
+                        w: 8,
+                        ty: class_of(f, v.out)
+                    ),
+                    false => Step(
+                        kind: Kind.ConstWord,
+                        a: cell_of(offsets, base, v.out),
+                        b: 0,
+                        c: 0,
+                        n: bits_of(scratch, v.value),
+                        w: 8,
+                        ty: class_of(f, v.out)
+                    ),
+                }),
+                Copy(v)        => class_of(f, v.out).match({
+                    Block(l) => Step(
+                        kind: Kind.CopyBlock,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.source),
+                        c: 0,
+                        n: l.size.to_u64(),
+                        w: 0,
+                        ty: class_of(f, v.out)
+                    ),
+                    Unit     => Step(
+                        kind: Kind.CopyBlock,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.source),
+                        c: 0,
+                        n: 0,
+                        w: 0,
+                        ty: Scalar.Unit
+                    ),
+                    _        => Step(
+                        kind: Kind.CopyWord,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.source),
+                        c: 0,
+                        n: 0,
+                        w: 8,
+                        ty: class_of(f, v.out)
+                    ),
+                }),
+                AddressOf(v)   => Step(
+                    kind: Kind.AddressOf,
+                    a: cell_of(offsets, base, v.out),
+                    b: cell_of(offsets, base, v.slot),
+                    c: 0,
+                    n: 0,
+                    w: 8,
+                    ty: Scalar.Ptr
+                ),
+                BinaryValue(v) => arithmetic(v.op, class_of(f, v.left)).match({
+                    Ok(kind) => { code.slow.add(instruction).try(); Step(kind: kind, a: cell_of(offsets, base, v.out), b: cell_of(offsets, base, v.left), c: cell_of(offsets, base, v.right), n: 0, slow: code.slow.len - 1, w: kind.match({
+                        CompareSigned => operator(v.op), CompareUnsigned => operator(v.op), Bits => operator(v.op), _ => width(class_of(f, v.left)),
+                    }), ty: class_of(f, v.out)) },
+                    None     => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                }),
+                Invoke(v)      => {
+                    first = code.args.len;
+                    v.args.loop(
+                        (slot) { code.args.add(cell_of(
+                            offsets,
+                            base,
+                            slot
+                        )).try(); }
+                    );
+                    Step(
+                        kind: Kind.Call,
+                        a: cell_of(offsets, base, v.out),
+                        b: first,
+                        c: v.args.len,
+                        n: v.function.to_u64(),
+                        w: 0,
+                        ty: class_of(f, v.out)
+                    )
+                },
+                _              => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+            });
+            code.steps.add(step).try();
+        });
+        exit: Step = block.exit.match({
+            Return(slot)   => Step(
+                kind: Kind.Return,
+                a: cell_of(offsets, base, slot),
+                b: 0,
+                c: 0,
+                n: 0,
+                w: 0,
+                ty: f.result
+            ),
+            Jump(to)       => Step(
+                kind: Kind.Jump,
+                a: to,
+                b: 0,
+                c: 0,
+                n: 0,
+                w: 0,
+                ty: Scalar.Unit
+            ),
+            Branch(branch) => Step(
+                kind: Kind.Branch,
+                a: cell_of(offsets, base, branch.value),
+                b: branch.yes,
+                c: branch.no,
+                n: 0,
+                w: 0,
+                ty: Scalar.Unit
+            ),
+            Trap(fault)    => { code.faults.add(fault).try(); Step(kind: Kind.Trap, a: 0, b: 0, c: 0, n: (code.faults.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+        });
+        code.steps.add(exit).try();
+    });
+    // Block numbers become step indices.
+    Range(0, code.steps.len).loop((i) {
+        s = code.steps.get(i).value_or(Step(kind: Kind.Jump, a: 0, b: 0, c: 0, n: 0, w: 0, ty: Scalar.Unit));
+        s.kind.match({
+            Jump   => code.steps.set(
+                i,
+                Step(
+                    kind: s.kind,
+                    a: starts.get(s.a).value_or(0),
+                    b: 0,
+                    c: 0,
+                    n: 0,
+                    w: 0,
+                    ty: s.ty
+                )
+            ),
+            Branch => code.steps.set(
+                i,
+                Step(
+                    kind: s.kind,
+                    a: s.a,
+                    b: starts.get(s.b).value_or(0),
+                    c: starts.get(s.c).value_or(0),
+                    n: 0,
+                    w: 0,
+                    ty: s.ty
+                )
+            ),
+            _      => (),
+        });
+    });
+    Ok(code)
+}
+
+// The fast kind of an integer binary operation; None for what stays slow
+// (floats, division, Unit comparisons).
+arithmetic = (op: Op, ty: Scalar) Res<Kind> {
+    (integer(ty) || ty.match({ Bool => true, Ptr => true, _ => false })).match({
+        false => None,
+        true  => op.match({
+            Add          => Ok(
+                signed(
+                    ty
+                ).match({ true => Kind.AddSigned, false => Kind.AddUnsigned })
+            ),
+            Sub          => Ok(
+                signed(
+                    ty
+                ).match({ true => Kind.SubSigned, false => Kind.SubUnsigned })
+            ),
+            Mul          => Ok(
+                signed(
+                    ty
+                ).match({ true => Kind.MulSigned, false => Kind.MulUnsigned })
+            ),
+            Div          => None,
+            Rem          => None,
+            Equal        => Ok(compare(ty)),
+            NotEqual     => Ok(compare(ty)),
+            Less         => Ok(compare(ty)),
+            LessEqual    => Ok(compare(ty)),
+            Greater      => Ok(compare(ty)),
+            GreaterEqual => Ok(compare(ty)),
+            _            => Ok(Kind.Bits),
+        }),
+    })
+}
+
+compare = (ty: Scalar) Kind { signed(
+    ty
+).match({ true => Kind.CompareSigned, false => Kind.CompareUnsigned }) }
+
+cell_of = (offsets: Vec<usize>, base: usize, slot: usize) usize {
+    offsets.get(base + slot).value_or(0)
+}
+
+class_of = (f: Func, slot: usize) Scalar { f.slots.get(slot).value_or(Scalar.Unit) }
+
+// An i64's bit pattern, through the eight-byte cell at `scratch`.
+bits_of = (scratch: usize, value: i64) u64 {
+    pointer_at(scratch).to<i64>().write(0, value);
+    pointer_at(scratch).to<u64>().read(0)
+}

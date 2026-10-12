@@ -14,6 +14,7 @@
 { lower, LowerError } = gen.gen_lower
 { Program, float } = gen.gen_ir
 { emit_js, emit_app, emit_runtime, PAGE, supports } = gen.gen_js
+{ emit_c, c_supports } = gen.gen_c_ir
 { refused, describe } = gen.gen_ir_feature
 { X86_64Linux } = gen.gen_asm_x86
 { Arm64, Arm64Os } = gen.gen_asm_arm64
@@ -23,7 +24,7 @@
 Layout* = { Single | Modules }
 ArtifactKind* = { Source | Symbols }
 
-ScalarBackend = { Js | Asm }
+ScalarBackend = { Js | Asm | C }
 
 // Names and bytes borrow the renderer's current buffer. Consumers must write
 // or copy them during the callback; retaining this record extends no lifetime.
@@ -65,25 +66,51 @@ Generation* = {
                 report,
                 (artifact) { publish(artifact) }
             ),
-            C   => {
-                be ::= self.alloc.CBackend(self.tree, self.check).try();
-                self.ffi.then(() { be.enable_ffi(); });
-                output ::= COutput(generation: self, be: be);
-                faults = self.layout.match({
-                    Single  => output.single(
-                        report,
-                        (artifact) { publish(artifact) }
-                    ),
-                    Modules => output.modules(
-                        report,
-                        (artifact) { publish(artifact) }
-                    ),
-                }).try();
-                (faults == 0 && self.symbols).match({
-                    true  => output.symbols((artifact) { publish(artifact) }),
-                    false => Ok(faults),
-                })
-            },
+            C   => (self.layout.match({ Single => true, Modules => false }) && !self.symbols && !self.ffi).match({
+                true  => self.c_ir(report, (artifact) { publish(artifact) }),
+                false => self.legacy_c(
+                    report,
+                    (artifact) { publish(artifact) }
+                ),
+            }),
+        })
+    }
+
+    // Until the IR lowering covers every program, one it refuses still
+    // builds through the legacy C backend.
+    c_ir = (self: @Self, report :: String,
+            publish: (artifact: Artifact) Res<usize, AllocError>)
+           Res<usize, AllocError> {
+        self.lowered(ScalarBackend.C).match({
+            Err(error)  => error.match({
+                OutOfMemory    => Err(AllocError.OutOfMemory),
+                Unsupported(_) => self.legacy_c(
+                    report,
+                    (artifact) { publish(artifact) }
+                ),
+            }),
+            Ok(program) => self.render_scalar(
+                ScalarBackend.C,
+                program,
+                report,
+                (artifact) { publish(artifact) }
+            ),
+        })
+    }
+
+    legacy_c = (self: @Self, report :: String,
+                publish: (artifact: Artifact) Res<usize, AllocError>)
+               Res<usize, AllocError> {
+        be ::= self.alloc.CBackend(self.tree, self.check).try();
+        self.ffi.then(() { be.enable_ffi(); });
+        output ::= COutput(generation: self, be: be);
+        faults = self.layout.match({
+            Single  => output.single(report, (artifact) { publish(artifact) }),
+            Modules => output.modules(report, (artifact) { publish(artifact) }),
+        }).try();
+        (faults == 0 && self.symbols).match({
+            true  => output.symbols((artifact) { publish(artifact) }),
+            false => Ok(faults),
         })
     }
 
@@ -184,15 +211,33 @@ Generation* = {
                         },
                     }),
                 }),
-                Asm => refused_by_asm(program).match({
-                    Ok(what) => {
+                C   => program.refused(
+                    (feature) { c_supports(feature) }
+                ).match({
+                    Ok(refusal) => {
                         report.fmt(
-                            "error: unsupported by the asm backend: {}\n",
-                            what
+                            "error: unsupported by the C backend: {} (first in `{}`)\n",
+                            refusal.feature.describe(),
+                            refusal.function
                         ).try();
                         Ok(1)
                     },
-                    None     => self.publish_assembly(
+                    None        => publish(Artifact(
+                        kind: ArtifactKind.Source,
+                        name: "zen.c",
+                        text: emit_c(self.alloc, program).try().view()
+                    )),
+                }),
+                Asm => refused_by_asm(program).match({
+                    Ok(refusal) => {
+                        report.fmt(
+                            "error: unsupported by the asm backend: {} (in `{}`)\n",
+                            refusal.what,
+                            refusal.function
+                        ).try();
+                        Ok(1)
+                    },
+                    None        => self.publish_assembly(
                         program,
                         report,
                         (artifact) { publish(artifact) }
@@ -315,21 +360,25 @@ COutput = {
 // The IR features the assembly renderers do not implement yet, checked
 // before rendering so the program is refused with a reason (IR_ARCHITECTURE
 // §2.3: support boundaries are declared, not discovered).
-refused_by_asm = (program: Program) Res<str> {
-    found :: Res<str> = None;
+AsmRefusal = { what: str, function: str }
+
+refused_by_asm = (program: Program) Res<AsmRefusal> {
+    found :: Res<AsmRefusal> = None;
     program.functions.loop((function) {
         function.slots.loop((ty) {
-            float(ty).then(() { found = Ok("floating-point values"); });
+            float(ty).then(() { found = Ok(AsmRefusal(what: "floating-point values", function: function.name)); });
         });
         function.blocks.loop((block) {
             block.code.loop((instruction) {
                 instruction.match({
-                    Host(_) => { found = Ok(
-                        "JavaScript host calls (js.bind)"
-                    ); },
-                    Wait(_) => { found = Ok(
-                        "JavaScript event waits (std.js.wait)"
-                    ); },
+                    Host(_) => { found = Ok(AsmRefusal(
+                        what: "JavaScript host calls (js.bind)",
+                        function: function.name
+                    )); },
+                    Wait(_) => { found = Ok(AsmRefusal(
+                        what: "JavaScript event waits (std.js.wait)",
+                        function: function.name
+                    )); },
                     _       => (),
                 });
             });

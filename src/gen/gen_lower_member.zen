@@ -1331,10 +1331,11 @@ sys_call* = (
                     )).try(),
                 });
             });
-            // Buffered output goes out before the process ends, and before a
-            // fork, so the child does not inherit it and write it again.
+            // Buffered output goes out before the process ends, and before
+            // a fork, so the child does not inherit and repeat it.
             op.match({
                 ExitGroup => lo.add(Instruction.Flush).try(),
+                Clone     => lo.add(Instruction.Flush).try(),
                 Fork      => lo.add(Instruction.Flush).try(),
                 _         => (),
             });

@@ -1,0 +1,21 @@
+{ println } = std.io
+{ Vec } = std.collections
+{ Env } = std.env
+
+P = { name: i32 }
+
+// A match statement drops its value: an arm that loops over a Vec (a
+// `Res<P>` value) beside a `()` arm is lowered for its effects only.
+total = (ps: Vec<P>, go: bool) i32 {
+    n :: i32 = 0;
+    go.match({ true => ps.loop((p) { n = n + p.name; }), false => () });
+    n
+}
+
+main = (env: Env) {
+    a ::= env.mem.alloc();
+    v ::= a.Vec<P>();
+    v.add(P(name: 3)).ignore();
+    v.add(P(name: 4)).ignore();
+    println("{} {}", total(v, true), total(v, false));
+}

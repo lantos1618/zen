@@ -347,7 +347,14 @@ const $ = id => document.getElementById(id);
 const sizes = new Map(), sizer = new ResizeObserver(es => { for (const e of es) sizes.set(e.target, e.target.getBoundingClientRect()); dirty = true; });
 function fit(c){ let r = sizes.get(c); if (!r){ r = c.getBoundingClientRect(); sizes.set(c, r); sizer.observe(c); } const d = devicePixelRatio || 1;
   if (c.width !== Math.round(r.width * d) || c.height !== Math.round(r.height * d)){ c.width = Math.round(r.width * d); c.height = Math.round(r.height * d); }
-  const g = c.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); return [g, r.width, r.height]; }
+  // Opaque canvases: the compositor can skip blending them over the page
+  // behind, so each frame starts by painting the panel's own background.
+  const g = c.getContext("2d", {alpha:false}); g.setTransform(d, 0, 0, d, 0, 0);
+  g.fillStyle = bgOf(c); g.fillRect(0, 0, r.width, r.height); return [g, r.width, r.height]; }
+const bgs = new Map();
+function bgOf(c){ let b = bgs.get(c);
+  if (!b){ for (let e = c; e && (!b || b === "rgba(0, 0, 0, 0)"); e = e.parentElement) b = getComputedStyle(e).backgroundColor; bgs.set(c, b); }
+  return b; }
 
 function spark(id, vals, color){
   const c = $(id), g = c.getContext("2d"), w = c.width, h = c.height; g.clearRect(0, 0, w, h);
@@ -358,7 +365,7 @@ function spark(id, vals, color){
 }
 
 // The header's numbers and sparklines redraw at most ten times a second.
-let headerAt = 0;
+let headerAt = 0, panelsAt = 0;
 function renderHeader(){
   if (playing && performance.now() - headerAt < 100) return;
   headerAt = performance.now();
@@ -398,7 +405,7 @@ function renderTree(rows){
 
 let nodes = [], topoMode = "tree";
 function renderTopo(rows){
-  const [g, W, H] = fit($("topoC")); g.clearRect(0, 0, W, H);
+  const [g, W, H] = fit($("topoC"));
   if (!rows.length) return;
   // Busiest actors only when there are many, plus the selected one.
   const MAXN = 60; let shown = rows;
@@ -586,7 +593,7 @@ function along(r, f){
 }
 // One dot per message in flight at the cursor: it leaves the sender when sent
 // and reaches the receiver when a worker takes it.
-const MAX_DOTS = 600;
+const MAX_DOTS = 600, DOT_STYLE = [["#8fd8ff", 2.2], ["#ffffff", 3], ["#d29922", 2.2]], dotXY = [[], [], []];
 function dots(g, pos, nw, nh, route){
   const now = cursorNs, look = Math.max(windowNs() / 4, 1e6), lo = indexAt(now - look), hi = indexAt(now);
   let n = 0;
@@ -602,9 +609,13 @@ function dots(g, pos, nw, nh, route){
     else { const c = curve(p, q, nw, nh), u = 1 - f;
       x = u * u * c[0] + 2 * u * f * c[2] + f * f * c[4]; y = u * u * c[1] + 2 * u * f * c[3] + f * f * c[5]; }
     const hot = T.from[i] === selected || T.to[i] === selected;
-    g.fillStyle = k === K.PARK ? "#d29922" : hot ? "#ffffff" : "#8fd8ff";
-    g.beginPath(); g.arc(x, y, hot ? 3 : 2.2, 0, Math.PI * 2); g.fill(); n++;
+    (k === K.PARK ? dotXY[2] : hot ? dotXY[1] : dotXY[0]).push(x, y); n++;
   }
+  // One path and one fill per colour, not one per dot.
+  DOT_STYLE.forEach(([color, rad], j) => { const xy = dotXY[j]; if (!xy.length) return;
+    g.fillStyle = color; g.beginPath();
+    for (let m = 0; m < xy.length; m += 2){ g.moveTo(xy[m] + rad, xy[m + 1]); g.arc(xy[m], xy[m + 1], rad, 0, Math.PI * 2); }
+    g.fill(); xy.length = 0; });
 }
 
 let inspHtml = "";
@@ -643,7 +654,7 @@ let zoom = 1;
 function windowNs(){ return Math.max(2e4, zoom * Math.min(endNs(), playing ? speed * 4e9 : 200e6)); }
 
 function renderTimeline(rows){
-  const [g, W, H] = fit($("tl")); g.clearRect(0, 0, W, H);
+  const [g, W, H] = fit($("tl"));
   const lanes = rows.map(r => r[0]).slice(0, Math.floor((H - 20) / 16));
   const span = windowNs(), t1 = cursorNs, t0 = t1 - span, lx = 150;
   const x = t => lx + (t - t0) / span * (W - lx - 10), lane = new Map(lanes.map((a, j) => [a.i, j]));
@@ -839,7 +850,7 @@ function renderIcicle(t){
   drawIcicle();
 }
 function drawIcicle(){
-  const [g, W, H] = fit($("flame")); g.clearRect(0, 0, W, H);
+  const [g, W, H] = fit($("flame"));
   const rh = FL.rowH, q = !!FL.q, cur = FL.t ? findPath(FL.t, FL.cur) : null;
   g.font = "11px ui-monospace,SFMono-Regular,Menlo,monospace"; g.textBaseline = "middle";
   for (const f of FL.frames){
@@ -941,7 +952,7 @@ function renderFlameTable(t){
 let flameBars = [];
 function renderFlameTime(){
   const c = $("flame"); c.style.height = ($("fBody").clientHeight - 2) + "px";
-  const [g, W, H] = fit(c); g.clearRect(0, 0, W, H);
+  const [g, W, H] = fit(c);
   const span = windowNs(), t1 = cursorNs, t0 = t1 - span, x = t => (t - t0) / span * W, rowH = 16;
   g.font = "10px ui-monospace,monospace"; g.textBaseline = "alphabetic"; flameBars = [];
   let hits = 0, all = 0;
@@ -964,7 +975,7 @@ function renderFlameTime(){
 }
 
 function renderSched(){
-  const [g, W, H] = fit($("sched")); g.clearRect(0, 0, W, H);
+  const [g, W, H] = fit($("sched"));
   const span = windowNs(), t1 = cursorNs, t0 = t1 - span, lx = 90;
   const x = t => lx + (t - t0) / span * (W - lx - 10), lh = Math.min(28, (H - 20) / Math.max(1, M.workers.length));
   g.font = "10px ui-monospace,monospace";
@@ -993,7 +1004,11 @@ function render(){
   empty.style.display = "none";
   if (!selected && M.actors.size) selected = [...M.actors.keys()][0];
   const rows = order();
-  renderHeader(); renderTree(rows); renderTopo(rows); renderInspector();
+  // The side panels are DOM: while playing they refresh at 10 Hz, since a
+  // relayout and repaint every frame costs more than the canvases.
+  const now = performance.now();
+  if (!playing || now - panelsAt >= 100){ panelsAt = now; renderTree(rows); renderInspector(); }
+  renderHeader(); renderTopo(rows);
   if (view === "vTl") renderTimeline(rows); else if (view === "vSched") renderSched(); else if (view === "vFlame") renderFlame(); else renderTables();
   $("tCursor").textContent = "t = " + (cursorNs / 1e6).toFixed(2) + " ms";
   const span = endNs() - startNs();

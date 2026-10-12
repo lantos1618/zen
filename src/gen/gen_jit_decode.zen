@@ -15,6 +15,8 @@ Kind* = { ConstWord
     | CopyWord
     | CopyBlock
     | AddressOf
+    | Load
+    | Store
     | AddSigned
     | SubSigned
     | MulSigned
@@ -131,6 +133,24 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                         ty: class_of(f, v.out)
                     ),
                 }),
+                LoadValue(v)   => Step(
+                    kind: Kind.Load,
+                    a: cell_of(offsets, base, v.out),
+                    b: cell_of(offsets, base, v.base),
+                    c: v.offset,
+                    n: 0,
+                    w: moved(class_of(f, v.out)),
+                    ty: class_of(f, v.out)
+                ),
+                StoreValue(v)  => Step(
+                    kind: Kind.Store,
+                    a: cell_of(offsets, base, v.base),
+                    b: cell_of(offsets, base, v.value),
+                    c: v.offset,
+                    n: 0,
+                    w: moved(class_of(f, v.value)),
+                    ty: class_of(f, v.value)
+                ),
                 AddressOf(v)   => Step(
                     kind: Kind.AddressOf,
                     a: cell_of(offsets, base, v.out),
@@ -284,3 +304,8 @@ bits_of = (scratch: usize, value: i64) u64 {
     pointer_at(scratch).to<i64>().write(0, value);
     pointer_at(scratch).to<u64>().read(0)
 }
+
+// Bytes a load or store moves: a word's width, or a block's size.
+moved = (ty: Scalar) usize { ty.match({ Unit => 0, Block(l) => l.size, _ => width(
+    ty
+) }) }

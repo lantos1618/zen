@@ -358,6 +358,29 @@ Interp = {
                         s.n.to_usize().value_or(0)
                     ),
                     AddressOf       => set_usize(frame + s.a, frame + s.b),
+                    Load            => (s.w == 8).match({
+                        true  => set_u64(
+                            frame + s.a,
+                            pointer_at(load_usize(frame + s.b) + s.c).to<u64>().read(0)
+                        ),
+                        false => {
+                            set_u64(frame + s.a, 0);
+                            move_bytes(
+                                frame + s.a,
+                                load_usize(frame + s.b) + s.c,
+                                s.w
+                            );
+                            extend(frame + s.a, s.ty);
+                        },
+                    }),
+                    Store           => (s.w == 8).match({
+                        true  => pointer_at(load_usize(frame + s.a) + s.c).to<u64>().write(0, load_u64(frame + s.b)),
+                        false => move_bytes(
+                            load_usize(frame + s.a) + s.c,
+                            frame + s.b,
+                            s.w
+                        ),
+                    }),
                     AddSigned       => { stop = self.signed(
                         index,
                         f,

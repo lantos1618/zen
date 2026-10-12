@@ -125,7 +125,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
     });
     // Each block's first step, then jumps patched from block numbers.
     starts ::= a.Vec<usize>();
-    f.blocks.loop((block) {
+    f.blocks.loop((h, number, block) {
         starts.add(code.steps.len).try();
         block.code.loop((instruction) {
             pinned     = instruction.match({
@@ -282,7 +282,11 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
             ),
             Trap(fault)    => { code.faults.add(fault).try(); Step(kind: Kind.Trap, a: 0, b: 0, c: 0, n: (code.faults.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
         });
-        code.steps.add(exit).try();
+        // A jump to the next block falls through instead.
+        block.exit.match({ Jump(to) => to == number + 1, _ => false }).match({
+            true  => (),
+            false => { code.steps.add(exit).try(); },
+        });
     });
     // Block numbers become step indices.
     Range(0, code.steps.len).loop((i) {

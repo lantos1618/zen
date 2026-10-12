@@ -129,31 +129,11 @@ materialize_receiver* = (
     (!base.is_type && c.is_literal_ty(base.ty)).match({
         false => Ok(base),
         true  => {
-            ty = c.types.prim(c.receiver_width(id, base.ty)).try();
+            ty = c.types.prim(c.prim_name(base.ty).literal_default()).try();
             c.check_literal(id, ty).try();
             c.expr_memo.set(id, ty).try();
             Ok(Base(ty: ty, is_type: false))
         },
-    })
-}
-
-// A literal receiver takes the literal default. A value still typed by the
-// integer literal family is a parameter its instance bound to a literal, and
-// holds that literal at full width.
-receiver_width = (c :: Checker, id: ExprId, ty: TyId) str {
-    name = c.prim_name(ty);
-    (name.eq("int") && !c.spells_literal(id)).match({
-        true  => "i64",
-        false => name.literal_default(),
-    })
-}
-
-spells_literal = (c :: Checker, id: ExprId) bool {
-    c.tree.expr_at(id).kind.match({
-        Literal(_) => true,
-        Unary(u)   => c.spells_literal(u.operand),
-        Paren(p)   => c.spells_literal(p.inner),
-        _          => false,
     })
 }
 

@@ -12,6 +12,7 @@
 { SemaFault, NameFault, TypeFault, PairFault, ExportFault } = sema.sema_diag
 { Checker, Ctx, CheckedCall, CallSignature, CallResolution } = sema.sema_check
 { refuse_handle_argument } = sema.sema_handle
+{ const_int, fits } = sema.sema_const
 { meta_refused } = sema.sema_meta
 { meta_member_call, MetaCall } = sema.sema_meta
 { discriminant_member_call, DiscriminantAnswer } = sema.sema_discriminant
@@ -283,6 +284,12 @@ CallCheck = {
             None        => c.types.unknown(),
             Ok(applied) => {
                 self.inst = applied.inst;
+                c.widen_literal_params(
+                    self.call.args,
+                    k.params,
+                    off,
+                    self.inst
+                ).try();
                 params ::= c.alloc.Vec<TyId>();
                 c.subst_list(k.params, self.inst, params).try();
                 (c.diag_count() == mark).then(() {
@@ -1347,6 +1354,39 @@ callee_name_span = (c: Checker, call: Call) Span {
 
 // Lambda arguments are the only legal inward path for a loop handle. Other
 // arguments are checked against their settled formal types here.
+// A parameter only integer literals settle takes the literal default, i32,
+// at its instance, unless a literal argument does not fit it: then it is
+// i64, so the literal keeps its full width.
+widen_literal_params = (
+    c      :: Checker,
+    args   : Vec<Arg>,
+    params : Vec<TyId>,
+    off    : usize,
+    inst   :: Inst
+) Res<AllocError> {
+    args.loop((h, i, a) {
+        p = params.ty_at(i + off);
+        (c.literal_bound(p, inst) && c.const_int(a.value).match({
+            Ok(v) => !fits(v, "i32").value_or(true),
+            None  => false,
+        })).then(() {
+            wide = c.types.prim("i64").try();
+            inst.rebind(p, wide);
+        });
+    });
+    Ok;
+}
+
+literal_bound = (c :: Checker, p: TyId, inst: Inst) bool {
+    c.types.at(p).match({
+        Var(_) => inst.lookup(p).match({
+            Ok(t) => c.is_literal_ty(t) && c.prim_name(t).eq("int"),
+            None  => false,
+        }),
+        _      => false,
+    })
+}
+
 args_handle_check = (
     c      :: Checker,
     args   : Vec<Arg>,

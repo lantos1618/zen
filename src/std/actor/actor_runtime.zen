@@ -68,7 +68,7 @@
 { W_RANDOM, W_SPINNING, W_PARKER, W_RING, WORKER_BYTES } = std.actor.actor_layout
 { S_LIFE, S_BODY, S_WAITING } = std.actor.actor_layout
 { COUNT_MASK, CLOSED, SCHED, BLOCKED, WAITED, GEN_SHIFT, GEN_MASK } = std.actor.actor_layout
-{ B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_FAILED, B_RECEIVE, B_NAME, B_KEPT, B_RECORD } = std.actor.actor_layout
+{ B_HEAD, B_TAIL, B_STUB, B_REF, B_RUN_NEXT, B_STOPPED, B_SIDE, B_FAILED, B_RECEIVE, B_NAME, B_KEPT, B_DROP, B_RECORD } = std.actor.actor_layout
 { D_OUTBOX, D_OUT_N, D_OUT_CAP, D_FIRST, D_LAST, D_LOCK, SIDE_BYTES } = std.actor.actor_layout
 { OUTBOX_ENTRY, PENDING, DONE, REFUSED, WAITER_BYTES, M_NEXT, M_TURN, M_CAUSE, M_PAYLOAD } = std.actor.actor_layout
 
@@ -1022,17 +1022,30 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
                         ref_index(load(a, B_REF)),
                         code
                     );
-                    trapped.then(
-                        () { fail(g, l, a, slot); blame(g, l, a, m, injected); }
-                    );
+                    trapped.then(() {
+                        fail(g, l, a, slot);
+                        blame(g, l, a, m, injected);
+                        // The turn's own release of its Bytes never ran.
+                        (load(a, B_DROP) != 0 && turn != 0).then(() {
+                            mode = injected.match({ true => null_ptr<u8>(), false => pointer_at(
+                                1
+                            ) });
+                            (guarded_call(turn, mode, m.offset(M_PAYLOAD)) != 0).then(() {});
+                        });
+                    });
                 },
-                false => trace(
-                    g,
-                    T_DROP,
-                    load(w, W_ID),
-                    ref_index(load(a, B_REF)),
-                    addr(m)
-                ),
+                false => {
+                    trace(
+                        g,
+                        T_DROP,
+                        load(w, W_ID),
+                        ref_index(load(a, B_REF)),
+                        addr(m)
+                    );
+                    (load(a, B_DROP) != 0 && load(m, M_TURN) != 0).then(() {
+                        (guarded_call(load(m, M_TURN), null_ptr<u8>(), m.offset(M_PAYLOAD)) != 0).then(() {});
+                    });
+                },
             });
             free_block(g, l, m);
             queued = aload(a, B_SIDE) != 0 && load(at(aload(a, B_SIDE)), D_OUT_N) > 0;
@@ -2029,6 +2042,10 @@ actor_env* = (bytes: usize, init: Ptr<u8>) Ptr<u8> {
     });
     g.is_null().match({ true => g, false => at(aload(g, G_ENV)) })
 }
+
+// The C backend's turns take a null record (a message that never ran) or 1
+// (a turn that trapped) and then only release the Bytes in the message.
+actor_drops* = (cell: Ptr<u8>) { store(cell, B_DROP, 1); }
 
 // Where the compiler's record (state, allocator) lives in a body.
 actor_record* = (cell: Ptr<u8>) Ptr<u8> { cell.offset(B_RECORD) }

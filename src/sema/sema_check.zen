@@ -19,7 +19,7 @@
 { NumericConversion, IntegerBitOperation } = sema.sema_numeric
 { Primitive } = sema.sema_prim
 { Printer, IO_MODULE, printer_named } = sema.sema_print
-{ OwnCheck, StoreEffects, parameter_lent, parameter_consumed } = sema.sema_store
+{ OwnCheck, StoreEffects, parameter_lent, parameter_consumed, parameter_consumed_conditionally } = sema.sema_store
 { owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer, mailbox_owned_bytes } = sema.sema_copy
 { decl_at } = sema.sema_def
 { ref_converts } = sema.sema_bound
@@ -372,6 +372,15 @@ Checker* = {
     consumes_parameter* = (self :: @Self, f: Function, parameter: usize)
                           Res<bool, AllocError> {
         parameter_consumed(self, f, parameter)
+    }
+
+    // `f` consumes its `parameter`th argument on some paths only.
+    consumes_parameter_conditionally* = (
+        self      :: @Self,
+        f         : Function,
+        parameter : usize
+    ) Res<bool, AllocError> {
+        parameter_consumed_conditionally(self, f, parameter)
     }
 
     // `f` only reads scalars through its `parameter`th argument, so an

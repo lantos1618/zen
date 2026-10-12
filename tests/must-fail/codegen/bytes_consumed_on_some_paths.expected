@@ -1,0 +1,2 @@
+a behaviour that consumes a Bytes parameter on only some paths (consume it unconditionally, outside any lambda or match)
+18:5

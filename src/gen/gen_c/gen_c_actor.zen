@@ -325,13 +325,26 @@ ActorSend = {
             inst,
             sig
         ).try();
-        self.transferable(be, sig).try().match({
-            false => be.unsupported(
+        partial ::= false;
+        Range(2, sig.len).loop((h, i) {
+            be.check.actor_owned_bytes(sig.ty_at(i)).then(() {
+                be.check.consumes_parameter_conditionally(self.hit.f, i).try().then(() { partial = true; });
+            });
+        });
+        partial.match({
+            true  => be.unsupported(
                 self.id,
-                "an actor payload without a concrete mailbox transfer",
+                "a behaviour that consumes a Bytes parameter on only some paths (consume it unconditionally, outside any lambda or match)",
                 out
             ),
-            true  => self.write_message(be, ret, sig, out),
+            false => self.transferable(be, sig).try().match({
+                false => be.unsupported(
+                    self.id,
+                    "an actor payload without a concrete mailbox transfer",
+                    out
+                ),
+                true  => self.write_message(be, ret, sig, out),
+            }),
         })
     }
 
@@ -416,6 +429,14 @@ write_turn = (
     body ::= be.alloc.String().try();
     body.fmt("    {} *zg_self = ({} *)zg_rec;\n", view.view(), view.view()).try();
     body.fmt("    {payload} *zg_msg = ({payload} *)zg_raw;\n").try();
+    // A null record is a message that never ran; 1 a turn that trapped.
+    body.add("    if ((size_t)zg_rec <= 1) {\n").try();
+    Range(2, sig.len).loop((h, i) {
+        be.check.actor_owned_bytes(sig.ty_at(i)).then(() {
+            be.write_bytes_unrun(hit.f, i, body).try();
+        });
+    });
+    body.add("        return;\n    }\n").try();
     context_c ::= be.alloc.String().try();
     be.ctype(context_ty, context_c).try();
     body.fmt(
@@ -610,6 +631,24 @@ ActorSendEmission = {
             descriptors,
             count.view()
         ).try();
+        // A Closed or Full send never delivered the message: its Bytes are
+        // still the sender's to free.
+        free = be.runtime_symbol("actor_bytes_free").try();
+        data = be.actor_field("data").try();
+        Range(2, self.signature.len).loop((h, i) {
+            be.check.actor_owned_bytes(self.signature.ty_at(i)).then(() {
+                field ::= be.alloc.String().try();
+                field.fmt("{}.zg_arg", message.view()).try();
+                field.write_usize(i - 2).try();
+                be.fmt(
+                    "if ({} != 0 && {}.{data}) {}({}.{data});\n",
+                    status.view(),
+                    field.view(),
+                    free.view(),
+                    field.view()
+                ).try();
+            });
+        });
         dst = be.temp(self.result_ty, "actor_result").try();
         be.fmt("if ({} == 0) {{\n", status.view()).try();
         be.indent();
@@ -1366,6 +1405,38 @@ write_bytes_after_turn = (
     })
 }
 
+// A message that never ran frees its Bytes. A turn that trapped keeps them
+// until the actor ends, since a view may have escaped, unless it consumes
+// them: then they may belong to someone else already.
+write_bytes_unrun = (
+    be   :: CBackend,
+    f    : Function,
+    i    : usize,
+    body :: String
+) Res<AllocError> {
+    free = be.runtime_symbol("actor_bytes_free").try();
+    keep = be.runtime_symbol("actor_bytes_keep").try();
+    data = be.actor_field("data").try();
+    field ::= be.alloc.String("zg_msg->zg_arg").try();
+    field.write_usize(i - 2).try();
+    be.check.consumes_parameter(f, i).try().match({
+        true  => body.fmt(
+            "        if (!zg_rec && {}.{data}) {}({}.{data});\n",
+            field.view(),
+            free.view(),
+            field.view()
+        ),
+        false => body.fmt(
+            "        if ({}.{data}) {{ if (zg_rec) {}({}.{data}); else {}({}.{data}); }}\n",
+            field.view(),
+            keep.view(),
+            field.view(),
+            free.view(),
+            field.view()
+        ),
+    })
+}
+
 // The turn a message sent through a message-typed Ref runs: the actor's
 // `receive` with its one message as the payload record, or 0.
 write_receive_turn = (be :: CBackend, n: usize, actor: TyId)
@@ -1628,6 +1699,8 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
     name.add(", ").try();
     name.write_usize(type_name.len).try();
     name.add("u }").try();
+    drops = be.runtime_symbol("actor_drops").try();
+    be.fmt("{}({});\n", drops.view(), cell.view()).try();
     be.fmt(
         "int {} = {}({}, {}, (size_t)&{}, {}, {});\n",
         status.view(),

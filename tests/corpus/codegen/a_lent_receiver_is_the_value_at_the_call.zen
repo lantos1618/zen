@@ -1,0 +1,16 @@
+{ println } = std.io
+
+// A `::` parameter lends what it points at to a `:` callee by address, not
+// a copy. A `::` argument of the same call that writes it still cannot
+// change what the lent parameter reads.
+Big = { a :: u64, b :: u64, c :: u64 }
+sum = (x: Big) u64 { x.a * 100 + x.b * 10 + x.c }
+write_then_read = (x: Big, y :: Big) u64 { y.a = 7; y.c = 9; sum(x) }
+via = (x :: Big) u64 { write_then_read(x, x) + sum(x) }
+read_twice = (x :: Big) u64 { sum(x) + sum(x) }
+main = () {
+    b ::= Big(a: 1, b: 2, c: 3);
+    println("{}", via(b));
+    println("{}", sum(b));
+    println("{}", read_twice(b));
+}

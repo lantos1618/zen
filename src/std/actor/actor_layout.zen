@@ -225,7 +225,10 @@ B_SIDE*: usize = 6           // send-or-park state, made on first need
 B_FAILED*: usize = 7          // 1 once a checked trap ended a turn
 B_RECEIVE*: usize = 8        // code address of the receive turn, or 0
 B_NAME*: usize = 9           // the type's name: its address | length << 48
-B_RECORD*: usize = 80        // byte offset of the compiler's record
+B_KEPT*: usize = 10          // Bytes blocks it keeps until it ends (a list)
+B_DROP*: usize = 11          // 1 when its turns can release an unrun message
+// 16-aligned: a record may hold u128 or vector fields.
+B_RECORD*: usize = 96        // byte offset of the compiler's record
 
 // The send-or-park side record: the outbox (sends waiting for room), the
 // senders waiting on this mailbox, and how many receivers still hold part

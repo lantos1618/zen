@@ -1,0 +1,77 @@
+{ Res, Ok, None, Range, IoError } = std.core
+{ AllocError, Alloc } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+// A behaviour that only reads scalars out of a received buffer leaves it in
+// the message, which is freed when the turn ends; one that hands the whole
+// buffer on (here through a pattern binding) gets its own copy, which must
+// survive the later messages that reuse the freed blocks.
+Reader = { bytes :: usize = 0, bad :: usize = 0, turns :: usize = 0 }
+Reader.impl(Actor, {
+    read = (self :: @Self, ctx: Context, data: Vec<u8>, fill: u8) {
+        self.turns = self.turns + 1;
+        self.bytes = self.bytes + data.len;
+        data.loop(
+            (h, b) { (b != fill).then(() { self.bad = self.bad + 1; }); }
+        );
+    }
+    stopped = (self :: @Self, ctx: Context) {
+        println("read {} bytes {} bad {}", self.turns, self.bytes, self.bad);
+    }
+})
+
+Keeper = { saved :: Res<Vec<u8>> = None, turns :: usize = 0 }
+Keeper.impl(Actor, {
+    keep = (self :: @Self, ctx: Context, data: Vec<u8>) {
+        self.turns = self.turns + 1;
+        (self.turns == 1).then(() {
+            held = Ok(data);
+            held.match({ Ok(v) => { self.saved = Ok(v); }, None => () });
+        });
+    }
+    stopped = (self :: @Self, ctx: Context) {
+        self.saved.match({
+            None  => println("kept none"),
+            Ok(v) => {
+                sum :: usize = 0;
+                v.loop((h, b) { sum = sum + b.to_usize(); });
+                println("kept {} sum {}", v.len, sum);
+            },
+        });
+    }
+})
+
+Error = AllocError | IoError | ActorStartError | ActorError
+filled = (a: Alloc, n: usize, b: u8) Res<Vec<u8>, AllocError> {
+    buf ::= a.Vec<u8>();
+    Range(0, n).loop((i) { buf.add(b).try(); });
+    Ok(buf)
+}
+main = (env: Env) Res<i32, Error> {
+    arena ::= env.mem.alloc();
+    fill  :: u8 = 0;
+    reader = env.spawn(Reader()).try();
+    keeper = env.spawn(Keeper()).try();
+    Range(0, 200).loop((k) {
+        n :: usize = 100;
+        (k % 3 == 1).then(() { n = 5000; });
+        (k % 3 == 2).then(() { n = 70000; });
+        fill = fill % 250 + 1;
+        buf ::= filled(arena, n, fill).try();
+        reader.read(consume buf, fill).try();
+    });
+    first ::= filled(arena, 100, 1).try();
+    keeper.keep(consume first).try();
+    Range(0, 50).loop((k) {
+        later ::= filled(arena, 100, 2).try();
+        keeper.keep(consume later).try();
+    });
+    reader.stop();
+    reader.join();
+    keeper.stop();
+    keeper.join();
+    Ok(0)
+}

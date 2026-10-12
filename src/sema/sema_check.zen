@@ -1,4 +1,4 @@
-{ Ast, ExprId, TypeId, BlockId } = std.ast
+{ Ast, ExprId, TypeId, BlockId, Function } = std.ast
 { Span } = std.source
 { nowhere } = std.source
 { BinOp, Unary, Binary, Access, TParam } = std.ast
@@ -19,8 +19,8 @@
 { NumericConversion, IntegerBitOperation } = sema.sema_numeric
 { Primitive } = sema.sema_prim
 { Printer, IO_MODULE, printer_named } = sema.sema_print
-{ OwnCheck, StoreEffects } = sema.sema_store
-{ owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer } = sema.sema_copy
+{ OwnCheck, StoreEffects, parameter_lent, parameter_consumed, parameter_consumed_conditionally } = sema.sema_store
+{ owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer, mailbox_owned_bytes } = sema.sema_copy
 { decl_at } = sema.sema_def
 { ref_converts } = sema.sema_bound
 
@@ -361,6 +361,33 @@ Checker* = {
     // `ty` is the one container a mailbox transfers by ownership: `Vec<u8>`.
     actor_byte_buffer* = (self: @Self, ty: TyId) bool {
         self.mailbox_byte_buffer(ty)
+    }
+
+    // `ty` is `std.actor.Bytes`, which a mailbox moves without copying.
+    actor_owned_bytes* = (self: @Self, ty: TyId) bool {
+        self.mailbox_owned_bytes(ty)
+    }
+
+    // `f` writes `consume` of its `parameter`th argument somewhere.
+    consumes_parameter* = (self :: @Self, f: Function, parameter: usize)
+                          Res<bool, AllocError> {
+        parameter_consumed(self, f, parameter)
+    }
+
+    // `f` consumes its `parameter`th argument on some paths only.
+    consumes_parameter_conditionally* = (
+        self      :: @Self,
+        f         : Function,
+        parameter : usize
+    ) Res<bool, AllocError> {
+        parameter_consumed_conditionally(self, f, parameter)
+    }
+
+    // `f` only reads scalars through its `parameter`th argument, so an
+    // actor turn may leave a received buffer in its message.
+    lends_parameter* = (self :: @Self, f: Function, parameter: usize)
+                       Res<bool, AllocError> {
+        parameter_lent(self, f, parameter)
     }
 
     mark_discriminant_call* = (

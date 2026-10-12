@@ -1,0 +1,99 @@
+// An owned byte buffer an actor send hands over without copying. Its block
+// comes from the actor pool, which any thread may free into, so once sent
+// the receiver owns it. Bytes is Drop: it cannot be copied, only consumed,
+// so a sent buffer has no second name left behind on the sender.
+{ Ptr, null_ptr, AllocError } = std.mem
+{ Res, Ok, None, Drop } = std.core
+{ str, str_at } = std.text
+{ actor_bytes_alloc, actor_bytes_free } = std.actor.actor_runtime
+
+Bytes* = {
+    data :: Ptr<u8> = null_ptr<u8>(),
+    len* :: usize = 0,
+    capacity :: usize = 0,
+
+    view* = (self: @Self) str { str_at(self.data, self.len) }
+
+    is_empty* = (self: @Self) bool { self.len == 0 }
+
+    get* = (self: @Self, i: usize) Res<u8> {
+        (i < self.len).match({
+            true  => Ok(self.data.read(i)),
+            false => None,
+        })
+    }
+
+    set* = (self :: @Self, i: usize, b: u8) Res<()> {
+        (i < self.len).match({
+            true  => {
+                self.data.write(i, b);
+                Ok
+            },
+            false => None,
+        })
+    }
+
+    clear* = (self :: @Self) { self.len = 0; }
+
+    reserve* = (self :: @Self, n: usize) Res<AllocError> {
+        old = self.data;
+        self.make_room(n).try().then(() { actor_bytes_free(old); });
+        Ok
+    }
+
+    add* = (self :: @Self, b: u8) Res<AllocError> {
+        self.reserve(1).try();
+        self.data.write(self.len, b);
+        self.len = self.len + 1;
+        Ok
+    }
+
+    // `s` may view this buffer: the old block is freed after the copy.
+    add* = (self :: @Self, s: str) Res<AllocError> {
+        old   = self.data;
+        moved = self.make_room(s.len).try();
+        (s.len > 0).then(
+            () { self.data.offset(self.len).copy_from(s.ptr(), s.len); }
+        );
+        self.len = self.len + s.len;
+        moved.then(() { actor_bytes_free(old); });
+        Ok
+    }
+
+    // Room for `n` more bytes; true when that moved the bytes to a new
+    // block and the old one, now the caller's to free, is not null.
+    make_room = (self :: @Self, n: usize) Res<bool, AllocError> {
+        (n <= usize.MAX / 2 - self.len).ensure(AllocError.OutOfMemory).try();
+        want = self.len + n;
+        (want <= self.capacity).match({
+            true  => Ok(false),
+            false => {
+                doubled = self.capacity * 2;
+                cap     = (doubled > want).match({ true => doubled, false => want });
+                size    = (cap < 32).match({ true => 32, false => cap });
+                fresh   = actor_bytes_alloc(size);
+                (!fresh.is_null()).ensure(AllocError.OutOfMemory).try();
+                (self.len > 0).then(
+                    () { fresh.copy_from(self.data, self.len); }
+                );
+                had           = !self.data.is_null();
+                self.data     = fresh;
+                self.capacity = size;
+                Ok(had)
+            },
+        })
+    }
+}
+
+Bytes.impl(Drop, {
+    drop = (self :: @Self) {
+        (!self.data.is_null()).then(() { actor_bytes_free(self.data); });
+    }
+})
+
+// A Bytes holding a copy of `s`.
+bytes* = (s: str) Res<Bytes, AllocError> {
+    b ::= Bytes();
+    b.add(s).try();
+    Ok(consume b)
+}

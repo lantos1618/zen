@@ -1,2 +1,3 @@
 { Actor*, Ref*, ActorError*, ActorStartError* } = std.actor.actor_core
 { Context*, Receive* } = std.actor.actor_context
+{ Bytes*, bytes* } = std.actor.actor_bytes

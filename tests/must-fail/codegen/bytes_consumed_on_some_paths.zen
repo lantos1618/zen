@@ -1,0 +1,22 @@
+// A Bytes consumed on only some paths would leak on the others.
+{ Res, Ok, None, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+{ Actor, ActorError, ActorStartError, Ref, Context, Bytes, bytes } = std.actor
+Error = AllocError | ActorStartError | ActorError
+
+W = { saved :: Res<Bytes> = None }
+W.impl(Actor, {
+    take = (self :: @Self, ctx: Context, b: Bytes, keep: bool) { keep.then(
+        () { self.saved = Ok(consume b); }
+    ); }
+})
+main = (env: Env) Res<i32, Error> {
+    w = env.spawn(W()).try();
+    b ::= bytes("x").try();
+    w.take(consume b, false).try();
+    w.stop();
+    w.join();
+    Ok(0)
+}

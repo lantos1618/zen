@@ -1,0 +1,386 @@
+// Coalescing copies between records (aggregate slots). A copy `out = source`
+// is removed, by renaming `out` to `source`, when the two never hold
+// different values while both are live.
+//
+// A record qualifies only while every use of its address is a read, a write
+// of part of it in place, or the derivation of another such address; any
+// other use (a call argument, a stored or returned pointer, an atomic) leaves
+// it alone. Liveness counts a read through an address as a read of the
+// record, and a partial write as a read too, since the rest of the record
+// survives it; only a named write kills. Each record joins at most one pair
+// per call, so liveness computed once stays valid for every merge it makes.
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, None, loop, Range } = std.core
+{ Func, Instruction, Move, Load, Invocation } = gen.gen_ir
+{ reads, written, exit_read, successors, aggregate, group, Groups, NONE } = gen.gen_asm_flow
+
+// Per slot: the record a pointer slot always addresses (NONE if none), and
+// each qualifying record's compact index (NONE otherwise).
+Track = { base: Vec<usize>, index: Vec<usize> }
+
+// `slot -> representative`, the identity except for merged copies' outputs.
+coalesce* = (alloc: Alloc, function: Func) Res<Vec<usize>, AllocError> {
+    slots = function.slots.len;
+    alias ::= alloc.Vec<usize>();
+    Range(0, slots).loop((i) { alias.add(i).try(); });
+    base = bases(alloc, function).try();
+    open = qualifying(alloc, function, base).try();
+    index ::= alloc.Vec<usize>();
+    Range(0, slots).loop((_) { index.add(NONE).try(); });
+    count :: usize = 0;
+    outs  ::= alloc.Vec<usize>();
+    srcs  ::= alloc.Vec<usize>();
+    function.blocks.loop((block) {
+        block.code.loop((instruction) {
+            instruction.match({
+                Copy(v) => (v.out != v.source && open.get(v.out).value_or(false)
+                    && open.get(v.source).value_or(false)).then(() {
+                    outs.add(v.out).try();
+                    srcs.add(v.source).try();
+                    (index.get(v.out).value_or(NONE) == NONE).then(() {
+                        index.set(v.out, count);
+                        count = count + 1;
+                    });
+                    (index.get(v.source).value_or(NONE) == NONE).then(() {
+                        index.set(v.source, count);
+                        count = count + 1;
+                    });
+                }),
+                _       => (),
+            });
+        });
+    });
+    (outs.len > 0).then(() {
+        t     = Track(base: base, index: index);
+        clash = clashes(alloc, function, t, count, outs, srcs).try();
+        taken ::= alloc.Vec<bool>();
+        Range(0, slots).loop((_) { taken.add(false).try(); });
+        outs.loop((h, p, out) {
+            source = srcs.get(p).value_or(0);
+            (!clash.get(p).value_or(true) && !taken.get(out).value_or(true)
+                && !taken.get(source).value_or(true)).then(() {
+                alias.set(out, source);
+                taken.set(out, true);
+                taken.set(source, true);
+            });
+        });
+    });
+    Ok(alias)
+}
+
+// The record each pointer slot addresses, through `AddressOf`, an offset
+// added to such a pointer, or a copy of one. A pointer derived from two
+// records keeps the first; `qualifying` then disqualifies both.
+bases = (alloc: Alloc, function: Func) Res<Vec<usize>, AllocError> {
+    base ::= alloc.Vec<usize>();
+    Range(0, function.slots.len).loop((_) { base.add(NONE).try(); });
+    changed ::= true;
+    loop(() { changed }, (h) {
+        changed = false;
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                from = derived(instruction, base);
+                from.when_ok((pair) {
+                    (base.get(pair.out).value_or(NONE) == NONE && pair.record != NONE).then(() {
+                        base.set(pair.out, pair.record);
+                        changed = true;
+                    });
+                });
+            });
+        });
+    });
+    Ok(base)
+}
+
+Derived = { out: usize, record: usize }
+
+// The pointer an instruction derives from a record, and that record.
+derived = (instruction: Instruction, base: Vec<usize>) Res<Derived> {
+    instruction.match({
+        AddressOf(v)   => Ok(Derived(out: v.out, record: v.slot)),
+        BinaryValue(v) => v.op.match({
+            Add => (base.get(v.right).value_or(NONE) == NONE).match({
+                true  => Ok(Derived(
+                    out: v.out,
+                    record: base.get(v.left).value_or(NONE)
+                )),
+                false => None,
+            }),
+            _   => None,
+        }),
+        Copy(v)        => Ok(Derived(
+            out: v.out,
+            record: base.get(v.source).value_or(NONE)
+        )),
+        _              => None,
+    })
+}
+
+// Records whose every address use is a read, a partial write or a
+// derivation, and whose pointers are only ever written by derivations of
+// that same record. Parameters are left alone.
+qualifying = (
+    alloc    : Alloc,
+    function : Func,
+    base     : Vec<usize>
+) Res<Vec<bool>, AllocError> {
+    open ::= alloc.Vec<bool>();
+    Range(0, function.slots.len).loop((s) {
+        open.add(s >= function.parameters && aggregate(function, s)).try();
+    });
+    operands ::= alloc.Vec<usize>();
+    function.blocks.loop((block) {
+        block.code.loop((instruction) {
+            written(instruction).when_ok((w) {
+                whole = instruction.match({ Copy(_) => true, LoadValue(_) => true, Invoke(_) => true, _ => false });
+                (!whole).then(() { open.set(w, false); });
+                record = base.get(w).value_or(NONE);
+                (record != NONE).then(() {
+                    other = derived(instruction, base).match({
+                        Ok(d) => d.record,
+                        None  => NONE,
+                    });
+                    (other != record).then(() {
+                        open.set(record, false);
+                        (other != NONE).then(() { open.set(other, false); });
+                    });
+                });
+            });
+            operands.clear();
+            reads(instruction, operands).try();
+            operands.loop((r) {
+                record = base.get(r).value_or(NONE);
+                (record != NONE && !allowed(instruction, r)).then(() { open.set(record, false); });
+            });
+        });
+        exit_read(block.exit).when_ok((r) {
+            record = base.get(r).value_or(NONE);
+            (record != NONE).then(() { open.set(record, false); });
+        });
+    });
+    Ok(open)
+}
+
+// Whether `pointer` is used only as an address to read, write in place or
+// offset from, never as a value.
+allowed = (instruction: Instruction, pointer: usize) bool {
+    instruction.match({
+        LoadValue(v)   => v.base == pointer,
+        StoreValue(v)  => v.base == pointer && v.value != pointer,
+        CopyBytes(v)   => (v.source == pointer || v.dest == pointer) && v.bytes != pointer && v.source != v.dest,
+        BinaryValue(v) => v.op.match({ Add => v.left == pointer && v.right != pointer, _ => false }),
+        Copy(_)        => true,
+        _              => false,
+    })
+}
+
+writes_through = (instruction: Instruction, pointer: usize) bool {
+    instruction.match({
+        StoreValue(v) => v.base == pointer,
+        CopyBytes(v)  => v.dest == pointer,
+        _             => false,
+    })
+}
+
+Effects = { operands :: Vec<usize>, uses :: Vec<usize>, partial :: Vec<usize> }
+
+// Fill `e` with the tracked records `instruction` reads and those it writes
+// part of; answer the one it writes whole (NONE if none).
+effects = (
+    instruction : Instruction,
+    t           : Track,
+    e           :: Effects
+) Res<usize, AllocError> {
+    e.operands.clear();
+    e.uses.clear();
+    e.partial.clear();
+    reads(instruction, e.operands).try();
+    e.operands.loop((r) {
+        k = t.index.get(r).value_or(NONE);
+        (k != NONE).then(() { e.uses.add(k).try(); });
+        record  = t.base.get(r).value_or(NONE);
+        through = (record != NONE).match({ true => t.index.get(record).value_or(NONE), false => NONE });
+        (through != NONE).then(() {
+            e.uses.add(through).try();
+            writes_through(instruction, r).then(() { e.partial.add(through).try(); });
+        });
+    });
+    instruction.match({
+        AddressOf(v) => {
+            k = t.index.get(v.slot).value_or(NONE);
+            (k != NONE).then(() { e.uses.add(k).try(); });
+        },
+        _            => (),
+    });
+    Ok(written(instruction).match({
+        Ok(w) => t.index.get(w).value_or(NONE),
+        None  => NONE,
+    }))
+}
+
+// Per pair: whether one side is written, whole or in part, while the other
+// is live, anywhere but at the pair's own copy.
+clashes = (
+    alloc    : Alloc,
+    function : Func,
+    t        : Track,
+    k        : usize,
+    outs     : Vec<usize>,
+    srcs     : Vec<usize>
+)
+          Res<Vec<bool>, AllocError> {
+    blocks = function.blocks.len;
+    gen     ::= flags(alloc, blocks * k).try();
+    kill    ::= flags(alloc, blocks * k).try();
+    live_in ::= flags(alloc, blocks * k).try();
+    e       ::= Effects(
+        operands: alloc.Vec<usize>(),
+        uses: alloc.Vec<usize>(),
+        partial: alloc.Vec<usize>()
+    );
+    function.blocks.loop((h, b, block) {
+        exit_read(block.exit).when_ok((r) {
+            u = t.index.get(r).value_or(NONE);
+            (u != NONE).then(() { gen.set(b * k + u, true); });
+        });
+        n = block.code.len;
+        Range(0, n).loop((i) {
+            instruction = block.code.get(n - 1 - i).value_or(Instruction.Flush);
+            d           = effects(instruction, t, e).try();
+            (d != NONE).then(() {
+                kill.set(b * k + d, true);
+                gen.set(b * k + d, false);
+            });
+            e.uses.loop((u) { gen.set(b * k + u, true); });
+        });
+    });
+    live_out ::= flags(alloc, blocks * k).try();
+    next     ::= alloc.Vec<usize>();
+    changed  ::= true;
+    loop(() { changed }, (h) {
+        changed = false;
+        function.blocks.loop((hb, b, block) {
+            next.clear();
+            successors(block.exit, next).try();
+            Range(0, k).loop((s) {
+                out ::= false;
+                next.loop(
+                    (x) { live_in.get(x * k + s).value_or(false).then(() { out = true; }); }
+                );
+                live_out.set(b * k + s, out);
+                into = gen.get(b * k + s).value_or(false) || (out && !kill.get(b * k + s).value_or(false));
+                (into != live_in.get(b * k + s).value_or(false)).then(() {
+                    live_in.set(b * k + s, into);
+                    changed = true;
+                });
+            });
+        });
+    });
+    keys   ::= alloc.Vec<usize>();
+    values ::= alloc.Vec<usize>();
+    outs.loop((h, p, out) {
+        keys.add(t.index.get(out).value_or(0)).try();
+        values.add(p).try();
+        keys.add(t.index.get(srcs.get(p).value_or(0)).value_or(0)).try();
+        values.add(p).try();
+    });
+    pairs = group(alloc, keys, values, k).try();
+    clash ::= flags(alloc, outs.len).try();
+    live  ::= flags(alloc, k).try();
+    function.blocks.loop((h, b, block) {
+        Range(0, k).loop((s) { live.set(s, live_out.get(b * k + s).value_or(false)); });
+        exit_read(block.exit).when_ok((r) {
+            u = t.index.get(r).value_or(NONE);
+            (u != NONE).then(() { live.set(u, true); });
+        });
+        n = block.code.len;
+        Range(0, n).loop((i) {
+            instruction = block.code.get(n - 1 - i).value_or(Instruction.Flush);
+            d           = effects(instruction, t, e).try();
+            (d != NONE).then(
+                () { written_at(
+                    instruction,
+                    d,
+                    t,
+                    pairs,
+                    outs,
+                    srcs,
+                    live,
+                    clash
+                ); }
+            );
+            e.partial.loop(
+                (w) { written_at(
+                    instruction,
+                    w,
+                    t,
+                    pairs,
+                    outs,
+                    srcs,
+                    live,
+                    clash
+                ); }
+            );
+            (d != NONE).then(() { live.set(d, false); });
+            e.uses.loop((u) { live.set(u, true); });
+        });
+    });
+    Ok(clash)
+}
+
+// Mark each pair of record `d`, which `instruction` writes, whose other side
+// is live there, unless `instruction` is the pair's own copy.
+written_at = (
+    instruction : Instruction,
+    d           : usize,
+    t           : Track,
+    pairs       : Groups,
+    outs        : Vec<usize>,
+    srcs        : Vec<usize>,
+    live        : Vec<bool>,
+    clash       :: Vec<bool>
+) {
+    Range(pairs.at(d), pairs.at(d + 1)).loop((j) {
+        p     = pairs.value(j);
+        out   = outs.get(p).value_or(0);
+        src   = srcs.get(p).value_or(0);
+        other = (t.index.get(out).value_or(NONE) == d).match({
+            true  => t.index.get(src).value_or(NONE),
+            false => t.index.get(out).value_or(NONE),
+        });
+        own   = instruction.match({
+            Copy(v) => v.out == out && v.source == src,
+            _       => false,
+        });
+        (live.get(other).value_or(false) && !own).then(() { clash.set(p, true); });
+    });
+}
+
+// `instruction` with the record it writes whole renamed by `alias`; the
+// writers `qualifying` admits are exactly these.
+retarget* = (instruction: Instruction, alias: Vec<usize>) Instruction {
+    instruction.match({
+        Copy(v)      => Instruction.Copy(Move(
+            out: alias.get(v.out).value_or(v.out),
+            source: v.source
+        )),
+        LoadValue(v) => Instruction.LoadValue(Load(
+            out: alias.get(v.out).value_or(v.out),
+            base: v.base,
+            offset: v.offset
+        )),
+        Invoke(v)    => Instruction.Invoke(Invocation(
+            out: alias.get(v.out).value_or(v.out),
+            function: v.function,
+            args: v.args
+        )),
+        _            => instruction,
+    })
+}
+
+flags = (alloc: Alloc, count: usize) Res<Vec<bool>, AllocError> {
+    out ::= alloc.Vec<bool>();
+    Range(0, count).loop((_) { out.add(false).try(); });
+    Ok(out)
+}

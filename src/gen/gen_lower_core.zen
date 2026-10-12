@@ -71,6 +71,20 @@ Expected* = { id*: ExprId, ty*: TyId }
 // are per module, so the frame keeps an inlined body from taking it.
 Into* = { id*: ExprId, frame*: usize, place*: Place }
 
+// A whole slot as a place.
+slot_place* = (value: Value) Place {
+    Place(base: Base.InSlot(value.slot), offset: 0, ty: value.ty)
+}
+
+// The value a construction built at `place` stands for; only whole slots
+// are read back.
+placed_value* = (place: Place) Value {
+    Value(
+        slot: place.base.match({ InSlot(s) => s, Through(p) => p }),
+        ty: place.ty
+    )
+}
+
 // Where an operator's operands meet: the checked result, whether it
 // compares, and the type both sides lower at when `ahead`.
 Meet = { checked: TyId, compare: bool, early: TyId, ahead: bool }
@@ -1863,7 +1877,7 @@ Lowerer* = {
                     Ok(e) => self.expr_into(e, p.ty, p).try(),
                     None  => self.write(p, self.coerce(last, p.ty).try()).try(),
                 });
-                Ok(self.placed_value(p))
+                Ok(placed_value(p))
             },
             None  => block.value.match({
                 Ok(e) => want.match({ Ok(t) => self.expr_as(e, t), None => self.expr(e) }),
@@ -2578,12 +2592,7 @@ Lowerer* = {
             },
             _              => {
                 out = self.temp(ty).try();
-                self.variant_at(
-                    self.slot_place(out),
-                    name,
-                    payload,
-                    span
-                ).try();
+                self.variant_at(slot_place(out), name, payload, span).try();
                 Ok(out)
             },
         })
@@ -2675,20 +2684,6 @@ Lowerer* = {
         })
     }
 
-    // A whole slot as a place.
-    slot_place* = (self: @Self, value: Value) Place {
-        Place(base: Base.InSlot(value.slot), offset: 0, ty: value.ty)
-    }
-
-    // The value a construction built at `place` stands for; only whole
-    // slots are read back.
-    placed_value* = (self: @Self, place: Place) Value {
-        Value(
-            slot: place.base.match({ InSlot(s) => s, Through(p) => p }),
-            ty: place.ty
-        )
-    }
-
     // Lower `id` at `ty` straight into `place`, which nothing reads until
     // the value is complete: a construction there writes its parts in
     // place rather than in a temporary that is then copied.
@@ -2716,7 +2711,7 @@ Lowerer* = {
         self.placed(id, ty).match({
             Ok(p) => {
                 self.variant_at(p, name, None, span).try();
-                Ok(self.placed_value(p))
+                Ok(placed_value(p))
             },
             None  => self.variant_value(ty, name, None, span),
         })
@@ -2734,7 +2729,7 @@ Lowerer* = {
         });
         whole.match({
             true  => self.placed(id, ty).match({
-                Ok(p) => Ok(self.placed_value(p)),
+                Ok(p) => Ok(placed_value(p)),
                 None  => None,
             }),
             false => None,
@@ -2873,7 +2868,7 @@ Lowerer* = {
         // Arms write the place the context asked for, else a temporary.
         out     = self.placed(id, ty).match({
             Ok(p) => p,
-            None  => self.slot_place(self.temp(ty).try()),
+            None  => slot_place(self.temp(ty).try()),
         });
         subject = self.expr_as(m.scrutinee, subject_ty).try();
         done    = self.label().try();
@@ -2914,7 +2909,7 @@ Lowerer* = {
         // Exhaustiveness is checked; falling out of every arm is a bug.
         self.trap(TrapKind.Unreachable, span).try();
         self.start(done);
-        Ok(self.placed_value(out))
+        Ok(placed_value(out))
     }
 
     // Branch to `yes` when the reading `at` matches `subject`, else to `no`.

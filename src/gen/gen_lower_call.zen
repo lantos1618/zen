@@ -33,7 +33,7 @@
 { sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
 { spawn_actor, use_actor_mem } = gen.gen_lower_actor
 { bound_of, dispatch, Bound } = gen.gen_lower_member
-{ to_i64_bits } = gen.gen_lower_core
+{ to_i64_bits, slot_place, placed_value } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
 { variant_index, size_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
@@ -144,7 +144,7 @@ construction = (
                 Record(_) => lo.construct_at(ty, c, span, into).try(),
                 _         => lo.variant_into(c, name, span, into).try(),
             });
-            Ok(lo.placed_value(into))
+            Ok(placed_value(into))
         },
         None     => s.form.match({
             Record(_) => lo.construct_named(ty, c, span),
@@ -183,7 +183,7 @@ variant_call = (
     lo.has_payloads(ty).try().match({
         true  => {
             out = lo.temp(ty).try();
-            lo.variant_into(c, name, span, lo.slot_place(out)).try();
+            lo.variant_into(c, name, span, slot_place(out)).try();
             Ok(out)
         },
         false => lo.variant_tags(ty, c, name, span),
@@ -1441,7 +1441,7 @@ construct_named* = (
     span : Span
 ) Res<Value, LowerError> {
     out = lo.temp(ty).try();
-    lo.construct_at(ty, c, span, lo.slot_place(out)).try();
+    lo.construct_at(ty, c, span, slot_place(out)).try();
     Ok(out)
 }
 
@@ -1457,7 +1457,7 @@ construct_at = (
     // A record of no bytes is fully written by writing nothing.
     (whole && lo.is_unit(ty)).then(() {
         lo.add(Instruction.Constant(Const(
-            out: lo.placed_value(into).slot,
+            out: placed_value(into).slot,
             value: 0
         ))).try();
     });
@@ -2454,7 +2454,7 @@ loop_call = (
         Ok(v) => v,
         None  => lo.temp(ty).try(),
     });
-    lo.variant_at(lo.slot_place(result), "None", None, span).try();
+    lo.variant_at(slot_place(result), "None", None, span).try();
     body_params = lo.lambda_params(body).try();
     brk         = lo.label().try();
     next        = lo.label().try();
@@ -2541,7 +2541,7 @@ fold_loop = (
         span
     ).try();
     lo.start(exhausted);
-    lo.variant_at(lo.slot_place(result), "Ok", Ok(acc), span).try();
+    lo.variant_at(slot_place(result), "Ok", Ok(acc), span).try();
     lo.jump(brk)
 }
 
@@ -3104,7 +3104,7 @@ handle_call = (lo :: Lowerer, loop_id: usize, name: str, c: Call, span: Span)
                     ok         = variant_index(variants, "Ok").ok_or(unsupported(span, "a loop result without Ok")).try();
                     payload_ty = variants.get(ok).ok_or(unsupported(span, "a missing variant")).try().payload.ok_or(unsupported(span, "a loop result without a payload")).try();
                     lo.break_fits(arg.value, payload_ty, span).try();
-                    whole = lo.slot_place(result);
+                    whole = slot_place(result);
                     lo.has_payloads(result.ty).try().match({
                         true  => lo.expr_into(
                             arg.value,

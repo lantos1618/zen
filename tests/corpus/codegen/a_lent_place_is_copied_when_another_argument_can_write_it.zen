@@ -1,0 +1,24 @@
+{ println } = std.io
+
+// A `::` argument of the same call may name the lent place (or a record
+// holding it), so the `:` callee must still read the value from the call.
+Big = { a :: u64, b :: u64, c :: u64 }
+Pair = { big :: Big, n :: u64 }
+poke = (x: Big, y :: Big) u64 {
+    y.a = 7;
+    y.c = 9;
+    x.a * 100 + x.b * 10 + x.c
+}
+via = (x :: Big, y :: Big) u64 { poke(x, y) }
+nudge = (x: Big, p :: Pair) u64 {
+    p.big.a = 7;
+    x.a * 100 + x.b * 10 + x.c
+}
+via_parent = (x :: Big, p :: Pair) u64 { nudge(x, p) }
+
+main = () {
+    b ::= Big(a: 1, b: 2, c: 3);
+    println("{}", via(b, b));
+    q ::= Pair(big: Big(a: 1, b: 2, c: 3), n: 0);
+    println("{}", via_parent(q.big, q));
+}

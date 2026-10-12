@@ -466,7 +466,9 @@ C = {
                 Ok(block) => block.code.get(j).match({
                     Ok(instruction) => instruction.match({
                         LoadValue(load) => load.out == slot
-                            && self.lends(f, b, j, k, call, load.base),
+                            && self.lends(f, b, j, k, call, load.base)
+                            && (self.origin.get(load.base).value_or(0) != 0
+                                || plain(f, call, slot)),
                         _               => false,
                     }),
                     None            => false,
@@ -1563,6 +1565,18 @@ quiet = (f: Func, b: usize, from: usize, to: usize) bool {
 }
 
 is_block = (ty: Scalar) bool { ty.match({ Block(_) => true, _ => false }) }
+
+// Every other argument is a plain scalar: none is a pointer or a record
+// that may hold one, so the callee cannot write the lent place.
+plain = (f: Func, call: Invocation, slot: usize) bool {
+    clear ::= true;
+    call.args.loop((arg) {
+        ty = slot_ty(f, arg);
+        (arg != slot && (is_block(ty) || ty.match({ Ptr => true, _ => false })))
+            .then(() { clear = false; });
+    });
+    clear
+}
 
 // Larger than the two words a C ABI passes in registers.
 large = (ty: Scalar) bool { ty.match({ Block(l) => l.size > 16, _ => false }) }

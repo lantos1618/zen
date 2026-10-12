@@ -54,8 +54,15 @@ serve = (env: Env, a: Alloc, cli: Cli) Res<i32, AllocError> {
             loop((h) {
                 r ::= env.mem.alloc();
                 listener.accept(r).match({
-                    Ok(stream) => answer(env, r, cli, stream).ignore(),
-                    Err(_)     => (),
+                    // A stream bound by a match arm is not dropped, so
+                    // close it here or every request leaks a socket.
+                    Ok(stream) => {
+                        s ::= consume stream;
+                        answer(env, r, cli, s).ignore();
+                        s.close();
+                    },
+                    // Out of descriptors or similar: back off, don't spin.
+                    Err(_)     => env.threads.sleep(10),
                 });
             });
             Ok(0)

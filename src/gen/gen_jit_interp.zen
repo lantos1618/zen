@@ -500,6 +500,17 @@ Interp = {
                         ); },
                     });
                 },
+                45 => {
+                    set_u64(frame +% part(s, 1), load_u64(frame +% part(s, 2)));
+                    extend_code(frame +% part(s, 1), part(s, 7));
+                },
+                46 => set_u64(
+                    frame +% part(s, 1),
+                    (load_u64(frame +% part(
+                        s,
+                        2
+                    )) != 0).match({ true => 1, false => 0 })
+                ),
                 19 => {
                     n     = part(s, 4);
                     left  = load_u64(frame +% part(s, 2));

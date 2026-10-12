@@ -25,6 +25,7 @@ Kind* = { ConstWord
     | MulUnsigned
     | DivUnsigned
     | RemUnsigned
+    | Cast
     | CompareSigned
     | CompareUnsigned
     | Bits
@@ -187,6 +188,18 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                         ty: class_of(f, v.out)
                     )
                 },
+                Cast(v)        => (wordish(class_of(f, v.input)) && wordish(class_of(f, v.out))).match({
+                    true  => Step(
+                        kind: Kind.Cast,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.input),
+                        c: 0,
+                        n: 0,
+                        w: 8,
+                        ty: class_of(f, v.out)
+                    ),
+                    false => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                }),
                 _              => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
             });
             code.steps.add(step).try();
@@ -291,6 +304,11 @@ arithmetic = (op: Op, ty: Scalar) Res<Kind> {
     })
 }
 
+// A scalar that lives in one word without float bits.
+wordish = (ty: Scalar) bool { integer(
+    ty
+) || ty.match({ Bool => true, Ptr => true, _ => false }) }
+
 unsigned_integer = (ty: Scalar) bool { integer(ty) && !signed(ty) }
 
 compare = (ty: Scalar) Kind { signed(
@@ -368,6 +386,10 @@ encode* = (code: Code, at: usize) usize {
             AddUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 14 },
             SubUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 15 },
             MulUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 16 },
+            Cast            => s.ty.match({
+                Bool => 46,
+                _    => { put(out, 7, widening(s.ty)); 45 },
+            }),
             DivUnsigned     => 43,
             RemUnsigned     => 44,
             CompareSigned   => fused(out, s, code, i, 17),

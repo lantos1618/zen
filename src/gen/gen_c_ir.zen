@@ -777,40 +777,35 @@ C = {
                 value.slot
             ),
             LoadValue(value)    => is_block(slot_ty(f, value.out)).match({
-                true  => self.out.fmt(
-                    "  memcpy(&v{}, (const void *)(uintptr_t)(v{} + {}u), sizeof v{});\n",
-                    value.out,
-                    value.base,
-                    value.offset,
-                    value.out
-                ),
+                true  => {
+                    self.out.fmt("  memcpy(&v{}, ", value.out).try();
+                    self.place(value.base, value.offset, "const ").try();
+                    self.out.fmt(", sizeof v{});\n", value.out)
+                },
                 false => {
                     self.out.fmt("  v{} = *(const za_", value.out).try();
                     ctype(self.out, slot_ty(f, value.out)).try();
-                    self.out.fmt(
-                        " *)(uintptr_t)(v{} + {}u);\n",
-                        value.base,
-                        value.offset
-                    )
+                    self.out.add(" *)").try();
+                    self.place(value.base, value.offset, "const ").try();
+                    self.out.add(";\n")
                 },
             }),
             StoreValue(value)   => is_block(slot_ty(f, value.value)).match({
-                true  => self.out.fmt(
-                    "  memcpy((void *)(uintptr_t)(v{} + {}u), &v{}, sizeof v{});\n",
-                    value.base,
-                    value.offset,
-                    value.value,
-                    value.value
-                ),
+                true  => {
+                    self.out.add("  memcpy(").try();
+                    self.place(value.base, value.offset, "").try();
+                    self.out.fmt(
+                        ", &v{}, sizeof v{});\n",
+                        value.value,
+                        value.value
+                    )
+                },
                 false => {
                     self.out.add("  *(za_").try();
                     ctype(self.out, slot_ty(f, value.value)).try();
-                    self.out.fmt(
-                        " *)(uintptr_t)(v{} + {}u) = v{};\n",
-                        value.base,
-                        value.offset,
-                        value.value
-                    )
+                    self.out.add(" *)").try();
+                    self.place(value.base, value.offset, "").try();
+                    self.out.fmt(" = v{};\n", value.value)
                 },
             }),
             CopyBytes(value)    => self.out.fmt(
@@ -897,6 +892,28 @@ C = {
             InvokeAt(value)     => self.indirect(f, value),
             // Outside `supports`; the driver refuses it before rendering.
             _                   => self.out.add(OUTSIDE),
+        })
+    }
+
+    // `base + offset` as a byte pointer. A base whose one write takes a
+    // local's address names that local, so the C compiler sees which object
+    // the access reaches instead of an integer it cannot trace.
+    place = (self :: @Self, base: usize, offset: usize, qualifier: str)
+            Res<(), AllocError> {
+        at = self.origin.get(base).value_or(0);
+        (at != 0 && self.writes.get(base).value_or(0) == 1).match({
+            true  => self.out.fmt(
+                "(({}unsigned char *)&v{} + {}u)",
+                qualifier,
+                at - 1,
+                offset
+            ),
+            false => self.out.fmt(
+                "(({}unsigned char *)(uintptr_t)v{} + {}u)",
+                qualifier,
+                base,
+                offset
+            ),
         })
     }
 

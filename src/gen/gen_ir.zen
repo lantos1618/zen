@@ -217,6 +217,10 @@ Func* = {
     // The lowering's claims about tagged values, which the verifier checks
     // (see `Guards`). Renderers ignore them. None for hand-built IR.
     guards* :: Res<Guards> = None,
+    // The C names gen_c spells for this function and its parameters, which
+    // tools/ct's manifests match in emitted C; "" and None where it has none.
+    symbol* :: str = "",
+    locals* :: Res<Vec<str>> = None,
 }
 
 // A payload is only meaningful for the alternative a tagged value holds, and

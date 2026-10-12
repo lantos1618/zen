@@ -27,6 +27,8 @@
 { Pat, PatReading, read_pattern, value_agrees } = sema.sema
 { is_drop_type } = sema.sema_drop
 { Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ sym_fn, sym_local } = gen.gen_name
+{ written_secret } = sema.sema_secret
 { Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, SysValue } = gen.gen_ir
@@ -34,10 +36,10 @@
 { word, integer, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
-{ to_bound, resolve, bound_of, handle_for_place } = gen.gen_lower_member
+{ to_bound, bound_of, handle_for_place, resolve } = gen.gen_lower_member
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { real_call } = gen.gen_lower_call
-{ capability, by_reference } = gen.gen_lower_shape
+{ capability } = gen.gen_lower_shape
 { variant_index, size_of, TAG_BYTES } = gen.gen_lower_shape
 { call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
 { SynthAt, TurnName, lower_pending } = gen.gen_lower_thread
@@ -64,6 +66,22 @@ LocalKind* = { Direct: Value
 Local* = { name*: str, frame*: usize, kind*: LocalKind }
 
 Expected* = { id*: ExprId, ty*: TyId }
+
+// Where an operator's operands meet: the checked result, whether it
+// compares, and the type both sides lower at when `ahead`.
+Meet = { checked: TyId, compare: bool, early: TyId, ahead: bool }
+
+// One operator of a left spine, lowered after the spine below it; `outer`
+// is how the operator above wants this one's value.
+Rung = {
+    id: ExprId,
+    op: BinOp,
+    lhs: ExprId,
+    rhs: ExprId,
+    span: Span,
+    meet: Meet,
+    outer: Meet,
+}
 
 // What a block's value is written as, for deciding what it hands out.
 Tail = { Expression: ExprId | Nested: BlockId | Nothing }
@@ -987,29 +1005,27 @@ Lowerer* = {
     expr_as* = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
         self.folded(id, ty).try().match({
             Ok(value) => Ok(value),
-            None      => self.borrowed_handle(id, ty).try().match({
-                Ok(handle) => Ok(handle),
-                None       => {
-                    self.expected = Ok(Expected(
-                        id: self.unwrapped(id),
-                        ty: ty
-                    ));
-                    value         = self.expr(id).try();
-                    self.coerce(value, ty)
-                },
-            }),
+            None      => {
+                self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
+                self.place_handle(id, ty).try().match({
+                    Ok(handle) => Ok(handle),
+                    None       => {
+                        value = self.expr(id).try();
+                        self.coerce(value, ty)
+                    },
+                })
+            },
         })
     }
 
-    // A bound wanted from a place (`Holder(alloc: owner.counting)`) points
-    // at that place, never at a copy that dies with this frame.
-    borrowed_handle = (self :: @Self, id: ExprId, ty: TyId) Res<Res<Value>, LowerError> {
-        bound = self.settled(ty).match({ true => self.bound_of(ty).try(), false => None });
-        bound.match({
-            None      => Ok(None),
-            Ok(bound) => bound.implementors.find((t) {
-                self.type_of(id).match({ Ok(own) => t == own, Err(_) => false })
-            }).match({
+    // An implementor with a place enters a bound pointing at that place, so
+    // a handle stored past this invocation (an Alloc kept in a Vec) stays
+    // valid as long as the implementor does; only temporaries are copied.
+    place_handle = (self :: @Self, id: ExprId, ty: TyId)
+                   Res<Res<Value>, LowerError> {
+        (self.settled(ty) && self.type_of(id).try() != ty).match({
+            false => Ok(None),
+            true  => self.bound_of(ty).try().match({
                 None  => Ok(None),
                 Ok(_) => self.place_of(id).try().match({
                     None      => Ok(None),
@@ -1332,25 +1348,131 @@ Lowerer* = {
 
     arithmetic = (self :: @Self, id: ExprId, op: BinOp, lhs: ExprId, rhs: ExprId,
                   span: Span) Res<Value, LowerError> {
+        meet     = self.meet_of(id, op, lhs, rhs).try();
+        raw_left = self.left_spine(lhs, meet).try();
+        self.combine(id, op, raw_left, rhs, meet, span)
+    }
+
+    // The operands meet at the checked arithmetic type, else at whichever
+    // side is settled and not an open literal. When that is an integer type
+    // known before either side runs, both sides are lowered at it, so an
+    // open literal operand is a constant of that type rather than a widened
+    // one.
+    meet_of = (self :: @Self, id: ExprId, op: BinOp, lhs: ExprId, rhs: ExprId)
+              Res<Meet, LowerError> {
         checked = self.type_of(id).try();
         compare = op.match({
             Equal => true, NotEqual => true, Less => true, LessEq => true,
             Greater => true, GreaterEq => true, _ => false,
         });
-        // The operands meet at the checked arithmetic type, else at
-        // whichever side is settled and not an open literal. When that is
-        // an integer type known before either side runs, both sides are
-        // lowered at it, so an open literal operand is a constant of that
-        // type rather than a widened one.
-        early     = (!compare && self.settled(checked)).match({
+        early   = (!compare && self.settled(checked)).match({
             true  => checked,
             false => self.meeting(
                 self.type_of(lhs).try(),
                 self.type_of(rhs).try()
             ),
         });
-        ahead     = self.integer_type(early) && !self.prim_name(early).eq("int");
-        raw_left  = ahead.match({ true => self.expr_as(lhs, early), false => self.expr(lhs) }).try();
+        Ok(Meet(
+            checked: checked,
+            compare: compare,
+            early: early,
+            ahead: self.integer_type(early) && !self.prim_name(early).eq("int")
+        ))
+    }
+
+    // A left-associated chain (`0 + 1 + 1 + ..`, ten thousand terms on one
+    // line) walks down its left operands and folds back up, so compiler
+    // recursion is bounded by the nesting the source writes, not by the
+    // chain's length.
+    left_spine = (self :: @Self, lhs: ExprId, meet: Meet)
+                 Res<Value, LowerError> {
+        rungs ::= self.alloc.Vec<Rung>();
+        down  ::= lhs;
+        outer ::= meet;
+        going ::= true;
+        going.loop((h) {
+            self.rung_at(down, outer).try().match({
+                Ok(rung) => {
+                    rungs.add(rung).try(LowerError.OutOfMemory);
+                    down  = rung.lhs;
+                    outer = rung.meet;
+                },
+                None     => { going = false; },
+            });
+        });
+        value ::= self.spine_base(down, outer).try();
+        Range(0, rungs.len).loop((h, i) {
+            rung  = rungs.get(rungs.len - 1 - i).ok_or(LowerError.OutOfMemory).try();
+            made  = self.combine(
+                rung.id,
+                rung.op,
+                value,
+                rung.rhs,
+                rung.meet,
+                rung.span
+            ).try();
+            value = rung.outer.ahead.match({
+                true  => self.coerce(made, rung.outer.early).try(),
+                false => made,
+            });
+        });
+        Ok(value)
+    }
+
+    // The level below `id` when lowering it would reach `arithmetic` for
+    // an unfolded operator node; None names `id` as the spine's base.
+    rung_at = (self :: @Self, id: ExprId, outer: Meet)
+              Res<Res<Rung>, LowerError> {
+        inner    = self.unwrapped(id);
+        constant = outer.ahead.match({
+            true  => self.folded(
+                id,
+                outer.early
+            ).try().match({ Ok(_) => true, None => false }),
+            false => false,
+        });
+        constant.match({
+            true  => Ok(None),
+            false => self.tree.expr_at(inner).kind.match({
+                Binary(b) => (b.op.match({ And => false, Or => false, _ => true }) && !b.op.is_bitwise()).match({
+                    false => Ok(None),
+                    true  => {
+                        outer.ahead.then(() {
+                            self.expected = Ok(Expected(
+                                id: inner,
+                                ty: outer.early
+                            ));
+                        });
+                        meet = self.meet_of(inner, b.op, b.lhs, b.rhs).try();
+                        Ok(Ok(Rung(
+                            id: inner,
+                            op: b.op,
+                            lhs: b.lhs,
+                            rhs: b.rhs,
+                            span: b.op_span,
+                            meet: meet,
+                            outer: outer
+                        )))
+                    },
+                }),
+                _         => Ok(None),
+            }),
+        })
+    }
+
+    spine_base = (self :: @Self, id: ExprId, meet: Meet) Res<Value, LowerError> {
+        meet.ahead.match({
+            true  => self.expr_as(id, meet.early),
+            false => self.expr(id),
+        })
+    }
+
+    combine = (self :: @Self, id: ExprId, op: BinOp, raw_left: Value,
+               rhs: ExprId, meet: Meet, span: Span) Res<Value, LowerError> {
+        checked   = meet.checked;
+        compare   = meet.compare;
+        early     = meet.early;
+        ahead     = meet.ahead;
         raw_right = ahead.match({ true => self.expr_as(rhs, early), false => self.expr(rhs) }).try();
         operand   = ahead.match({
             true  => early,
@@ -2577,7 +2699,6 @@ Lowerer* = {
                 reading.root,
                 arm.pattern,
                 subject,
-                false,
                 read
             ).try();
             value = self.expr_as(arm.body, ty).try();
@@ -2810,19 +2931,14 @@ Lowerer* = {
     // Binders come from the reading too: a wildcard with a name binds the
     // whole subject, a constructor binds inside its payload. A payload is
     // read only when something beneath it binds.
-    // A `fresh` subject is a payload read made for this arm, which a
-    // binder takes without another copy.
     bind_pattern = (self :: @Self, reading: PatReading, at: usize, node: PatternId,
-                    subject: Value, fresh: bool, read :: Vec<TestedPayload>) Res<LowerError> {
+                    subject: Value, read :: Vec<TestedPayload>) Res<LowerError> {
         p = reading.pats.at(at);
         p.kind.match({
             WildPat => p.binder.is_empty().match({
                 true  => Ok,
                 false => {
-                    copy = fresh.match({
-                        true  => subject,
-                        false => self.copy_value(subject).try(),
-                    });
+                    copy = self.copy_value(subject).try();
                     self.bind_local(p.binder, LocalKind.Direct(copy))
                 },
             }),
@@ -2841,7 +2957,6 @@ Lowerer* = {
                         p.sub,
                         self.sub_node(node, p),
                         payload,
-                        true,
                         read
                     )
                 },
@@ -2928,15 +3043,7 @@ Lowerer* = {
         target_variants = self.variants_of(ret).try();
         variant_index(variants, "Err").match({
             None    => error.match({
-                // An open Res (a bare `Ok` arm) has a None it never holds
-                // when the frame's result has no None to carry it into.
-                None  => variant_index(target_variants, "None").match({
-                    Ok(_) => self.variant_value(ret, "None", None, span),
-                    None  => {
-                        self.trap(TrapKind.Unreachable, span).try();
-                        self.temp(ret)
-                    },
-                }),
+                None  => self.variant_value(ret, "None", None, span),
                 Ok(e) => {
                     reason = self.replacement(e, ret, None).try();
                     self.variant_value(ret, "Err", Ok(reason), span)
@@ -3273,10 +3380,14 @@ Lowerer* = {
         f.params.loop((p) { params.add(p).try(LowerError.OutOfMemory); });
         kinds ::= self.alloc.Vec<LocalKind>();
         params.loop((p) {
-            ty         = p.type.ok_or(unsupported(
+            ty = p.type.ok_or(unsupported(
                 p.span,
                 "an inferred parameter type"
             )).try();
+            // tools/ct seeds its taint analysis from gen_c's Secret markers.
+            (!written_secret(self.check, ty, callee.module))
+                .ensure(unsupported(p.span, "a Secret parameter"))
+                .try();
             t          = self.callee_type(callee, ty).try();
             capability = self.shape(t).try().class.match({ Unit => self.is_capability(t), _ => false });
             capability.match({
@@ -3290,10 +3401,7 @@ Lowerer* = {
                         t
                     )).try(LowerError.OutOfMemory);
                 },
-                false => (p.mutable || self.by_reference(
-                    false,
-                    t
-                ).try()).match({
+                false => p.mutable.match({
                     true  => {
                         pointer = self.slot_of(Scalar.Ptr).try();
                         kinds.add(LocalKind.Ref(Place(
@@ -3369,6 +3477,11 @@ Lowerer* = {
             true  => Scalar.I32,
             false => self.class_of(ret_ty).try(),
         });
+        symbol       = self.c_symbol(callee, entry).try();
+        locals       = (symbol.len > 0 && f.params.len == parameters).match({
+            true  => Ok(self.c_locals(f).try()),
+            false => None,
+        });
         Ok(Func(
             name: f.name.text,
             parameters: parameters,
@@ -3378,8 +3491,57 @@ Lowerer* = {
             guards: Ok(Guards(
                 tests: self.tag_guards,
                 reads: self.payload_reads
-            ))
+            )),
+            symbol: symbol,
+            locals: locals
         ))
+    }
+
+    // The symbol gen_c spells for a free function; "" for members and the
+    // entry, which keep the renderer's own names.
+    c_symbol = (self :: @Self, callee: Callee, entry: bool) Res<str, LowerError> {
+        free = callee.member.match({ Ok(_) => false, None => !entry });
+        free.match({
+            false => Ok(""),
+            true  => {
+                sig ::= self.alloc.Vec<TyId>();
+                callee.f.params.loop((p) {
+                    ty = p.type.ok_or(unsupported(
+                        p.span,
+                        "an inferred parameter type"
+                    )).try();
+                    sig.add(
+                        self.callee_type(callee, ty).try()
+                    ).try(LowerError.OutOfMemory);
+                });
+                qname ::= self.alloc.String().try(LowerError.OutOfMemory);
+                qname.fmt(
+                    "{}.{}",
+                    self.check.world.module_name(callee.owner),
+                    callee.f.name.text
+                ).try(LowerError.OutOfMemory);
+                out ::= self.alloc.String().try(LowerError.OutOfMemory);
+                sym_fn(
+                    out,
+                    self.check.types,
+                    self.check.world,
+                    qname.view(),
+                    sig,
+                    callee.inst
+                ).try(LowerError.OutOfMemory);
+                Ok(out.view())
+            },
+        })
+    }
+
+    c_locals = (self :: @Self, f: Function) Res<Vec<str>, LowerError> {
+        out ::= self.alloc.Vec<str>();
+        f.params.loop((p) {
+            name ::= self.alloc.String().try(LowerError.OutOfMemory);
+            sym_local(name, p.name.text, 1).try(LowerError.OutOfMemory);
+            out.add(name.view()).try(LowerError.OutOfMemory);
+        });
+        Ok(out)
     }
 
     // A function that cannot run: same signature, a trap for a body.
@@ -3391,7 +3553,9 @@ Lowerer* = {
                 "an inferred parameter type"
             )).try();
             t     = self.callee_type(callee, ty).try();
-            class = (p.mutable || self.by_reference(false, t).try()).match({ true => Scalar.Ptr, false => self.class_of(t).try() });
+            class = p.mutable.match({ true => Scalar.Ptr, false => self.class_of(
+                t
+            ).try() });
             self.slots.add(class).try(LowerError.OutOfMemory);
         });
         ret = callee.f.ret.match({ Ok(t) => self.callee_type(callee, t), None => Ok(self.unit_ty) }).try();

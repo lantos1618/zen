@@ -251,17 +251,16 @@ mode_named* = (text: str) Res<Mode> {
 
 // Generator choice is independent of artifact delivery and OS/arch/ABI.
 // Only implemented generators are admitted; unknown names never fall back.
-Codegen* = { C | Js | Asm | CIr }
+Codegen* = { C | Js | Asm }
 
 Codegen* = (name: str) Res<Codegen> {
     name.match({
-        "c" => Ok(Codegen.C), "js" => Ok(Codegen.Js), "asm" => Ok(Codegen.Asm),
-        "c-ir" => Ok(Codegen.CIr), _ => None
+        "c" => Ok(Codegen.C), "js" => Ok(Codegen.Js), "asm" => Ok(Codegen.Asm), _ => None
     })
 }
 
 Codegen.impl(StableName, {
-    stable_name = (self: @Self) str { self.match({ C => "c", Js => "js", Asm => "asm", CIr => "c-ir" }) }
+    stable_name = (self: @Self) str { self.match({ C => "c", Js => "js", Asm => "asm" }) }
 })
 
 // Check emits nothing. Other modes describe where generated artifacts go.

@@ -185,7 +185,8 @@ last_identifier = (text: str) usize {
     at
 }
 
-// `static ZG_INLINE T` and `static ZG_TARGET_AVX2 T` -> `T`.
+// `static ZG_INLINE T`, `static ZG_TARGET_AVX2 T` and IR-C's `static ZR_U T`
+// -> `T`.
 strip_qualifiers = (result: str) str {
     close = result.rfind(')');
     rest ::= close.match({
@@ -194,7 +195,7 @@ strip_qualifiers = (result: str) str {
     });
     loop((h) {
         word = rest.find(' ').match({ Ok(i) => rest.slice(0, i), None => rest });
-        (word.eq("static") || word.eq("inline") || word.starts_with("ZG_")).match({
+        (word.eq("static") || word.eq("inline") || word.starts_with("ZG_") || word.starts_with("ZR_")).match({
             true  => {
                 (word.len == rest.len).match({
                     true  => h.break(),

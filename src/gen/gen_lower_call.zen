@@ -13,6 +13,7 @@
 { Span } = std.source
 { Expr, Lambda, Access, Struct, Member, Impl } = std.ast
 { ImplId } = sema.sema
+{ literal_overflows } = sema.sema_trap
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed } = sema.sema
@@ -34,7 +35,7 @@
 { bound_of, dispatch, Bound } = gen.gen_lower_member
 { to_i64_bits } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
-{ variant_index, size_of, by_reference } = gen.gen_lower_shape
+{ variant_index, size_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
 { json_door, outcome_door } = gen.gen_lower_door
 
@@ -963,15 +964,9 @@ pack_value = (lo :: Lowerer, ty: TyId, elem: TyId, c: Call, first: Res<ExprId>)
             ty
         ),
         false => {
-            // An open element (`count(1, 2)` through `vararg<T>`) takes the
-            // type sema gave the first argument.
-            cell     = lo.settled(elem).match({
-                true  => elem,
-                false => run.get(0).match({ Ok(a) => lo.type_of(a).try(), None => elem }),
-            });
             count    = (run.len == 0).match({ true => 1, false => run.len });
             store_ty = lo.check.types.array(
-                cell,
+                elem,
                 count
             ).try(LowerError.OutOfMemory);
             elements = lo.shape(store_ty).try().form.match({ Array(e) => Ok(e), _ => None })
@@ -983,7 +978,7 @@ pack_value = (lo :: Lowerer, ty: TyId, elem: TyId, c: Call, first: Res<ExprId>)
             lo.zero_fill(store, count * elements.stride).try();
             base = lo.slot_of(Scalar.Ptr).try();
             run.loop((h, i, arg) {
-                value = lo.expr_as(arg, cell).try();
+                value = lo.expr_as(arg, elem).try();
                 lo.add(Instruction.AddressOf(Address(
                     out: base,
                     slot: store.slot
@@ -1023,11 +1018,6 @@ in_written_order = (
                    Res<Vec<Source>, LowerError> {
     out ::= lo.alloc.Vec<Source>();
     sources.loop((s) { out.add(s).try(LowerError.OutOfMemory); });
-    // A `::` argument could change what a lent one reads, so a call with
-    // one copies its wide read-only arguments.
-    mutating = callee.f.params.find(
-        (p) { p.mutable }
-    ).match({ Ok(_) => true, None => false });
     order ::= lo.alloc.Vec<ExprId>();
     // The receiver, when present, is the first argument not written in
     // the parentheses.
@@ -1064,20 +1054,10 @@ in_written_order = (
             special = lo.is_fn_type(ty) || lo.is_capability(ty)
                 || pack.match({ Ok(_) => true, None => false });
             (!special).then(() {
-                (p.mutable || (!mutating && lo.by_reference(
-                    false,
-                    ty
-                ).try())).match({
+                p.mutable.match({
                     // A place is resolved now; a temporary is computed now.
-                    // A read-only one is passed in place only at its own type.
                     true  => lo.place_of(e).try().match({
-                        Ok(place) => (p.mutable || place.ty == ty).match({
-                            true  => { out.set(i, Source.Located(place)); },
-                            false => { out.set(
-                                i,
-                                Source.Computed(lo.expr_as(e, ty).try())
-                            ); },
-                        }),
+                        Ok(place) => { out.set(i, Source.Located(place)); },
                         None      => { out.set(
                             i,
                             Source.Computed(lo.expr_as(e, ty).try())
@@ -1158,6 +1138,24 @@ result_type* = (lo :: Lowerer, callee: Callee) Res<TyId, LowerError> {
     })
 }
 
+// A by-value argument naming a local of the parameter's type is passed as
+// the local's own slot: a call reads its arguments and cannot write them.
+named_slot = (lo :: Lowerer, source: Source, ty: TyId) Res<usize> {
+    source.match({
+        Given(e) => lo.tree.expr_at(e).kind.match({
+            Name(n) => lo.lookup(n.text).match({
+                Ok(Direct(v)) => (v.ty == ty).match({
+                    true  => Ok(v.slot),
+                    false => None,
+                }),
+                _             => None,
+            }),
+            _       => None,
+        }),
+        _        => None,
+    })
+}
+
 // Evaluate one argument for a by-value parameter.
 argument_value* = (
     lo     :: Lowerer,
@@ -1212,27 +1210,6 @@ source_place = (
     })
 }
 
-// The address a read-only wide argument is lent at: its own place when it
-// has one of the parameter's type, else a copy of its value.
-lent = (
-    lo     :: Lowerer,
-    source : Source,
-    ty     : TyId,
-    span   : Span
-) Res<usize, LowerError> {
-    source.match({
-        Located(p) => (p.ty == ty).match({
-            true  => lo.address(p),
-            false => lo.address(lo.spill(
-                lo.argument_value(source, ty, span).try()
-            )),
-        }),
-        _          => lo.address(lo.spill(
-            lo.argument_value(source, ty, span).try()
-        )),
-    })
-}
-
 real_call* = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
              Res<Value, LowerError> {
     index = lo.enqueue(callee).try();
@@ -1244,9 +1221,9 @@ real_call* = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
             true  => lo.address(
                 lo.argument_place(source, ty, span).try()
             ).try(),
-            false => lo.by_reference(false, ty).try().match({
-                true  => lo.lent(source, ty, span).try(),
-                false => lo.argument_value(source, ty, span).try().slot,
+            false => lo.named_slot(source, ty).match({
+                Ok(named) => named,
+                None      => lo.argument_value(source, ty, span).try().slot,
             }),
         });
         args.add(slot).try(LowerError.OutOfMemory);
@@ -1525,6 +1502,7 @@ field_default = (
     });
     written.match({
         Ok(e) => {
+            lo.pure_default(e).ensure(unsupported(lo.tree.expr_at(e).span, "a field default that names a function or reads a frame")).try();
             inst  = lo.check.types.at(ty).match({
                 Named(n) => lo.check.inst_of_named(
                     n
@@ -1945,7 +1923,12 @@ pointer_call = (
         _          => {
             receiver = lo.expr(sources.source_expr(0, span).try()).try();
             elem     = lo.pointee(receiver.ty).try();
-            stride   = lo.element_size(elem).try();
+            (!(lo.is_unit(elem) && moves_element(name))).ensure(unsupported(span, "reading, writing, or shifting a Ptr<()>")).try();
+            // Copying a Drop owner is refused where only an instance knows
+            // the element; the legacy C backend reports it.
+            copies = name.is_in(["read", "copy_from"]);
+            (!(copies && lo.check.contains_drop(elem).try(LowerError.OutOfMemory))).ensure(unsupported(span, "copying a Drop owner through Ptr")).try();
+            stride = lo.element_size(elem).try();
             name.match({
                 "read"      => {
                     at = lo.element_at(receiver, sources, stride, span).try();
@@ -2319,14 +2302,11 @@ std_call* = (
     index  = lo.enqueue(callee).try();
     slots ::= lo.alloc.Vec<usize>();
     f.params.loop((h, i, _) {
-        want    = lo.param_type(callee, i).try();
-        value   = args.get(i).ok_or(unsupported(span, "a missing std argument")).try();
-        coerced = lo.coerce(value, want).try();
-        slot    = lo.by_reference(false, want).try().match({
-            true  => lo.address(lo.spill(lo.copy_value(coerced).try())).try(),
-            false => coerced.slot,
-        });
-        slots.add(slot).try(LowerError.OutOfMemory);
+        want  = lo.param_type(callee, i).try();
+        value = args.get(i).ok_or(unsupported(span, "a missing std argument")).try();
+        slots.add(
+            lo.coerce(value, want).try().slot
+        ).try(LowerError.OutOfMemory);
     });
     ret = lo.result_type(callee).try();
     out = lo.temp(ret).try();
@@ -3081,8 +3061,9 @@ handle_call = (lo :: Lowerer, loop_id: usize, name: str, c: Call, span: Span)
                     variants   = lo.variants_of(result.ty).try();
                     ok         = variant_index(variants, "Ok").ok_or(unsupported(span, "a loop result without Ok")).try();
                     payload_ty = variants.get(ok).ok_or(unsupported(span, "a missing variant")).try().payload.ok_or(unsupported(span, "a loop result without a payload")).try();
-                    value      = lo.expr_as(arg.value, payload_ty).try();
-                    made       = lo.variant_value(
+                    lo.break_fits(arg.value, payload_ty, span).try();
+                    value = lo.expr_as(arg.value, payload_ty).try();
+                    made  = lo.variant_value(
                         result.ty,
                         "Ok",
                         Ok(value),
@@ -3781,4 +3762,73 @@ raw_text = (
         Err(_) => Err(unsupported(span, "a malformed literal escape")),
     }).try();
     lo.text(decoded, to)
+}
+
+// Ptr<()> is an opaque address: there is no element to move or step over.
+moves_element = (name: str) bool {
+    name.match({
+        "read"   => true,
+        "take"   => true,
+        "write"  => true,
+        "offset" => true,
+        "back"   => true,
+        _        => false,
+    })
+}
+
+// `h.break(v)` takes the loop's own T: a value of another type, or a literal
+// that does not fit it, would truncate through the break slot.
+break_fits = (lo :: Lowerer, value: ExprId, payload: TyId, span: Span)
+             Res<LowerError> {
+    got = lo.type_of(value).try();
+    lo.check.assignable(got, payload).ensure(unsupported(span, "h.break(v) is not free to choose its type")).try();
+    (!lo.check.literal_overflows(value, payload)).ensure(unsupported(lo.tree.expr_at(value).span, "h.break(v) is not free to choose its type"))
+}
+
+// A default is written at every construction that omits it, so it may call
+// no function; `null_ptr<T>()` and constructions of pure values remain.
+pure_default = (lo :: Lowerer, id: ExprId) bool {
+    lo.tree.expr_at(id).kind.match({
+        Literal(_)    => true,
+        Unit          => true,
+        Name(_)       => true,
+        Paren(p)      => lo.pure_default(p.inner),
+        Unary(u)      => lo.pure_default(u.operand),
+        Binary(b)     => lo.pure_default(b.lhs) && lo.pure_default(b.rhs),
+        Access(a)     => lo.pure_default(a.base),
+        Array(a)      => lo.pure_defaults(a.elems),
+        FixedArray(a) => lo.pure_defaults(a.elems),
+        Call(c)       => !lo.calls_function(id) && lo.pure_args(c),
+        _             => false,
+    })
+}
+
+pure_defaults = (lo :: Lowerer, elems: Vec<ExprId>) bool {
+    elems.find((e) { !lo.pure_default(e) }).match({
+        Ok(_) => false,
+        None  => true,
+    })
+}
+
+pure_args = (lo :: Lowerer, c: Call) bool {
+    c.args.find((a) { !lo.pure_default(a.value) }).match({
+        Ok(_) => false,
+        None  => true,
+    })
+}
+
+calls_function = (lo :: Lowerer, id: ExprId) bool {
+    lo.check.checked_call(id).match({
+        None    => false,
+        Ok(sel) => sel.declaration.match({
+            None  => false,
+            Ok(d) => decl_at(lo.tree, d).match({
+                None    => false,
+                Ok(def) => def.kind.match({
+                    Function(f) => !f.name.text.eq("null_ptr"),
+                    _           => false,
+                }),
+            }),
+        }),
+    })
 }

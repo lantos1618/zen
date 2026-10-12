@@ -95,7 +95,7 @@ Case = {
                         );
                         all = all && faults == 0;
                     },
-                    IrC     => { code = emit_c(a, env.mem, program).try(); },
+                    IrC     => { code = emit_c(a, program).try(); },
                     Js      => { code = emit_js(a, program).try(); },
                     Asm     => { code = host_assembly(env, a, program).try(); },
                 });
@@ -287,8 +287,8 @@ direct = (env: Env, a: Alloc) Res<bool, AllocError> {
     valid   = program.verify(a).match({ Ok(_) => true, Err(_) => false });
     good ::= valid;
     valid.then(() {
-        c        = emit_c(a, env.mem, program).try();
-        repeated = emit_c(a, env.mem, program).try();
+        c        = emit_c(a, program).try();
+        repeated = emit_c(a, program).try();
         good     = good && c.view().eq(repeated.view());
         case     = Case(
             name: "IR cycle and bytes",
@@ -298,7 +298,7 @@ direct = (env: Env, a: Alloc) Res<bool, AllocError> {
             code: 0
         );
         [Backend.IrC, Backend.Js, Backend.Asm].loop((backend) {
-            text = backend.match({ Js => emit_js(a, program), Asm => host_assembly(env, a, program), _ => emit_c(a, env.mem, program) }).try();
+            text = backend.match({ Js => emit_js(a, program), Asm => host_assembly(env, a, program), _ => emit_c(a, program) }).try();
             good = case.execute(env, a, backend, text.view()).try() && good;
         });
     });
@@ -315,11 +315,10 @@ Refuse.impl(Alloc, {
     }
 })
 
-boundaries = (env: Env, a: Alloc) Res<bool, AllocError> {
+boundaries = (a: Alloc) Res<bool, AllocError> {
     program    = cyclic_program(a, "").try();
     allocation = emit_c(
         Refuse(),
-        env.mem,
         program
     ).match({ Err(OutOfMemory) => true, Ok(_) => false });
     program.functions.get(0).when_ok((function) {
@@ -427,5 +426,5 @@ main = (env: Env) Res<AllocError> {
         Case(name: "negation", source: Ok(source), out: "before\n", err: expected_neg.view(), code: 134).run(env).try()
     );
     println("IR cycle and arbitrary bytes {}", direct(env, a).try());
-    println("allocation and verifier boundaries {}", boundaries(env, a).try());
+    println("allocation and verifier boundaries {}", boundaries(a).try());
 }

@@ -18,6 +18,7 @@ fs_error* = (errno: i64) FsError {
     code = 0 - errno;
     code.match({
         2  => FsError.NotFound,
+        20 => FsError.NotFound,
         13 => FsError.Denied,
         1  => FsError.Denied,
         21 => FsError.IsDir,

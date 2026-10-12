@@ -1,0 +1,13 @@
+{ println } = std.io
+
+// `str` declares `find` and `contains` for both a byte and a substring;
+// every backend must call the overload sema selected.
+uncommented = (inside: str) bool {
+    !inside.contains("//") && !inside.contains("/*")
+}
+
+main = () {
+    println("{} {}", uncommented("a // b"), uncommented("plain"));
+    "x.y".find(".").match({ Ok(at) => println("{}", at), None => println("none") });
+    println("{}", "x.y".contains('.'));
+}

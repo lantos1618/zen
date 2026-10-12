@@ -1,60 +1,108 @@
-// C rendering of the one IR, for the part `supports` declares: i32, bool and
-// unit values, checked i32 arithmetic, calls, standard output and traps. The
-// caller verifies the program and checks `supports` before rendering; this
-// experimental path does not define Zen's foreign or aggregate ABI.
+// C rendering of the one IR. Every slot is a C local of its class's type
+// (aggregates are aligned byte arrays), every function a static C function,
+// and every block a label. The runtime below provides buffered standard
+// output, traps, exit hooks, page mapping and threads; kernel calls go
+// through libc's `syscall` on Linux and libSystem symbols on macOS. Threads,
+// locks and conditions always use pthreads (`PthreadThreads` is 1). The
+// caller verifies the program and checks `c_supports` before rendering.
 { Alloc, AllocError } = std.mem
 { String, str } = std.text
 { Vec } = std.collections
 { Res, Ok, Range } = std.core
 { Span } = std.source
-{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
-{ trap_message } = gen.gen_ir
+{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print, Move } = gen.gen_ir
+{ Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
+{ trap_message, width, signed, integer, float } = gen.gen_ir
 { IrFeature } = gen.gen_ir_feature
-{ simplify } = gen.gen_asm_regalloc
-{ reachable_only, ordered } = gen.gen_asm_prepare
-{ reads, written, exit_read } = gen.gen_asm_flow
+{ Sys, SysConstant, Platform, DarwinResult } = gen.gen_sys
+{ linux_x86_64, linux_arm64, darwin_symbol, darwin_result, constant_value } = gen.gen_sys
 
-supports* = (feature: IrFeature) bool {
-    feature.match({ Traps => true, _ => false })
+c_supports* = (feature: IrFeature) bool {
+    feature.match({ Host => false, _ => true })
 }
 
-// Each function is first cleaned up by the passes the native renderers use:
-// unreachable blocks dropped, copies propagated, unread pure values removed,
-// and blocks ordered so most jumps fall through.
 emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
     writer ::= C(
         out: a.String().try(),
+        head: a.String().try(),
         location: a.String().try(),
         labels: a.Vec<bool>(),
-        read: a.Vec<bool>(),
-        declared: a.Vec<bool>(),
-        operands: a.Vec<usize>()
+        operands: a.Vec<usize>(),
+        layouts: a.Vec<Layout>(),
+        symbols: a.Vec<str>(),
+        first: a.Vec<usize>(),
+        borrowed: a.Vec<bool>(),
+        taken: a.Vec<bool>(),
+        names: a.Vec<str>(),
+        origin: a.Vec<usize>(),
+        escaped: a.Vec<bool>(),
+        stored: a.Vec<bool>(),
+        direct: a.Vec<bool>(),
+        writes: a.Vec<usize>(),
+        aliased: a.Vec<bool>(),
+        reads: a.Vec<usize>(),
+        addressed: a.Vec<bool>(),
+        home: a.Vec<usize>(),
+        earliest: a.Vec<usize>(),
+        latest: a.Vec<usize>(),
+        scattered: a.Vec<bool>(),
+        target: a.Vec<usize>(),
+        named: a.Vec<bool>(),
+        copies: 0
     );
-    simple ::= a.Vec<Func>();
-    program.functions.loop((function) {
-        simple.add(
-            ordered(
-                a,
-                simplify(a, reachable_only(a, function).try()).try()
-            ).try()
-        ).try();
-    });
-    writer.program(Program(functions: simple, entry: program.entry)).try();
-    Ok(writer.out)
+    writer.program(program).try();
+    text ::= a.String().try();
+    text.runtime().try();
+    text.add(writer.head.view()).try();
+    text.add(writer.out.view()).try();
+    Ok(text)
 }
 
 C = {
     out :: String,
+    // Aggregate typedefs and macOS symbol declarations, which must precede
+    // the functions that use them.
+    head :: String,
     location :: String,
     labels :: Vec<bool>,
-    // Per slot of the function being rendered: whether anything reads it,
-    // and whether it needs a declaration (read or written).
-    read :: Vec<bool>,
-    declared :: Vec<bool>,
     operands :: Vec<usize>,
+    layouts :: Vec<Layout>,
+    symbols :: Vec<str>,
+    // From `plan`: each function's first parameter in `borrowed`, where a
+    // borrowed parameter is an aggregate the callee only reads, passed by
+    // pointer instead of copied.
+    first :: Vec<usize>,
+    borrowed :: Vec<bool>,
+    taken :: Vec<bool>,
+    names :: Vec<str>,
+    // From `survey`, per slot of one function: the slot an address slot
+    // points at (plus one; zero for none), whether that slot's address
+    // leaves loads (`escaped`), is stored through (`stored`), and whether an
+    // instruction writes the slot itself (`direct`, `writes` times), and
+    // whether the slot is another one renamed (`aliased`, see `same`).
+    origin :: Vec<usize>,
+    escaped :: Vec<bool>,
+    stored :: Vec<bool>,
+    direct :: Vec<bool>,
+    writes :: Vec<usize>,
+    aliased :: Vec<bool>,
+    // From `places`, per slot: operand reads, whether its address is taken,
+    // the one block that mentions it (plus one) unless `scattered`, and its
+    // first and last instruction there. An aliased slot names `target` (plus
+    // one); a `named` slot is some alias's target.
+    reads :: Vec<usize>,
+    addressed :: Vec<bool>,
+    home :: Vec<usize>,
+    earliest :: Vec<usize>,
+    latest :: Vec<usize>,
+    scattered :: Vec<bool>,
+    target :: Vec<usize>,
+    named :: Vec<bool>,
+    // `zc` copies made for borrowed arguments in the current function.
+    copies :: usize,
 
     program = (self :: @Self, program: Program) Res<(), AllocError> {
-        self.out.runtime().try();
+        self.plan(program).try();
         program.functions.loop((h, index, function) {
             self.signature(index, function).try();
             self.out.add(";\n").try();
@@ -62,37 +110,552 @@ C = {
         program.functions.loop((h, index, function) {
             self.function(index, function).try();
         });
-        self.out.fmt(
-            "int main(void) {{ return (int)(zg_ir_f{}() & 255); }}\n",
-            program.entry
-        )
+        unit_entry = program.functions.get(program.entry).match({
+            Ok(f) => f.result.match({ Unit => true, _ => false }),
+            None  => true,
+        });
+        self.out.add(
+            "int main(int argc, char **argv, char **envp) {\n  zr_argc = (uint64_t)argc;\n  zr_argv = (uint64_t)(uintptr_t)argv;\n  zr_envp = (uint64_t)(uintptr_t)envp;\n"
+        ).try();
+        self.out.add(
+            unit_entry.match({ true => "  ", false => "  zr_exit((int)" })
+        ).try();
+        self.callee_name(program.entry).try();
+        self.out.add(unit_entry.match({
+            true  => "();\n  zr_exit(0);\n}\n",
+            false => "());\n}\n",
+        }))
     }
 
-    // All three scalar types have a private i32 carrier in this renderer.
-    // Unit arguments still evaluate and occupy their ordered signature slots.
     signature = (self :: @Self, index: usize, function: Func) Res<(), AllocError> {
-        self.out.fmt("int32_t zg_ir_f{}(", index).try();
+        self.need(function.result).try();
+        self.out.add("static ZR_U ").try();
+        self.out.ctype(function.result).try();
+        self.out.add(" ").try();
+        self.callee_name(index).try();
+        self.out.add("(").try();
         (function.parameters == 0).then(() { self.out.add("void").try(); });
+        // A body lowered to traps alone never reads its parameters, though
+        // the source did, and a unit parameter carries nothing to read; only
+        // a returning body's unused data parameter is a warning.
+        stub = function.blocks.find((block) {
+            block.exit.match({ Return(_) => true, _ => false })
+        }).match({ Ok(_) => false, None => true });
         Range(0, function.parameters).loop((i) {
+            ty = slot_ty(function, i);
+            self.need(ty).try();
             (i > 0).then(() { self.out.add(", ").try(); });
-            self.out.fmt("int32_t v{}", i).try();
+            (stub || ty.match({ Unit => true, _ => false })).then(() {
+                self.out.add("ZR_U ").try();
+            });
+            self.by_pointer(index, i).then(() { self.out.add("const ").try(); });
+            self.out.ctype(ty).try();
+            borrowed = self.by_pointer(index, i);
+            self.out.add(borrowed.match({ true => " *", false => " " })).try();
+            local = param_name(function, i);
+            (local.len > 0).match({
+                true  => self.out.add(local),
+                false => {
+                    self.out.add(
+                        borrowed.match({ true => "zp", false => "v" })
+                    ).try();
+                    self.out.fmt("{}", i)
+                },
+            }).try();
         });
         self.out.add(')')
+    }
+
+    callee_name = (self :: @Self, index: usize) Res<(), AllocError> {
+        symbol = self.names.get(index).value_or("");
+        (symbol.len > 0).match({
+            true  => self.out.add(symbol),
+            false => self.out.fmt("zf{}", index),
+        })
+    }
+
+    // Which aggregate parameters travel by pointer. A function whose address
+    // is taken keeps by-value parameters, since its indirect callers cannot
+    // tell.
+    plan = (self :: @Self, program: Program) Res<(), AllocError> {
+        program.functions.loop((_) { self.taken.add(false).try(); });
+        program.functions.loop((function) {
+            function.blocks.loop((block) {
+                block.code.loop((instruction) {
+                    instruction.match({
+                        CodeAddress(v) => { self.taken.set(v.function, true); },
+                        _              => (),
+                    });
+                });
+            });
+        });
+        self.taken.set(program.entry, true);
+        program.functions.loop(
+            (function) { self.names.add(function.symbol).try(); }
+        );
+        program.functions.loop((h, index, function) {
+            self.first.add(self.borrowed.len).try();
+            self.survey(function).try();
+            Range(0, function.parameters).loop((i) {
+                self.borrowed.add(
+                    !self.taken.get(index).value_or(true)
+                        && large(slot_ty(function, i))
+                        && !self.escaped.get(i).value_or(true)
+                        && !self.stored.get(i).value_or(true)
+                        && !self.direct.get(i).value_or(true)
+                ).try();
+            });
+        });
+        Ok
+    }
+
+    by_pointer = (self: @Self, function: usize, param: usize) bool {
+        self.borrowed.get(self.first.get(function).value_or(0) + param).value_or(false)
+    }
+
+    survey = (self :: @Self, function: Func) Res<(), AllocError> {
+        count = function.slots.len;
+        self.origin.clear();
+        self.escaped.clear();
+        self.stored.clear();
+        self.direct.clear();
+        self.writes.clear();
+        self.aliased.clear();
+        self.reads.clear();
+        self.addressed.clear();
+        self.home.clear();
+        self.earliest.clear();
+        self.latest.clear();
+        self.scattered.clear();
+        self.target.clear();
+        self.named.clear();
+        Range(0, count).loop((_) {
+            self.origin.add(0).try();
+            self.escaped.add(false).try();
+            self.stored.add(false).try();
+            self.direct.add(false).try();
+            self.writes.add(0).try();
+            self.aliased.add(false).try();
+            self.reads.add(0).try();
+            self.addressed.add(false).try();
+            self.home.add(0).try();
+            self.earliest.add(0).try();
+            self.latest.add(0).try();
+            self.scattered.add(false).try();
+            self.target.add(0).try();
+            self.named.add(false).try();
+        });
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    AddressOf(v) => self.points(v.out, v.slot),
+                    _            => (),
+                });
+            });
+        });
+        function.blocks.loop((block) {
+            block.code.loop((instruction) { self.uses(instruction); });
+            block.exit.match({
+                Return(slot)   => self.escape(slot),
+                Branch(branch) => self.escape(branch.value),
+                _              => (),
+            });
+        });
+        Ok
+    }
+
+    // An address slot naming two slots leaves both unproven.
+    points = (self :: @Self, out: usize, slot: usize) {
+        previous = self.origin.get(out).value_or(0);
+        (previous != 0 && previous != slot + 1).then(() {
+            self.escaped.set(previous - 1, true);
+            self.escaped.set(slot, true);
+        });
+        self.origin.set(out, slot + 1);
+        self.addressed.set(slot, true);
+    }
+
+    // A load base or copy source only reads through an address; any other
+    // read of an address slot lets the address go anywhere.
+    uses = (self :: @Self, instruction: Instruction) {
+        instruction.match({
+            Constant(v)     => self.wrote(v.out),
+            Copy(v)         => {
+                self.wrote(v.out);
+                self.escape(v.source);
+            },
+            UnaryValue(v)   => {
+                self.wrote(v.out);
+                self.escape(v.input);
+            },
+            BinaryValue(v)  => {
+                self.wrote(v.out);
+                self.escape(v.left);
+                self.escape(v.right);
+            },
+            Invoke(v)       => {
+                self.wrote(v.out);
+                self.escapes(v.args);
+            },
+            PrintValue(v)   => self.escape(v.value),
+            Text(_)         => (),
+            Cast(v)         => {
+                self.wrote(v.out);
+                self.escape(v.input);
+            },
+            AddressOf(v)    => self.wrote(v.out),
+            LoadValue(v)    => self.wrote(v.out),
+            StoreValue(v)   => {
+                self.through(v.base);
+                self.escape(v.value);
+            },
+            CopyBytes(v)    => {
+                self.through(v.dest);
+                self.escape(v.bytes);
+            },
+            Bytes(v)        => self.wrote(v.out),
+            WriteOut(v)     => {
+                self.escape(v.data);
+                self.escape(v.len);
+            },
+            System(v)       => {
+                self.wrote(v.out);
+                self.escapes(v.args);
+            },
+            Startup(v)      => self.wrote(v.out),
+            MapPages(v)     => {
+                self.wrote(v.out);
+                self.escape(v.bytes);
+            },
+            UnmapPages(s)   => self.escape(s),
+            SysConst(v)     => self.wrote(v.out),
+            Flush           => (),
+            Machine(v)      => {
+                v.outs.loop((s) { self.wrote(s); });
+                self.escapes(v.args);
+            },
+            Host(v)         => {
+                self.wrote(v.out);
+                self.escapes(v.args);
+            },
+            Wait(s)         => self.wrote(s),
+            AtomicLoad(v)   => self.wrote(v.out),
+            AtomicStore(v)  => {
+                self.through(v.base);
+                self.escape(v.value);
+            },
+            AtomicUpdate(v) => {
+                self.wrote(v.out);
+                self.through(v.base);
+                self.escape(v.value);
+            },
+            CompareSwap(v)  => {
+                self.wrote(v.out);
+                self.through(v.base);
+                self.escape(v.expected);
+                self.escape(v.desired);
+            },
+            CodeAddress(v)  => self.wrote(v.out),
+            InvokeAt(v)     => {
+                self.wrote(v.out);
+                self.escape(v.target);
+                self.escapes(v.args);
+            },
+        })
+    }
+
+    escape = (self :: @Self, slot: usize) {
+        at = self.origin.get(slot).value_or(0);
+        (at != 0).then(() { self.escaped.set(at - 1, true); });
+    }
+
+    escapes = (self :: @Self, slots: Vec<usize>) {
+        slots.loop((slot) { self.escape(slot); });
+    }
+
+    through = (self :: @Self, slot: usize) {
+        at = self.origin.get(slot).value_or(0);
+        (at != 0).then(() { self.stored.set(at - 1, true); });
+    }
+
+    wrote = (self :: @Self, slot: usize) {
+        self.direct.set(slot, true);
+        self.writes.set(slot, self.writes.get(slot).value_or(0) + 1);
+    }
+
+    // A slot copied from a slot that never changes again, into a slot only
+    // that copy writes, holds the source's value wherever it is read: the
+    // verifier puts the copy before every read, and the source before it.
+    same = (self: @Self, f: Func, copy: Move) bool {
+        alike(slot_ty(f, copy.out), slot_ty(f, copy.source))
+            && copy.out != copy.source
+            && copy.out >= f.parameters
+            && self.writes.get(copy.out).value_or(2) == 1
+            && self.fixed(copy.out)
+            && self.fixed(copy.source)
+            && self.once(f, copy.source)
+    }
+
+
+    // The copy's source, a block local no alias has claimed whose address
+    // stays put, is read only by the copy, so its storage can be the
+    // destination's.
+    plain = (self: @Self, f: Func, copy: Move) bool {
+        is_block(slot_ty(f, copy.out)) && copy.out != copy.source
+            && copy.source >= f.parameters
+            && copy.out >= f.parameters
+            && self.target.get(copy.source).value_or(1) == 0
+            && !self.named.get(copy.source).value_or(true)
+            && !self.escaped.get(copy.source).value_or(true)
+            && self.reads.get(copy.source).value_or(0) == 1
+    }
+
+    // Nothing runs between a copy into the returned slot and the return.
+    returned = (self: @Self, f: Func, b: usize, k: usize, copy: Move) bool {
+        f.blocks.get(b).match({
+            Ok(block) => k + 1 == block.code.len && self.plain(f, copy)
+                && self.target.get(copy.out).value_or(1) == 0
+                && !self.named.get(copy.out).value_or(true)
+                && !self.addressed.get(copy.out).value_or(true)
+                && self.reads.get(copy.out).value_or(0) == 1
+                && self.writes.get(copy.out).value_or(0) == 1
+                && returns(f, block.exit, copy.out),
+            None      => false,
+        })
+    }
+
+
+    // A source mentioned only in the copy's block, up to the copy, is built
+    // in the destination if nothing in between touches the destination.
+    into = (self: @Self, f: Func, b: usize, k: usize, copy: Move) bool {
+        dest = self.root(copy.out);
+        self.plain(f, copy)
+            && !self.scattered.get(copy.source).value_or(true)
+            && self.home.get(copy.source).value_or(0) == b + 1
+            && self.latest.get(copy.source).value_or(0) == k
+            && !self.escaped.get(dest).value_or(true)
+            && self.untouched(
+                f,
+                b,
+                self.earliest.get(copy.source).value_or(0),
+                k,
+                dest
+            )
+    }
+
+    untouched = (self: @Self, f: Func, b: usize, from: usize, to: usize,
+                 dest: usize) bool {
+        clear ::= true;
+        f.blocks.get(b).match({
+            Ok(block) => Range(from, to).loop((k) {
+                block.code.get(k).match({
+                    Ok(instruction) => mentions(instruction, (slot, read) {
+                        self.touches(slot, dest).then(() { clear = false; });
+                    }),
+                    None            => (),
+                });
+            }),
+            None      => { clear = false; },
+        });
+        clear
+    }
+
+    touches = (self: @Self, slot: usize, dest: usize) bool {
+        at = self.origin.get(slot).value_or(0);
+        self.root(slot) == dest || (at != 0 && self.root(at - 1) == dest)
+    }
+
+    root = (self: @Self, slot: usize) usize {
+        to = self.target.get(slot).value_or(0);
+        (to == 0).match({ true => slot, false => self.root(to - 1) })
+    }
+
+    rename = (self :: @Self, from: usize, to: usize) Res<(), AllocError> {
+        self.target.set(from, to + 1);
+        self.named.set(to, true);
+        self.out.fmt("#define v{} v{}\n", from, to)
+    }
+
+    places = (self :: @Self, function: Func) {
+        function.blocks.loop((h, b, block) {
+            block.code.loop((g, k, instruction) {
+                mentions(
+                    instruction,
+                    (slot, read) { self.mention(slot, read, b, k); }
+                );
+            });
+            block.exit.match({
+                Return(slot)   => self.mention(slot, true, b, block.code.len),
+                Branch(branch) => self.mention(
+                    branch.value,
+                    true,
+                    b,
+                    block.code.len
+                ),
+                _              => (),
+            });
+        });
+    }
+
+    mention = (self :: @Self, slot: usize, read: bool, b: usize, k: usize) {
+        read.then(() {
+            self.reads.set(slot, self.reads.get(slot).value_or(0) + 1);
+        });
+        self.mark(slot, b, k);
+        at = self.origin.get(slot).value_or(0);
+        (at != 0).then(() { self.mark(at - 1, b, k); });
+    }
+
+    mark = (self :: @Self, slot: usize, b: usize, k: usize) {
+        (self.home.get(slot).value_or(0) == 0).match({
+            true  => {
+                self.home.set(slot, b + 1);
+                self.earliest.set(slot, k);
+                self.latest.set(slot, k);
+            },
+            false => (self.home.get(slot).value_or(0) == b + 1).match({
+                true  => { self.latest.set(slot, k); },
+                false => { self.scattered.set(slot, true); },
+            }),
+        });
+    }
+
+    once = (self: @Self, f: Func, slot: usize) bool {
+        self.writes.get(slot).value_or(2)
+            + (slot < f.parameters).match({ true => 1, false => 0 })
+            <= 1
+    }
+
+    // No address of the slot is stored through or leaves loads.
+    fixed = (self: @Self, slot: usize) bool {
+        !self.escaped.get(slot).value_or(true)
+            && !self.stored.get(slot).value_or(true)
+    }
+
+    // The typedef for an aggregate class, once per layout.
+    need = (self :: @Self, ty: Scalar) Res<(), AllocError> {
+        ty.match({
+            Block(layout) => {
+                known ::= false;
+                self.layouts.loop((seen) {
+                    (seen.size == layout.size && seen.align == layout.align)
+                        .then(() { known = true; });
+                });
+                known.match({
+                    true  => Ok,
+                    false => {
+                        self.layouts.add(layout).try();
+                        // One field per line, as gen_c spells records, so
+                        // tools/ct can lay out the parameters it audits.
+                        self.head.fmt(
+                            "struct zb{}_{} {{\n    unsigned char b[{}];\n}} __attribute__((aligned({})));\ntypedef struct zb{}_{} zb{}_{};\n",
+                            layout.size,
+                            layout.align,
+                            at_least_one(layout.size),
+                            at_least_one(layout.align),
+                            layout.size,
+                            layout.align,
+                            layout.size,
+                            layout.align
+                        )
+                    },
+                })
+            },
+            _             => Ok,
+        })
     }
 
     function = (self :: @Self, index: usize, function: Func) Res<(), AllocError> {
         self.signature(index, function).try();
         self.out.add(" {\n").try();
-        self.slot_uses(function).try();
-        Range(function.parameters, function.slots.len).loop((i) {
-            self.declared.get(i).value_or(false).then(() {
-                self.out.fmt("  int32_t v{};\n", i).try();
+        // A borrowed parameter's reads go through its pointer.
+        Range(0, function.parameters).loop((i) {
+            local    = param_name(function, i);
+            borrowed = self.by_pointer(index, i);
+            (local.len > 0).match({
+                true  => borrowed.match({
+                    true  => self.out.fmt("#define v{} (*{})\n", i, local),
+                    false => self.out.fmt("#define v{} {}\n", i, local),
+                }),
+                false => borrowed.match({
+                    true  => self.out.fmt("#define v{} (*zp{})\n", i, i),
+                    false => Ok,
+                }),
+            }).try();
+        });
+        self.survey(function).try();
+        self.copies = 0;
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    Copy(copy) => self.same(function, copy).then(() {
+                        self.aliased.set(copy.out, true);
+                        self.target.set(copy.out, copy.source + 1);
+                        self.named.set(copy.source, true);
+                        self.out.fmt("#define v{} v{}\n", copy.out, copy.source)
+                            .try();
+                    }),
+                    _          => (),
+                });
             });
         });
-        Range(0, function.parameters).loop((i) {
-            (!self.read.get(i).value_or(false)).then(() {
-                self.out.fmt("  (void)v{};\n", i).try();
+        self.places(function);
+        function.blocks.loop((h, b, block) {
+            block.code.loop((g, k, instruction) {
+                instruction.match({
+                    Copy(copy) => (self.returned(function, b, k, copy)
+                        || self.into(function, b, k, copy)).then(() {
+                        self.rename(copy.source, copy.out).try();
+                    }),
+                    _          => (),
+                });
             });
+        });
+        // A sanitizer pads every addressable local and re-marks it at every
+        // label, so under one the block slots share a single frame instead.
+        frame ::= false;
+        Range(function.parameters, function.slots.len).loop((i) {
+            ty = slot_ty(function, i);
+            self.need(ty).try();
+            self.framed(function, i).then(() {
+                (!frame).then(() {
+                    self.out.add("#ifdef ZR_ASAN\n  ZR_U struct {").try();
+                });
+                frame = true;
+                self.out.add(" ").try();
+                self.out.ctype(ty).try();
+                self.out.fmt(" v{};", i).try();
+            });
+        });
+        frame.then(() {
+            self.out.add(
+                " } *const zr_fr = __builtin_alloca_with_align(sizeof *zr_fr, 8 * __alignof__(*zr_fr));\n"
+            ).try();
+            Range(function.parameters, function.slots.len).loop((i) {
+                self.framed(function, i).then(() {
+                    self.out.fmt("#define v{} zr_fr->v{}\n", i, i).try();
+                });
+            });
+            self.out.add("#else\n").try();
+            Range(function.parameters, function.slots.len).loop((i) {
+                self.framed(function, i).then(() {
+                    self.out.add("  ZR_U ").try();
+                    self.out.ctype(slot_ty(function, i)).try();
+                    self.out.fmt(" v{};\n", i).try();
+                });
+            });
+            self.out.add("#endif\n").try();
+        });
+        // The verifier has proved every read follows a write, so zeroing is
+        // only a hint: an optimizer folds the zeroed scalars well, while an
+        // unoptimized build would store each one on every call (ZR_Z).
+        Range(function.parameters, function.slots.len).loop((i) {
+            (self.target.get(i).value_or(0) == 0 && !self.framed(function, i))
+                .then(() {
+                    self.out.add("  ZR_U ").try();
+                    self.out.ctype(slot_ty(function, i)).try();
+                    self.out.fmt(" v{} ZR_Z;\n", i).try();
+                });
         });
         self.labels.clear();
         function.blocks.loop((_) { self.labels.add(false).try(); });
@@ -114,51 +677,28 @@ C = {
         });
         function.blocks.loop((h, block_id, block) {
             self.labels.get(block_id).value_or(false).then(() {
-                self.out.fmt("b{}:\n", block_id).try();
+                self.out.fmt("b{}:;\n", block_id).try();
             });
             block.code.loop(
-                (instruction) { self.instruction(instruction).try(); }
+                (instruction) { self.instruction(function, instruction).try(); }
             );
             self.terminator(block.exit, block_id + 1).try();
         });
-        self.out.add("}\n")
-    }
-
-    slot_uses = (self :: @Self, function: Func) Res<(), AllocError> {
-        self.read.clear();
-        self.declared.clear();
-        function.slots.loop((_) {
-            self.read.add(false).try();
-            self.declared.add(false).try();
+        self.out.add("}\n").try();
+        Range(0, function.parameters).loop((i) {
+            (self.by_pointer(index, i) || param_name(function, i).len > 0).then(() {
+                self.out.fmt("#undef v{}\n", i).try();
+            });
         });
-        function.blocks.loop((block) {
-            block.code.loop((instruction) {
-                self.operands.clear();
-                reads(instruction, self.operands).try();
-                self.operands.loop((slot) {
-                    self.read.set(slot, true);
-                    self.declared.set(slot, true);
-                });
-            });
-            exit_read(block.exit).when_ok((slot) {
-                self.read.set(slot, true);
-                self.declared.set(slot, true);
-            });
+        Range(function.parameters, function.slots.len).loop((i) {
+            (self.target.get(i).value_or(0) != 0 || self.framed(function, i))
+                .then(() { self.out.fmt("#undef v{}\n", i).try(); });
         });
         Ok
     }
 
-    unread = (self :: @Self, slot: usize) bool {
-        !self.read.get(slot).value_or(false)
-    }
-
-    // The left side for a value written to `slot`: an assignment, or a
-    // discarded expression statement when nothing reads the slot.
-    target = (self :: @Self, slot: usize) Res<(), AllocError> {
-        self.read.get(slot).value_or(false).match({
-            true  => self.out.fmt("  v{} = ", slot),
-            false => self.out.add("  (void)"),
-        })
+    framed = (self: @Self, f: Func, slot: usize) bool {
+        self.target.get(slot).value_or(0) == 0 && is_block(slot_ty(f, slot))
     }
 
     // `next` is the block rendered after this one; a jump to it falls through.
@@ -191,135 +731,690 @@ C = {
                 }),
             }),
             Trap(fault)    => {
-                self.out.add("  zg_ir_trap(").try();
-                self.position(fault.span).try();
-                self.out.fmt(", \"{}\");\n", trap_message(fault.what))
+                self.out.add("  ").try();
+                self.trap(fault.span, fault.what)
             },
         })
     }
 
-    instruction = (self :: @Self, instruction: Instruction) Res<(), AllocError> {
+    // Zen's trap report: `file:line:col: trap: message`.
+    trap = (self :: @Self, span: Span, what: TrapKind) Res<(), AllocError> {
+        self.location.clear();
+        self.location.fmt(
+            "{}:{}:{}: trap: {}\n",
+            span.file,
+            span.start.line,
+            span.start.col,
+            trap_message(what)
+        ).try();
+        self.out.add("zr_trap(").try();
+        self.out.bytes(self.location.view()).try();
+        self.out.fmt(", {});\n", self.location.view().len)
+    }
+
+    instruction = (self :: @Self, f: Func, instruction: Instruction)
+                  Res<(), AllocError> {
         instruction.match({
-            Constant(value)    => self.unread(value.out).match({
-                true  => Ok,
-                false => self.out.fmt("  v{} = {};\n", value.out, value.value),
-            }),
-            Copy(value)        => self.unread(value.out).match({
+            Constant(value)     => self.constant(f, value.out, value.value),
+            Copy(value)         => (self.root(value.source)
+                == self.root(value.out)).match({
                 true  => Ok,
                 false => self.out.fmt("  v{} = v{};\n", value.out, value.source),
             }),
-            UnaryValue(value)  => self.unary(value),
-            BinaryValue(value) => self.binary(value),
-            Invoke(value)      => self.call(value),
-            PrintValue(value)  => self.print(value),
-            Text(text)         => {
-                self.out.add("  fwrite(").try();
+            UnaryValue(value)   => self.unary(f, value),
+            BinaryValue(value)  => self.binary(f, value),
+            Invoke(value)       => self.invoke(f, value),
+            PrintValue(value)   => self.print(f, value),
+            Text(text)          => {
+                self.out.add("  zr_text(1, ").try();
                 self.out.bytes(text).try();
-                self.out.fmt(", 1, {}, stdout);\n", text.len)
+                self.out.fmt(", {});\n", text.len)
             },
-            // Outside `supports`; the driver refuses it before rendering.
-            _                  => self.out.add(OUTSIDE),
-        })
-    }
-
-    position = (self :: @Self, span: Span) Res<(), AllocError> {
-        self.location.clear();
-        self.location.fmt(
-            "{}:{}:{}: ",
-            span.file,
-            span.start.line,
-            span.start.col
-        ).try();
-        self.out.bytes(self.location.view())
-    }
-
-    unary = (self :: @Self, value: Unary) Res<(), AllocError> {
-        value.op.match({
-            Not => self.unread(value.out).match({
-                true  => Ok,
-                false => self.out.fmt("  v{} = !v{};\n", value.out, value.input),
+            Cast(value)         => self.convert(f, value),
+            AddressOf(value)    => self.out.fmt(
+                "  v{} = (uint64_t)(uintptr_t)&v{};\n",
+                value.out,
+                value.slot
+            ),
+            LoadValue(value)    => is_block(slot_ty(f, value.out)).match({
+                true  => self.out.fmt(
+                    "  memcpy(&v{}, (const void *)(uintptr_t)(v{} + {}u), sizeof v{});\n",
+                    value.out,
+                    value.base,
+                    value.offset,
+                    value.out
+                ),
+                false => {
+                    self.out.fmt("  v{} = *(const za_", value.out).try();
+                    ctype(self.out, slot_ty(f, value.out)).try();
+                    self.out.fmt(
+                        " *)(uintptr_t)(v{} + {}u);\n",
+                        value.base,
+                        value.offset
+                    )
+                },
             }),
-            Neg => {
-                self.target(value.out).try();
-                self.out.fmt("zg_ir_i32(-(int64_t)v{}, ", value.input).try();
-                self.position(value.span).try();
-                self.out.add(");\n")
+            StoreValue(value)   => is_block(slot_ty(f, value.value)).match({
+                true  => self.out.fmt(
+                    "  memcpy((void *)(uintptr_t)(v{} + {}u), &v{}, sizeof v{});\n",
+                    value.base,
+                    value.offset,
+                    value.value,
+                    value.value
+                ),
+                false => {
+                    self.out.add("  *(za_").try();
+                    ctype(self.out, slot_ty(f, value.value)).try();
+                    self.out.fmt(
+                        " *)(uintptr_t)(v{} + {}u) = v{};\n",
+                        value.base,
+                        value.offset,
+                        value.value
+                    )
+                },
+            }),
+            CopyBytes(value)    => self.out.fmt(
+                "  memmove((void *)(uintptr_t)v{}, (const void *)(uintptr_t)v{}, (size_t)v{});\n",
+                value.dest,
+                value.source,
+                value.bytes
+            ),
+            Bytes(value)        => {
+                self.out.fmt("  v{} = (uint64_t)(uintptr_t)", value.out).try();
+                self.out.bytes(value.bytes).try();
+                self.out.add(";\n")
             },
+            WriteOut(value)     => self.out.fmt(
+                "  zr_write({}, v{}, v{});\n",
+                descriptor(value.stream),
+                value.data,
+                value.len
+            ),
+            System(value)       => self.system(f, value),
+            Startup(value)      => self.startup(f, value),
+            MapPages(value)     => self.out.fmt(
+                "  v{} = zr_map(v{});\n",
+                value.out,
+                value.bytes
+            ),
+            UnmapPages(slot)    => self.out.fmt("  zr_unmap(v{});\n", slot),
+            SysConst(value)     => self.sys_const(f, value),
+            Flush               => self.out.add("  zr_flush();\n"),
+            Machine(_)          => self.out.add("  __builtin_trap();\n"),
+            AtomicLoad(value)   => {
+                self.out.fmt("  v{} = __atomic_load_n((", value.out).try();
+                self.out.ctype(slot_ty(f, value.out)).try();
+                self.out.fmt(
+                    " *)(uintptr_t)(v{} + {}u), __ATOMIC_SEQ_CST);\n",
+                    value.base,
+                    value.offset
+                )
+            },
+            AtomicStore(value)  => {
+                self.out.add("  __atomic_store_n((").try();
+                self.out.ctype(slot_ty(f, value.value)).try();
+                self.out.fmt(
+                    " *)(uintptr_t)(v{} + {}u), v{}, __ATOMIC_SEQ_CST);\n",
+                    value.base,
+                    value.offset,
+                    value.value
+                )
+            },
+            AtomicUpdate(value) => {
+                op = value.op.match({
+                    Swap => "__atomic_exchange_n",
+                    Add  => "__atomic_fetch_add",
+                });
+                self.out.fmt("  v{} = {}((", value.out, op).try();
+                self.out.ctype(slot_ty(f, value.out)).try();
+                self.out.fmt(
+                    " *)(uintptr_t)v{}, v{}, __ATOMIC_SEQ_CST);\n",
+                    value.base,
+                    value.value
+                )
+            },
+            CompareSwap(value)  => {
+                ty = slot_ty(f, value.out);
+                self.out.add("  {\n    ").try();
+                self.out.ctype(ty).try();
+                self.out.fmt(
+                    " zr_e = v{};\n    __atomic_compare_exchange_n((",
+                    value.expected
+                ).try();
+                self.out.ctype(ty).try();
+                self.out.fmt(
+                    " *)(uintptr_t)v{}, &zr_e, v{}, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);\n    v{} = zr_e;\n  }}\n",
+                    value.base,
+                    value.desired,
+                    value.out
+                )
+            },
+            CodeAddress(value)  => {
+                self.out.fmt("  v{} = (uint64_t)(uintptr_t)&", value.out).try();
+                self.callee_name(value.function).try();
+                self.out.add(";\n")
+            },
+            InvokeAt(value)     => self.indirect(f, value),
+            // Outside `supports`; the driver refuses it before rendering.
+            _                   => self.out.add(OUTSIDE),
         })
     }
 
-    binary = (self :: @Self, value: Binary) Res<(), AllocError> {
-        self.target(value.out).try();
-        value.op.match({
-            Add          => self.out.fmt(
-                "zg_ir_i32((int64_t)v{} + v{}",
-                value.left,
-                value.right
-            ),
-            Sub          => self.out.fmt(
-                "zg_ir_i32((int64_t)v{} - v{}",
-                value.left,
-                value.right
-            ),
-            Mul          => self.out.fmt(
-                "zg_ir_i32((int64_t)v{} * v{}",
-                value.left,
-                value.right
-            ),
-            Div          => self.out.fmt(
-                "zg_ir_div(v{}, v{}",
-                value.left,
-                value.right
-            ),
-            Rem          => self.out.fmt(
-                "zg_ir_rem(v{}, v{}",
-                value.left,
-                value.right
-            ),
-            Equal        => self.out.fmt("v{} == v{}", value.left, value.right),
-            NotEqual     => self.out.fmt("v{} != v{}", value.left, value.right),
-            Less         => self.out.fmt("v{} < v{}", value.left, value.right),
-            LessEqual    => self.out.fmt("v{} <= v{}", value.left, value.right),
-            Greater      => self.out.fmt("v{} > v{}", value.left, value.right),
-            GreaterEqual => self.out.fmt("v{} >= v{}", value.left, value.right),
-            _            => self.out.add("zg_outside("),
-        }).try();
-        checked = value.op.match({ Add => true, Sub => true, Mul => true, Div => true, Rem => true, _ => false });
-        checked.then(() {
-            self.out.add(", ").try();
-            self.position(value.span).try();
-            self.out.add(')').try();
+    // A borrowed argument travels as its slot's address. A slot whose
+    // address has left the frame, or that the call also writes, is copied
+    // first, so the callee still reads the value it had at the call.
+    invoke = (self :: @Self, f: Func, call: Invocation) Res<(), AllocError> {
+        first = self.copies;
+        call.args.loop((h, i, slot) {
+            self.copied(call, i, slot).then(() {
+                self.out.add("  ZR_U ").try();
+                self.out.ctype(slot_ty(f, slot)).try();
+                self.out.fmt(" zc{} = v{};\n", self.copies, slot).try();
+                self.copies = self.copies + 1;
+            });
         });
-        self.out.add(";\n")
-    }
-
-    call = (self :: @Self, call: Invocation) Res<(), AllocError> {
-        self.target(call.out).try();
-        self.out.fmt("zg_ir_f{}(", call.function).try();
-        call.args.loop((h, index, slot) {
-            (index > 0).then(() { self.out.add(", ").try(); });
-            self.out.fmt("v{}", slot).try();
+        copy ::= first;
+        self.out.fmt("  v{} = ", call.out).try();
+        self.callee_name(call.function).try();
+        self.out.add("(").try();
+        call.args.loop((h, i, slot) {
+            (i > 0).then(() { self.out.add(", ").try(); });
+            self.copied(call, i, slot).match({
+                true  => {
+                    self.out.fmt("&zc{}", copy).try();
+                    copy = copy + 1;
+                },
+                false => self.by_pointer(call.function, i).match({
+                    true  => self.out.fmt("&v{}", slot),
+                    false => self.out.fmt("v{}", slot),
+                }).try(),
+            });
         });
         self.out.add(");\n")
     }
 
-    print = (self :: @Self, value: Print) Res<(), AllocError> {
-        value.ty.match({
-            I32  => self.out.fmt("  printf(\"%\" PRId32, v{});\n", value.value),
-            Bool => self.out.fmt(
-                "  fputs(v{} != 0 ? \"true\" : \"false\", stdout);\n",
-                value.value
-            ),
-            Unit => self.out.add("  fputs(\"()\", stdout);\n"),
-            _    => self.out.add(OUTSIDE),
+    copied = (self: @Self, call: Invocation, i: usize, slot: usize) bool {
+        self.by_pointer(call.function, i)
+            && (self.escaped.get(self.root(slot)).value_or(true)
+                || self.root(slot) == self.root(call.out))
+    }
+
+    args = (self :: @Self, args: Vec<usize>) Res<(), AllocError> {
+        args.loop((h, index, slot) {
+            (index > 0).then(() { self.out.add(", ").try(); });
+            self.out.fmt("v{}", slot).try();
+        });
+        Ok
+    }
+
+    // `(T)` for the class of `slot`, after `  v<slot> = `.
+    assign = (self :: @Self, f: Func, slot: usize) Res<(), AllocError> {
+        self.out.fmt("  v{} = (", slot).try();
+        self.out.ctype(slot_ty(f, slot)).try();
+        self.out.add(')')
+    }
+
+    constant = (self :: @Self, f: Func, out: usize, value: i64)
+               Res<(), AllocError> {
+        self.assign(f, out).try();
+        float(slot_ty(f, out)).match({
+            true  => {
+                self.out.add("zr_f64((uint64_t)").try();
+                self.out.literal(value).try();
+                self.out.add(");\n")
+            },
+            false => {
+                self.out.literal(value).try();
+                self.out.add(";\n")
+            },
         })
     }
+
+    unary = (self :: @Self, f: Func, value: Unary) Res<(), AllocError> {
+        ty = slot_ty(f, value.input);
+        value.op.match({
+            Not => integer(ty).match({
+                true  => {
+                    self.assign(f, value.out).try();
+                    self.out.fmt("~v{};\n", value.input)
+                },
+                false => self.out.fmt("  v{} = !v{};\n", value.out, value.input),
+            }),
+            Neg => float(ty).match({
+                true  => self.out.fmt("  v{} = -v{};\n", value.out, value.input),
+                false => {
+                    self.out.fmt(
+                        "  if (__builtin_sub_overflow(0, v{}, &v{})) ",
+                        value.input,
+                        value.out
+                    ).try();
+                    self.trap(value.span, TrapKind.Overflow)
+                },
+            }),
+        })
+    }
+
+    binary = (self :: @Self, f: Func, value: Binary) Res<(), AllocError> {
+        ty = slot_ty(f, value.left);
+        value.op.match({
+            Add          => self.checked(ty, value, "add", "+"),
+            Sub          => self.checked(ty, value, "sub", "-"),
+            Mul          => self.checked(ty, value, "mul", "*"),
+            Div          => self.divide(f, ty, value, false),
+            Rem          => self.divide(f, ty, value, true),
+            Equal        => self.compare(ty, value, "=="),
+            NotEqual     => self.compare(ty, value, "!="),
+            Less         => self.compare(ty, value, "<"),
+            LessEqual    => self.compare(ty, value, "<="),
+            Greater      => self.compare(ty, value, ">"),
+            GreaterEqual => self.compare(ty, value, ">="),
+            WrapAdd      => self.wrap(f, ty, value, "+"),
+            WrapSub      => self.wrap(f, ty, value, "-"),
+            WrapMul      => self.wrap(f, ty, value, "*"),
+            And          => self.bitwise(f, value, "&"),
+            Or           => self.bitwise(f, value, "|"),
+            Xor          => self.bitwise(f, value, "^"),
+            Shl          => self.shift(f, ty, value, "zr_shl"),
+            Shr          => self.shift(f, ty, value, "zr_shr"),
+            Rotr         => self.shift(f, ty, value, "zr_rotr"),
+        })
+    }
+
+    checked = (self :: @Self, ty: Scalar, value: Binary, name: str, op: str)
+              Res<(), AllocError> {
+        float(ty).match({
+            true  => self.out.fmt(
+                "  v{} = v{} {} v{};\n",
+                value.out,
+                value.left,
+                op,
+                value.right
+            ),
+            false => {
+                self.out.fmt(
+                    "  if (__builtin_{}_overflow(v{}, v{}, &v{})) ",
+                    name,
+                    value.left,
+                    value.right,
+                    value.out
+                ).try();
+                self.trap(value.span, TrapKind.Overflow)
+            },
+        })
+    }
+
+    divide = (self :: @Self, f: Func, ty: Scalar, value: Binary, rem: bool)
+             Res<(), AllocError> {
+        float(ty).match({
+            true  => rem.match({
+                true  => self.out.fmt(
+                    "  v{} = fmod(v{}, v{});\n",
+                    value.out,
+                    value.left,
+                    value.right
+                ),
+                false => self.out.fmt(
+                    "  v{} = v{} / v{};\n",
+                    value.out,
+                    value.left,
+                    value.right
+                ),
+            }),
+            false => {
+                self.out.fmt("  if (v{} == 0) ", value.right).try();
+                self.trap(value.span, TrapKind.DivideByZero).try();
+                signed(ty).then(() {
+                    self.out.fmt(
+                        "  if (v{} == {} && v{} == -1) ",
+                        value.left,
+                        min_of(ty),
+                        value.right
+                    ).try();
+                    self.trap(value.span, TrapKind.Overflow).try();
+                });
+                self.assign(f, value.out).try();
+                self.out.fmt(
+                    "(v{} {} v{});\n",
+                    value.left,
+                    rem.match({ true => "%", false => "/" }),
+                    value.right
+                )
+            },
+        })
+    }
+
+    // Unit values compare equal: there is only one.
+    compare = (self :: @Self, ty: Scalar, value: Binary, op: str)
+              Res<(), AllocError> {
+        ty.match({
+            Unit => self.out.fmt(
+                "  v{} = {};\n",
+                value.out,
+                (op == "==").match({ true => 1, false => 0 })
+            ),
+            _    => self.out.fmt(
+                "  v{} = v{} {} v{};\n",
+                value.out,
+                value.left,
+                op,
+                value.right
+            ),
+        })
+    }
+
+    // Wrapping arithmetic runs on 64-bit unsigned words, so no narrow
+    // operand is promoted to a signed int that could overflow.
+    wrap = (self :: @Self, f: Func, ty: Scalar, value: Binary, op: str)
+           Res<(), AllocError> {
+        self.assign(f, value.out).try();
+        self.out.fmt(
+            "((uint64_t)({})v{} {} (uint64_t)({})v{});\n",
+            unsigned_type(ty),
+            value.left,
+            op,
+            unsigned_type(slot_ty(f, value.right)),
+            value.right
+        )
+    }
+
+    bitwise = (self :: @Self, f: Func, value: Binary, op: str)
+              Res<(), AllocError> {
+        self.assign(f, value.out).try();
+        self.out.fmt("(v{} {} v{});\n", value.left, op, value.right)
+    }
+
+    shift = (self :: @Self, f: Func, ty: Scalar, value: Binary, helper: str)
+            Res<(), AllocError> {
+        self.assign(f, value.out).try();
+        self.out.fmt(
+            "{}((uint64_t)({})v{}, v{}, {}u);\n",
+            helper,
+            unsigned_type(ty),
+            value.left,
+            value.right,
+            width(ty) * 8
+        )
+    }
+
+    convert = (self :: @Self, f: Func, value: Convert) Res<(), AllocError> {
+        slot_ty(f, value.out).match({
+            Bool => self.out.fmt("  v{} = v{} != 0;\n", value.out, value.input),
+            _    => {
+                self.assign(f, value.out).try();
+                self.out.fmt("v{};\n", value.input)
+            },
+        })
+    }
+
+    print = (self :: @Self, f: Func, value: Print) Res<(), AllocError> {
+        fd = descriptor(value.stream);
+        value.ty.match({
+            Unit => self.out.fmt("  zr_text({}, \"()\", 2);\n", fd),
+            Bool => self.out.fmt(
+                "  zr_text({}, v{} ? \"true\" : \"false\", v{} ? 4u : 5u);\n",
+                fd,
+                value.value,
+                value.value
+            ),
+            F64  => self.out.fmt("  zr_print_f({}, v{});\n", fd, value.value),
+            _    => signed(value.ty).match({
+                true  => self.out.fmt(
+                    "  zr_print_i({}, (int64_t)v{});\n",
+                    fd,
+                    value.value
+                ),
+                false => self.out.fmt(
+                    "  zr_print_u({}, (uint64_t)v{});\n",
+                    fd,
+                    value.value
+                ),
+            }),
+        })
+    }
+
+    startup = (self :: @Self, f: Func, value: Start) Res<(), AllocError> {
+        self.assign(f, value.out).try();
+        value.value.match({
+            Argc    => self.out.add("zr_argc;\n"),
+            Argv    => self.out.add("zr_argv;\n"),
+            Envp    => self.out.add("zr_envp;\n"),
+            Globals => self.out.add("(uintptr_t)zr_globals;\n"),
+        })
+    }
+
+    sys_const = (self :: @Self, f: Func, value: SysValue) Res<(), AllocError> {
+        value.name.match({
+            PthreadThreads => {
+                self.assign(f, value.out).try();
+                self.out.add("1;\n")
+            },
+            _              => {
+                self.out.add("#if defined(__APPLE__)\n").try();
+                self.constant(
+                    f,
+                    value.out,
+                    constant_value(value.name, Platform.Darwin)
+                ).try();
+                self.out.add("#elif defined(__x86_64__)\n").try();
+                self.constant(
+                    f,
+                    value.out,
+                    constant_value(value.name, Platform.LinuxX86_64)
+                ).try();
+                self.out.add("#else\n").try();
+                self.constant(
+                    f,
+                    value.out,
+                    constant_value(value.name, Platform.LinuxArm64)
+                ).try();
+                self.out.add("#endif\n")
+            },
+        })
+    }
+
+    system = (self :: @Self, f: Func, call: SysCall) Res<(), AllocError> {
+        call.call.match({
+            ThreadSelf    => self.runtime_call(f, call, "zr_thread_self"),
+            PthreadStart  => self.runtime_call(f, call, "zr_pthread_start"),
+            PthreadJoin   => self.runtime_call(f, call, "zr_pthread_join"),
+            MutexInit     => self.runtime_call(f, call, "zr_mutex_init"),
+            MutexLock     => self.runtime_call(f, call, "zr_mutex_lock"),
+            MutexUnlock   => self.runtime_call(f, call, "zr_mutex_unlock"),
+            MutexDestroy  => self.runtime_call(f, call, "zr_mutex_destroy"),
+            CondInit      => self.runtime_call(f, call, "zr_cond_init"),
+            CondWait      => self.runtime_call(f, call, "zr_cond_wait"),
+            CondSignal    => self.runtime_call(f, call, "zr_cond_signal"),
+            CondBroadcast => self.runtime_call(f, call, "zr_cond_broadcast"),
+            CondDestroy   => self.runtime_call(f, call, "zr_cond_destroy"),
+            ThreadWordGet => self.runtime_call(f, call, "zr_word_get"),
+            ThreadWordSet => self.runtime_call(f, call, "zr_word_set"),
+            GuardedCall   => self.runtime_call(f, call, "zr_guarded"),
+            _             => self.kernel(f, call),
+        })
+    }
+
+    runtime_call = (self :: @Self, f: Func, call: SysCall, name: str)
+                   Res<(), AllocError> {
+        self.assign(f, call.out).try();
+        self.out.fmt("{}(", name).try();
+        self.word_args(call.args, "uint64_t").try();
+        self.out.add(");\n")
+    }
+
+    word_args = (self :: @Self, args: Vec<usize>, cast: str)
+                Res<(), AllocError> {
+        args.loop((h, index, slot) {
+            (index > 0).then(() { self.out.add(", ").try(); });
+            self.out.fmt("({})v{}", cast, slot).try();
+        });
+        Ok
+    }
+
+    // A kernel call in the -errno convention: libc's `syscall` on Linux,
+    // the libSystem symbol the asm backend calls on macOS.
+    kernel = (self :: @Self, f: Func, call: SysCall) Res<(), AllocError> {
+        self.out.add("#if defined(__APPLE__)\n").try();
+        self.darwin(f, call).try();
+        self.out.add("#elif defined(__x86_64__)\n").try();
+        self.linux(f, call, linux_x86_64(call.call)).try();
+        self.out.add("#else\n").try();
+        self.linux(f, call, linux_arm64(call.call)).try();
+        self.out.add("#endif\n")
+    }
+
+    linux = (self :: @Self, f: Func, call: SysCall, number: Res<usize>)
+            Res<(), AllocError> {
+        self.assign(f, call.out).try();
+        number.match({
+            Ok(n) => {
+                self.out.fmt("zr_lerr(syscall({}", n).try();
+                call.args.loop(
+                    (slot) { self.out.fmt(", (long)v{}", slot).try(); }
+                );
+                self.out.add("));\n")
+            },
+            None  => self.out.add("-(int64_t)ENOSYS;\n"),
+        })
+    }
+
+    darwin = (self :: @Self, f: Func, call: SysCall) Res<(), AllocError> {
+        self.assign(f, call.out).try();
+        darwin_symbol(call.call).match({
+            Ok(name) => {
+                self.declare(call, name).try();
+                darwin_result(call.call).match({
+                    Errno    => self.out.add("zr_derr((int64_t)"),
+                    Returned => self.out.add("-(int64_t)"),
+                    Handle   => self.out.add("(int64_t)"),
+                }).try();
+                self.out.fmt("zr_d_{}(", name).try();
+                self.word_args(call.args, "uint64_t").try();
+                darwin_result(call.call).match({
+                    Errno => self.out.add("));\n"),
+                    _     => self.out.add(");\n"),
+                })
+            },
+            None     => self.out.add("-(int64_t)ENOSYS;\n"),
+        })
+    }
+
+    // One declaration per libSystem symbol, named through an asm label so
+    // it cannot clash with the system headers' prototypes. `openat` and
+    // `ioctl` are variadic, which arm64 macOS passes on the stack.
+    declare = (self :: @Self, call: SysCall, name: str) Res<(), AllocError> {
+        known ::= false;
+        self.symbols.loop((seen) { seen.eq(name).then(() { known = true; }); });
+        known.match({
+            true  => Ok,
+            false => {
+                self.symbols.add(name).try();
+                wide  = call.call.match({
+                    Read => true, Write => true, Mmap => true, Getcwd => true,
+                    Sysconf => true, _ => false,
+                });
+                fixed = call.call.match({
+                    Openat => 3,
+                    Ioctl  => 2,
+                    _      => call.args.len,
+                });
+                result :: str = wide.match({ true => "int64_t", false => "int" });
+                self.head.fmt(
+                    "#if defined(__APPLE__)\nextern {} zr_d_{}(",
+                    result,
+                    name
+                ).try();
+                (fixed == 0).then(() { self.head.add("void").try(); });
+                Range(0, fixed).loop((i) {
+                    (i > 0).then(() { self.head.add(", ").try(); });
+                    self.head.add("uint64_t").try();
+                });
+                (fixed < call.args.len).then(
+                    () { self.head.add(", ...").try(); }
+                );
+                self.head.fmt(") __asm__(\"_{}\");\n#endif\n", name)
+            },
+        })
+    }
+
+    indirect = (self :: @Self, f: Func, call: IndirectCall)
+               Res<(), AllocError> {
+        self.out.fmt("  v{} = ((", call.out).try();
+        self.out.ctype(slot_ty(f, call.out)).try();
+        self.out.add(" (*)(").try();
+        (call.args.len == 0).then(() { self.out.add("void").try(); });
+        call.args.loop((h, index, slot) {
+            (index > 0).then(() { self.out.add(", ").try(); });
+            self.out.ctype(slot_ty(f, slot)).try();
+        });
+        self.out.fmt("))(uintptr_t)v{})(", call.target).try();
+        self.args(call.args).try();
+        self.out.add(");\n")
+    }
+}
+
+slot_ty = (f: Func, slot: usize) Scalar {
+    f.slots.get(slot).value_or(Scalar.Unit)
+}
+
+is_block = (ty: Scalar) bool { ty.match({ Block(_) => true, _ => false }) }
+
+// Larger than the two words a C ABI passes in registers.
+large = (ty: Scalar) bool { ty.match({ Block(l) => l.size > 16, _ => false }) }
+
+at_least_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }
+
+descriptor = (stream: Stream) usize {
+    stream.match({ Out => 1, Err => 2 })
+}
+
+ctype = (out :: String, ty: Scalar) Res<(), AllocError> {
+    ty.match({
+        Block(l) => out.fmt("zb{}_{}", l.size, l.align),
+        I32      => out.add("int32_t"),
+        I8       => out.add("int8_t"),
+        I16      => out.add("int16_t"),
+        I64      => out.add("int64_t"),
+        U16      => out.add("uint16_t"),
+        U32      => out.add("uint32_t"),
+        U64      => out.add("uint64_t"),
+        Ptr      => out.add("uint64_t"),
+        F64      => out.add("double"),
+        _        => out.add("uint8_t"),
+    })
+}
+
+unsigned_type = (ty: Scalar) str {
+    w = width(ty);
+    (w == 1).match({
+        true  => "uint8_t",
+        false => (w == 2).match({
+            true  => "uint16_t",
+            false => (w == 4).match({ true => "uint32_t", false => "uint64_t" }),
+        }),
+    })
+}
+
+min_of = (ty: Scalar) str {
+    ty.match({
+        I8  => "INT8_MIN",
+        I16 => "INT16_MIN",
+        I32 => "INT32_MIN",
+        _   => "INT64_MIN",
+    })
+}
+
+// An i64 literal; the most negative value has no positive spelling.
+literal = (out :: String, value: i64) Res<(), AllocError> {
+    (value < -9223372036854775807).match({
+        true  => out.add("INT64_MIN"),
+        false => out.fmt("INT64_C({})", value),
+    })
 }
 
 // Printable ASCII stays as is; every other byte, and `"`, `\` and `?`
 // (trigraphs), becomes a three-digit octal escape, which cannot run into
-// the byte after it. Explicit fwrite lengths preserve embedded NUL and
-// invalid UTF-8.
+// the byte after it. Explicit lengths preserve embedded NUL and invalid
+// UTF-8.
 bytes = (out :: String, text: str) Res<(), AllocError> {
     out.add('"').try();
     text.loop((byte) {
@@ -339,32 +1434,386 @@ bytes = (out :: String, text: str) Res<(), AllocError> {
 
 OUTSIDE: str = "  #error native-surface IR\n"
 
+// The C runtime every rendered program starts with. Helpers are static
+// inline so a program that does not use one compiles without warnings.
 runtime = (out :: String) Res<(), AllocError> {
+    out.add("#define _GNU_SOURCE\n").try();
+    out.add("#include <stdint.h>\n").try();
+    out.add("#include <inttypes.h>\n").try();
+    out.add("#include <stddef.h>\n").try();
+    out.add("#include <string.h>\n").try();
+    out.add("#include <stdio.h>\n").try();
+    out.add("#include <math.h>\n").try();
+    out.add("#include <errno.h>\n").try();
+    out.add("#include <unistd.h>\n").try();
+    out.add("#include <setjmp.h>\n").try();
+    out.add("#include <pthread.h>\n").try();
+    out.add("#include <sys/mman.h>\n").try();
+    out.add("#if defined(__linux__)\n").try();
+    out.add("#include <sys/syscall.h>\n").try();
+    out.add("#endif\n").try();
+    out.add("#define ZR_U __attribute__((unused))\n").try();
     out.add(
-        "#include <stdint.h>\n#include <inttypes.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
+        "#if defined(__SANITIZE_ADDRESS__)\n#define ZR_ASAN 1\n#elif defined(__has_feature)\n#if __has_feature(address_sanitizer)\n#define ZR_ASAN 1\n#endif\n#endif\n"
+    ).try();
+    // Scalar loads and stores through an address use these may_alias,
+    // byte-aligned spellings: a plain move even unoptimized, and still
+    // defined under strict aliasing. GCC ignores may_alias on a typedef of
+    // an already defined struct, so blocks keep memcpy.
+    ["int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "int64_t", "uint64_t", "double"].loop((name) {
+        out.fmt(
+            "typedef {} __attribute__((may_alias, aligned(1))) za_{};\n",
+            name,
+            name
+        ).try();
+    });
+    out.add(
+        "#ifdef __OPTIMIZE__\n#define ZR_Z = 0\n#else\n#define ZR_Z\n#endif\n"
+    ).try();
+    out.add("static uint64_t zr_argc, zr_argv, zr_envp;\n").try();
+    out.add(
+        "static uint64_t zr_globals[32] __attribute__((aligned(16)));\n"
+    ).try();
+    out.add("static unsigned char zr_out_buf[65536];\n").try();
+    out.add("static size_t zr_out_len;\n").try();
+    out.add(
+        "static pthread_mutex_t zr_out_lock = PTHREAD_MUTEX_INITIALIZER;\n"
+    ).try();
+    out.add("static __thread uint64_t zr_word;\n").try();
+    out.add("static __thread jmp_buf *zr_guard;\n").try();
+    out.add(
+        "static inline ZR_U void zr_write_all(int fd, const unsigned char *p, size_t n) {\n"
+    ).try();
+    out.add("  while (n > 0) {\n").try();
+    out.add("    ssize_t w = write(fd, p, n);\n").try();
+    out.add("    if (w < 0 && errno == EINTR) continue;\n").try();
+    out.add("    if (w <= 0) return;\n").try();
+    out.add("    p += w; n -= (size_t)w;\n").try();
+    out.add("  }\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U void zr_flush_held(void) { zr_write_all(1, zr_out_buf, zr_out_len); zr_out_len = 0; }\n"
     ).try();
     out.add(
-        "static inline _Noreturn void zg_ir_trap(const char *where, const char *message) {\n"
+        "static inline ZR_U void zr_flush(void) { pthread_mutex_lock(&zr_out_lock); zr_flush_held(); pthread_mutex_unlock(&zr_out_lock); }\n"
     ).try();
     out.add(
-        "  fflush(stdout); fputs(where, stderr); fputs(\"trap: \", stderr); fputs(message, stderr); fputc('\\n', stderr); exit(134);\n}\n"
+        "static inline ZR_U void zr_write(int fd, uint64_t data, uint64_t len) {\n"
     ).try();
     out.add(
-        "static inline int32_t zg_ir_i32(int64_t value, const char *where) {\n"
+        "  const unsigned char *p = (const unsigned char *)(uintptr_t)data;\n"
     ).try();
     out.add(
-        "  if (value < INT32_MIN || value > INT32_MAX) zg_ir_trap(where, \"integer overflow\");\n  return (int32_t)value;\n}\n"
+        "  if (fd != 1) { zr_write_all(fd, p, (size_t)len); return; }\n"
+    ).try();
+    out.add("  pthread_mutex_lock(&zr_out_lock);\n").try();
+    out.add(
+        "  if (zr_out_len + len > sizeof zr_out_buf) zr_flush_held();\n"
     ).try();
     out.add(
-        "static inline void zg_ir_divisor(int32_t left, int32_t right, const char *where) {\n"
+        "  if (len > sizeof zr_out_buf) zr_write_all(1, p, (size_t)len);\n"
     ).try();
     out.add(
-        "  if (right == 0) zg_ir_trap(where, \"divide by zero\");\n  if (left == INT32_MIN && right == -1) zg_ir_trap(where, \"integer overflow\");\n}\n"
+        "  else { memcpy(zr_out_buf + zr_out_len, p, (size_t)len); zr_out_len += (size_t)len; }\n"
+    ).try();
+    out.add("  pthread_mutex_unlock(&zr_out_lock);\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U void zr_text(int fd, const char *s, size_t n) { zr_write(fd, (uint64_t)(uintptr_t)s, n); }\n"
     ).try();
     out.add(
-        "static inline int32_t zg_ir_div(int32_t left, int32_t right, const char *where) { zg_ir_divisor(left, right, where); return left / right; }\n"
+        "static inline ZR_U void zr_print_i(int fd, int64_t v) { char b[32]; int n = snprintf(b, sizeof b, \"%\" PRId64, v); zr_text(fd, b, (size_t)n); }\n"
     ).try();
     out.add(
-        "static inline int32_t zg_ir_rem(int32_t left, int32_t right, const char *where) { zg_ir_divisor(left, right, where); return left % right; }\n"
-    )
+        "static inline ZR_U void zr_print_u(int fd, uint64_t v) { char b[32]; int n = snprintf(b, sizeof b, \"%\" PRIu64, v); zr_text(fd, b, (size_t)n); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U ZR_U void zr_print_f(int fd, double v) {\n"
+    ).try();
+    out.add("  char b[64];\n").try();
+    out.add("  if (isnan(v)) { zr_text(fd, \"nan\", 3); return; }\n").try();
+    out.add(
+        "  if (isinf(v)) { zr_text(fd, v < 0 ? \"-inf\" : \"inf\", v < 0 ? 4u : 3u); return; }\n"
+    ).try();
+    out.add("  int n = snprintf(b, sizeof b, \"%g\", v);\n").try();
+    out.add("  zr_text(fd, b, (size_t)n);\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {\n"
+    ).try();
+    out.add("  zr_flush();\n").try();
+    out.add("  zr_write_all(2, (const unsigned char *)where, n);\n").try();
+    out.add("  if (zr_guard) longjmp(*zr_guard, 1);\n").try();
+    out.add("  _exit(134);\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U __attribute__((noreturn)) void zr_exit(int status) {\n"
+    ).try();
+    out.add(
+        "  if (zr_globals[0]) ((void (*)(void))(uintptr_t)zr_globals[0])();\n"
+    ).try();
+    out.add("  zr_flush();\n").try();
+    out.add("  _exit(status);\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U ZR_U uint64_t zr_map(uint64_t bytes) {\n"
+    ).try();
+    out.add(
+        "  void *p = mmap(0, (size_t)bytes + 16, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n"
+    ).try();
+    out.add("  if (p == MAP_FAILED) return 0;\n").try();
+    out.add("  *(uint64_t *)p = bytes + 16;\n").try();
+    out.add("  return (uint64_t)(uintptr_t)p + 16;\n").try();
+    out.add("}\n").try();
+    out.add("static inline ZR_U ZR_U void zr_unmap(uint64_t at) {\n").try();
+    out.add("  if (!at) return;\n").try();
+    out.add("  void *p = (void *)(uintptr_t)(at - 16);\n").try();
+    out.add("  munmap(p, (size_t)*(uint64_t *)p);\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U int64_t zr_lerr(long r) { return r == -1 ? -(int64_t)errno : (int64_t)r; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_derr(int64_t r) { return r == -1 ? -(int64_t)errno : r; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U double zr_f64(uint64_t bits) { double d; memcpy(&d, &bits, sizeof d); return d; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U uint64_t zr_shl(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a << c; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U uint64_t zr_shr(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a >> c; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U uint64_t zr_rotr(uint64_t a, uint64_t c, unsigned bits) {\n"
+    ).try();
+    out.add("  c %= bits;\n").try();
+    out.add("  if (c == 0) return a;\n").try();
+    out.add("  return (a >> c) | (a << (bits - c));\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U ZR_U void *zr_thread_main(void *block) {\n"
+    ).try();
+    out.add("  uint64_t *w = block;\n").try();
+    out.add("  ((void (*)(uint64_t))(uintptr_t)w[1])(w[2]);\n").try();
+    out.add("  return 0;\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U int64_t zr_thread_self(void) { pthread_t t = pthread_self(); uint64_t w = 0; memcpy(&w, &t, sizeof t); return (int64_t)w; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U ZR_U int64_t zr_pthread_start(uint64_t block) {\n"
+    ).try();
+    out.add("  pthread_t t;\n").try();
+    out.add(
+        "  int r = pthread_create(&t, 0, zr_thread_main, (void *)(uintptr_t)block);\n"
+    ).try();
+    out.add("  if (r) return -(int64_t)r;\n").try();
+    out.add(
+        "  memcpy((unsigned char *)(uintptr_t)block + 32, &t, sizeof t);\n"
+    ).try();
+    out.add("  return 0;\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U int64_t zr_pthread_join(uint64_t thread, uint64_t result) {\n"
+    ).try();
+    out.add("  pthread_t t; memcpy(&t, &thread, sizeof t);\n").try();
+    out.add(
+        "  return -(int64_t)pthread_join(t, (void **)(uintptr_t)result);\n"
+    ).try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U int64_t zr_mutex_init(uint64_t m, uint64_t a) { return -(int64_t)pthread_mutex_init((pthread_mutex_t *)(uintptr_t)m, (const pthread_mutexattr_t *)(uintptr_t)a); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_mutex_lock(uint64_t m) { return -(int64_t)pthread_mutex_lock((pthread_mutex_t *)(uintptr_t)m); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_mutex_unlock(uint64_t m) { return -(int64_t)pthread_mutex_unlock((pthread_mutex_t *)(uintptr_t)m); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_mutex_destroy(uint64_t m) { return -(int64_t)pthread_mutex_destroy((pthread_mutex_t *)(uintptr_t)m); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_cond_init(uint64_t c, uint64_t a) { return -(int64_t)pthread_cond_init((pthread_cond_t *)(uintptr_t)c, (const pthread_condattr_t *)(uintptr_t)a); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_cond_wait(uint64_t c, uint64_t m) { return -(int64_t)pthread_cond_wait((pthread_cond_t *)(uintptr_t)c, (pthread_mutex_t *)(uintptr_t)m); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_cond_signal(uint64_t c) { return -(int64_t)pthread_cond_signal((pthread_cond_t *)(uintptr_t)c); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_cond_broadcast(uint64_t c) { return -(int64_t)pthread_cond_broadcast((pthread_cond_t *)(uintptr_t)c); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_cond_destroy(uint64_t c) { return -(int64_t)pthread_cond_destroy((pthread_cond_t *)(uintptr_t)c); }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_word_get(void) { return (int64_t)zr_word; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_word_set(uint64_t value) { zr_word = value; return 0; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U int64_t zr_guarded(uint64_t code, uint64_t first, uint64_t second) {\n"
+    ).try();
+    out.add("  jmp_buf here;\n").try();
+    out.add("  jmp_buf *volatile outer = zr_guard;\n").try();
+    out.add("  if (setjmp(here)) { zr_guard = outer; return 1; }\n").try();
+    out.add("  zr_guard = &here;\n").try();
+    out.add(
+        "  ((void (*)(uint64_t, uint64_t))(uintptr_t)code)(first, second);\n"
+    ).try();
+    out.add("  zr_guard = outer;\n").try();
+    out.add("  return 0;\n").try();
+    out.add("}\n").try();
+    Ok
+}
+
+// Every slot an instruction names, and whether it reads that slot.
+mentions = (instruction: Instruction, visit: (slot: usize, read: bool) ()) {
+    instruction.match({
+        Constant(v)     => visit(v.out, false),
+        Copy(v)         => {
+            visit(v.out, false);
+            visit(v.source, true);
+        },
+        UnaryValue(v)   => {
+            visit(v.out, false);
+            visit(v.input, true);
+        },
+        BinaryValue(v)  => {
+            visit(v.out, false);
+            visit(v.left, true);
+            visit(v.right, true);
+        },
+        Invoke(v)       => {
+            visit(v.out, false);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        PrintValue(v)   => visit(v.value, true),
+        Text(_)         => (),
+        Cast(v)         => {
+            visit(v.out, false);
+            visit(v.input, true);
+        },
+        AddressOf(v)    => {
+            visit(v.out, false);
+            visit(v.slot, false);
+        },
+        LoadValue(v)    => {
+            visit(v.out, false);
+            visit(v.base, true);
+        },
+        StoreValue(v)   => {
+            visit(v.base, true);
+            visit(v.value, true);
+        },
+        CopyBytes(v)    => {
+            visit(v.dest, true);
+            visit(v.source, true);
+            visit(v.bytes, true);
+        },
+        Bytes(v)        => visit(v.out, false),
+        WriteOut(v)     => {
+            visit(v.data, true);
+            visit(v.len, true);
+        },
+        System(v)       => {
+            visit(v.out, false);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        Startup(v)      => visit(v.out, false),
+        MapPages(v)     => {
+            visit(v.out, false);
+            visit(v.bytes, true);
+        },
+        UnmapPages(s)   => visit(s, true),
+        SysConst(v)     => visit(v.out, false),
+        Flush           => (),
+        Machine(v)      => {
+            v.outs.loop((slot) { visit(slot, false); });
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        Host(v)         => {
+            visit(v.out, false);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        Wait(s)         => visit(s, false),
+        AtomicLoad(v)   => {
+            visit(v.out, false);
+            visit(v.base, true);
+        },
+        AtomicStore(v)  => {
+            visit(v.base, true);
+            visit(v.value, true);
+        },
+        AtomicUpdate(v) => {
+            visit(v.out, false);
+            visit(v.base, true);
+            visit(v.value, true);
+        },
+        CompareSwap(v)  => {
+            visit(v.out, false);
+            visit(v.base, true);
+            visit(v.expected, true);
+            visit(v.desired, true);
+        },
+        CodeAddress(v)  => visit(v.out, false),
+        InvokeAt(v)     => {
+            visit(v.out, false);
+            visit(v.target, true);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+    })
+}
+
+returns = (f: Func, exit: Terminator, slot: usize) bool {
+    exit.match({
+        Return(value) => value == slot,
+        Jump(to)      => f.blocks.get(to).match({
+            Ok(next) => next.code.len == 0
+                && next.exit.match({
+                    Return(value) => value == slot,
+                    _             => false,
+                }),
+            None     => false,
+        }),
+        _             => false,
+    })
+}
+
+alike = (a: Scalar, b: Scalar) bool {
+    a.match({
+        Block(x) => b.match({
+            Block(y) => x.size == y.size && x.align == y.align,
+            _        => false,
+        }),
+        _        => class_of(a) == class_of(b),
+    })
+}
+
+class_of = (ty: Scalar) usize {
+    ty.match({
+        I32      => 0,
+        Bool     => 1,
+        Unit     => 2,
+        I8       => 3,
+        U8       => 4,
+        I16      => 5,
+        U16      => 6,
+        U32      => 7,
+        I64      => 8,
+        U64      => 9,
+        Ptr      => 10,
+        F64      => 11,
+        Block(_) => 12,
+    })
+}
+
+// The parameter's gen_c name, or "" for the renderer's own.
+param_name = (function: Func, i: usize) str {
+    function.locals.match({ Ok(names) => names.get(i).value_or(""), None => "" })
 }

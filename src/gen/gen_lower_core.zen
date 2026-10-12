@@ -67,6 +67,10 @@ Local* = { name*: str, frame*: usize, kind*: LocalKind }
 
 Expected* = { id*: ExprId, ty*: TyId }
 
+// The place a context asked one expression to be built in. Expression ids
+// are per module, so the frame keeps an inlined body from taking it.
+Into* = { id*: ExprId, frame*: usize, place*: Place }
+
 // Where an operator's operands meet: the checked result, whether it
 // compares, and the type both sides lower at when `ahead`.
 Meet = { checked: TyId, compare: bool, early: TyId, ahead: bool }
@@ -169,6 +173,10 @@ Lowerer* = {
     // The type a context wants for one expression, used when the
     // expression's own checked type leaves a parameter unsettled.
     expected* :: Res<Expected> = None,
+    // The place one construction is built in instead of a temporary
+    // (`expr_into`), and whether the construction took it.
+    into* :: Res<Into> = None,
+    landed* :: bool = false,
     // Functions reached only through one implementor's dispatch branch:
     // lowering failure there refuses the program only if some value of
     // that implementor is converted into its bound.
@@ -305,6 +313,8 @@ Lowerer* = {
         self.defers   = self.alloc.Vec<DeferEntry>();
         self.depth    = 0;
         self.expected = None;
+        self.into     = None;
+        self.landed   = false;
         self.prologue = self.alloc.Vec<Instruction>();
     }
 
@@ -838,9 +848,12 @@ Lowerer* = {
             Literal(l)    => self.literal(id, l, e.span),
             Unit          => self.unit(),
             Paren(p)      => self.expr(p.inner),
-            Block(b)      => self.expected_of(id).match({
-                Ok(_) => self.block_want(b, self.narrowed(id).try()),
-                None  => self.block(b),
+            Block(b)      => self.claimed(id).match({
+                Ok(p) => self.block_as(b, true, Ok(p.ty), Ok(p)),
+                None  => self.expected_of(id).match({
+                    Ok(_) => self.block_want(b, self.narrowed(id).try()),
+                    None  => self.block(b),
+                }),
             }),
             Unary(u)      => self.unary(id, u.op, u.operand, u.op_span),
             Binary(b)     => self.binary(id, b.op, b.lhs, b.rhs, b.op_span),
@@ -964,7 +977,7 @@ Lowerer* = {
         );
         constant.match({
             Ok(d) => self.global_const(d, ty, span),
-            None  => self.variant_value(ty, text, None, span),
+            None  => self.variant_for(id, ty, text, span),
         })
     }
 
@@ -1698,12 +1711,12 @@ Lowerer* = {
     // -------------------------------------------------------------------
 
     block* = (self :: @Self, id: BlockId) Res<Value, LowerError> {
-        self.block_as(id, true, None)
+        self.block_as(id, true, None, None)
     }
 
     // A block expression whose value the context wants at `want`.
     block_want* = (self :: @Self, id: BlockId, want: TyId) Res<Value, LowerError> {
-        self.block_as(id, true, Ok(want))
+        self.block_as(id, true, Ok(want), None)
     }
 
     // The type a context wants for a `match` or block expression when sema
@@ -1801,7 +1814,8 @@ Lowerer* = {
 
     // `used` is false for a block in statement position: nothing receives
     // its value, so a binding it would hand out is dropped at its brace.
-    block_as = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>) Res<Value, LowerError> {
+    block_as = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>, into: Res<Place>)
+               Res<Value, LowerError> {
         block = self.tree.block_at(id);
         mark  = self.locals.len;
         self.scopes.add(Cleanup(
@@ -1837,14 +1851,24 @@ Lowerer* = {
                 Block(b)    => self.block_as(
                     b,
                     tail && used,
-                    tail.match({ true => want, false => None })
+                    tail.match({ true => want, false => None }),
+                    None
                 ),
                 Decl(_)     => Err(unsupported(s.span, "nested declarations")),
             }).try();
         });
-        value = block.value.match({
-            Ok(e) => want.match({ Ok(t) => self.expr_as(e, t), None => self.expr(e) }),
-            None  => Ok(last),
+        value = into.match({
+            Ok(p) => {
+                block.value.match({
+                    Ok(e) => self.expr_into(e, p.ty, p).try(),
+                    None  => self.write(p, self.coerce(last, p.ty).try()).try(),
+                });
+                Ok(self.placed_value(p))
+            },
+            None  => block.value.match({
+                Ok(e) => want.match({ Ok(t) => self.expr_as(e, t), None => self.expr(e) }),
+                None  => Ok(last),
+            }),
         }).try();
         // A binding the block hands out as its value is not dropped here.
         keep = used.match({ true => self.handed_out(id), false => "" });
@@ -2284,7 +2308,7 @@ Lowerer* = {
             true  => self.prim_constant(ty, type_name, member, span),
             false => self.c_bound(type_name).match({
                 true  => self.predefined(ty, member, span),
-                false => self.variant_value(ty, member, None, span),
+                false => self.variant_for(id, ty, member, span),
             }),
         })
     }
@@ -2548,42 +2572,219 @@ Lowerer* = {
                      Res<Value, LowerError> {
         s = self.shape(ty).try();
         s.form.match({
-            Tags(variants)   => {
+            Tags(variants) => {
                 tag = variant_index(variants, name).ok_or(unsupported(span, self.described("an unknown variant", ty))).try();
                 self.constant(ty, tag.to_i64_bits())
             },
+            _              => {
+                out = self.temp(ty).try();
+                self.variant_at(
+                    self.slot_place(out),
+                    name,
+                    payload,
+                    span
+                ).try();
+                Ok(out)
+            },
+        })
+    }
+
+    // Write the variant `name` of `place.ty` at `place`: its payload, if
+    // given, then its tag.
+    variant_at* = (self :: @Self, place: Place, name: str, payload: Res<Value>, span: Span)
+                  Res<LowerError> {
+        ty = place.ty;
+        s  = self.shape(ty).try();
+        s.form.match({
+            Tags(variants)   => {
+                tag = variant_index(variants, name).ok_or(unsupported(span, self.described("an unknown variant", ty))).try();
+                self.write(place, self.constant(ty, tag.to_i64_bits()).try())
+            },
             Variants(tagged) => {
                 tag = variant_index(tagged.variants, name).ok_or(unsupported(span, self.described("an unknown variant", ty))).try();
-                out = self.temp(ty).try();
-                at  = self.slot_of(Scalar.Ptr).try();
-                self.add(Instruction.AddressOf(Address(
-                    out: at,
-                    slot: out.slot
-                ))).try();
-                word = self.word_const(Scalar.U32, tag.to_i64_bits()).try();
-                self.add(Instruction.StoreValue(Store(
-                    base: at,
-                    offset: 0,
-                    value: word
-                ))).try();
                 payload.when_ok((p) {
                     expected = tagged.variants.get(tag).ok_or(unsupported(span, "a missing variant")).try().payload;
                     stored   = expected.match({
                         Ok(t) => self.coerce(p, t).try(),
                         None  => p,
                     });
-                    self.add(Instruction.StoreValue(Store(
-                        base: at,
-                        offset: tagged.payload,
-                        value: stored.slot
-                    ))).try();
+                    self.write(
+                        Place(
+                            base: place.base,
+                            offset: place.offset + tagged.payload,
+                            ty: stored.ty
+                        ),
+                        stored
+                    ).try();
                 });
-                Ok(out)
+                word = self.word_const(Scalar.U32, tag.to_i64_bits()).try();
+                at   = self.base_pointer(place).try();
+                self.add(Instruction.StoreValue(Store(
+                    base: at,
+                    offset: place.offset,
+                    value: word
+                )))
             },
             _                => Err(unsupported(
                 span,
                 self.described("a variant of a type without alternatives", ty)
             )),
+        })
+    }
+
+    // Where the payload of the variant `name` of the tagged `place.ty` at
+    // `place` lives.
+    payload_place* = (self :: @Self, place: Place, name: str, span: Span) Res<Place, LowerError> {
+        s       = self.shape(place.ty).try();
+        tagged  = s.form.match({ Variants(t) => Ok(t), _ => None })
+            .ok_or(unsupported(
+                span,
+                self.described("a payload of a type without one", place.ty)
+            )).try();
+        tag     = variant_index(tagged.variants, name).ok_or(unsupported(span, self.described("an unknown variant", place.ty))).try();
+        payload = tagged.variants.get(tag).ok_or(unsupported(span, "a missing variant")).try().payload
+            .ok_or(unsupported(
+                span,
+                "a payload for a payload-free variant"
+            )).try();
+        Ok(Place(
+            base: place.base,
+            offset: place.offset + tagged.payload,
+            ty: payload
+        ))
+    }
+
+    // Whether `ty`'s variants carry payload bytes beside their tag.
+    has_payloads* = (self :: @Self, ty: TyId) Res<bool, LowerError> {
+        s = self.shape(ty).try();
+        Ok(s.form.match({ Variants(_) => true, _ => false }))
+    }
+
+    // A pointer to the base `place` is offset from.
+    base_pointer = (self :: @Self, place: Place) Res<usize, LowerError> {
+        place.base.match({
+            InSlot(slot) => {
+                p = self.slot_of(Scalar.Ptr).try();
+                self.add(Instruction.AddressOf(Address(
+                    out: p,
+                    slot: slot
+                ))).try();
+                Ok(p)
+            },
+            Through(p)   => Ok(p),
+        })
+    }
+
+    // A whole slot as a place.
+    slot_place* = (self: @Self, value: Value) Place {
+        Place(base: Base.InSlot(value.slot), offset: 0, ty: value.ty)
+    }
+
+    // The value a construction built at `place` stands for; only whole
+    // slots are read back.
+    placed_value* = (self: @Self, place: Place) Value {
+        Value(
+            slot: place.base.match({ InSlot(s) => s, Through(p) => p }),
+            ty: place.ty
+        )
+    }
+
+    // Lower `id` at `ty` straight into `place`, which nothing reads until
+    // the value is complete: a construction there writes its parts in
+    // place rather than in a temporary that is then copied.
+    expr_into* = (self :: @Self, id: ExprId, ty: TyId, place: Place) Res<LowerError> {
+        outer       = self.landed;
+        pending     = self.into;
+        self.into   = Ok(Into(
+            id: self.unwrapped(id),
+            frame: self.frame,
+            place: place
+        ));
+        self.landed = false;
+        value       = self.expr_as(id, ty).try();
+        built       = self.landed;
+        self.into   = pending;
+        self.landed = outer;
+        built.match({ true => Ok, false => self.write(place, value) })
+    }
+
+    // The place the context asked the construction at `id` of `ty` to be
+    // built in, taken once.
+    // A payload-free variant `id`, written where the context asked for it.
+    variant_for = (self :: @Self, id: ExprId, ty: TyId, name: str, span: Span)
+                  Res<Value, LowerError> {
+        self.placed(id, ty).match({
+            Ok(p) => {
+                self.variant_at(p, name, None, span).try();
+                Ok(self.placed_value(p))
+            },
+            None  => self.variant_value(ty, name, None, span),
+        })
+    }
+
+    // The whole slot the context asked `id` to be built in, for a
+    // construction that needs a slot of its own rather than a place.
+    placed_slot* = (self :: @Self, id: ExprId, ty: TyId) Res<Value> {
+        whole = self.into.match({
+            Ok(i) => i.place.offset == 0 && i.place.base.match({
+                InSlot(_)  => true,
+                Through(_) => false,
+            }),
+            None  => false,
+        });
+        whole.match({
+            true  => self.placed(id, ty).match({
+                Ok(p) => Ok(self.placed_value(p)),
+                None  => None,
+            }),
+            false => None,
+        })
+    }
+
+    // The place the context asked `id` to be built in, at its own type.
+    claimed* = (self :: @Self, id: ExprId) Res<Place> {
+        self.into.match({
+            Ok(i) => self.placed(id, i.place.ty),
+            None  => None,
+        })
+    }
+
+    placed* = (self :: @Self, id: ExprId, ty: TyId) Res<Place> {
+        self.into.match({
+            Ok(i) => (i.id == id && i.frame == self.frame && i.place.ty == ty).match({
+                true  => {
+                    self.into   = None;
+                    self.landed = true;
+                    Ok(i.place)
+                },
+                false => None,
+            }),
+            None  => None,
+        })
+    }
+
+    // A frame's body lowered as its result, straight into the result slot
+    // when the result type is settled.
+    body_result* = (self :: @Self, body: BlockId, ret: TyId) Res<LowerError> {
+        slot = self.here().ret_slot;
+        self.settled(ret).match({
+            true  => {
+                self.block_as(
+                    body,
+                    true,
+                    Ok(ret),
+                    Ok(Place(base: Base.InSlot(slot), offset: 0, ty: ret))
+                ).try();
+                Ok
+            },
+            false => {
+                value   = self.block(body).try();
+                coerced = self.coerce(value, ret).try();
+                self.add(Instruction.Copy(Move(
+                    out: slot,
+                    source: coerced.slot
+                )))
+            },
         })
     }
 
@@ -2669,9 +2870,13 @@ Lowerer* = {
             }),
         });
         subject_ty = self.type_of(m.scrutinee).try();
-        subject    = self.expr_as(m.scrutinee, subject_ty).try();
-        out        = self.temp(ty).try();
-        done       = self.label().try();
+        // Arms write the place the context asked for, else a temporary.
+        out     = self.placed(id, ty).match({
+            Ok(p) => p,
+            None  => self.slot_place(self.temp(ty).try()),
+        });
+        subject = self.expr_as(m.scrutinee, subject_ty).try();
+        done    = self.label().try();
         m.arms.loop((arm) {
             reading = self.check.read_pattern(
                 arm.pattern,
@@ -2701,11 +2906,7 @@ Lowerer* = {
                 subject,
                 read
             ).try();
-            value = self.expr_as(arm.body, ty).try();
-            self.add(Instruction.Copy(Move(
-                out: out.slot,
-                source: value.slot
-            ))).try();
+            self.expr_into(arm.body, ty, out).try();
             self.release_locals(mark);
             self.jump(done).try();
             self.start(next);
@@ -2713,7 +2914,7 @@ Lowerer* = {
         // Exhaustiveness is checked; falling out of every arm is a bug.
         self.trap(TrapKind.Unreachable, span).try();
         self.start(done);
-        Ok(out)
+        Ok(self.placed_value(out))
     }
 
     // Branch to `yes` when the reading `at` matches `subject`, else to `no`.
@@ -3440,16 +3641,8 @@ Lowerer* = {
         // The body's value is lowered at the result type, so an open
         // literal result is a constant of it and an open `match` result
         // takes its layout.
-        value   = self.settled(ret_ty).match({
-            true  => self.block_want(body, ret_ty),
-            false => self.block(body),
-        }).try();
-        here    = self.here();
-        coerced = self.coerce(value, ret_ty).try();
-        self.add(Instruction.Copy(Move(
-            out: here.ret_slot,
-            source: coerced.slot
-        ))).try();
+        self.body_result(body, ret_ty).try();
+        here = self.here();
         self.enter(here.ret_block).try();
         exit_value = entry.match({
             true  => self.exit_code(Value(

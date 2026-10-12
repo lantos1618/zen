@@ -377,9 +377,15 @@ encode* = (code: Code, at: usize) usize {
             AddressOf       => 3,
             Load            => (s.w == 8).match({
                 true  => 4,
-                false => { put(out, 7, widening(s.ty)); 5 },
+                false => (s.w == 1 && widening(s.ty) == 2).match({
+                    true  => 47,
+                    false => (s.w == 4 && widening(s.ty) == 6).match({
+                        true  => 48,
+                        false => { put(out, 7, widening(s.ty)); 5 },
+                    }),
+                }),
             }),
-            Store           => (s.w == 8).match({ true => 6, false => 7 }),
+            Store           => s.w.match({ 8 => 6, 1 => 49, 4 => 50, _ => 7 }),
             AddSigned       => narrow(out, s, 8),
             SubSigned       => narrow(out, s, 9),
             MulSigned       => narrow(out, s, 10),
@@ -388,7 +394,11 @@ encode* = (code: Code, at: usize) usize {
             MulUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 16 },
             Cast            => s.ty.match({
                 Bool => 46,
-                _    => { put(out, 7, widening(s.ty)); 45 },
+                _    => widening(s.ty).match({
+                    6 => 51,
+                    2 => 52,
+                    _ => { put(out, 7, widening(s.ty)); 45 },
+                }),
             }),
             DivUnsigned     => 43,
             RemUnsigned     => 44,

@@ -500,6 +500,33 @@ Interp = {
                         ); },
                     });
                 },
+                47 => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% part(s, 3)).read(0).to_u64()
+                ),
+                48 => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% part(s, 3))
+                        .to<u32>()
+                        .read(0)
+                        .to_u64()
+                ),
+                49 => pointer_at(load_usize(frame +% part(s, 1)) +% part(s, 3))
+                    .write(0, pointer_at(frame +% part(s, 2)).read(0)),
+                50 => pointer_at(load_usize(frame +% part(s, 1)) +% part(s, 3))
+                    .to<u32>()
+                    .write(
+                        0,
+                        pointer_at(frame +% part(s, 2)).to<u32>().read(0)
+                    ),
+                51 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_and(4294967295)
+                ),
+                52 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_and(255)
+                ),
                 45 => {
                     set_u64(frame +% part(s, 1), load_u64(frame +% part(s, 2)));
                     extend_code(frame +% part(s, 1), part(s, 7));

@@ -197,6 +197,210 @@ selected_summary* = (
     effects.rows.get(c.checked_call(id).try().body.try())
 }
 
+// Whether the function whose body is `body` may keep its `parameter`th
+// argument itself past the call: stored through a parameter or returned. A
+// body with no summary keeps everything.
+keeps_parameter = (effects: StoreEffects, body: BlockId, parameter: usize)
+                   bool {
+    effects.rows.get(body).match({
+        None        => true,
+        Ok(summary) => {
+            stored   = summary.stores.find(
+                (e) { e.source.parameter == parameter && whole(e.source) }
+            ).match({ Ok(_) => true, None => false });
+            returned = summary.returns.find((r) {
+                r.sources.find(
+                    (s) { s.parameter == parameter && whole(s) }
+                ).match({ Ok(_) => true, None => false })
+            }).match({ Ok(_) => true, None => false });
+            stored || returned
+        },
+    })
+}
+
+// A source that is the parameter itself rather than one field read from it;
+// `parameter_lent` has already seen that every field read is a scalar.
+whole = (source: Source) bool {
+    source.field.match({ Ok(_) => false, None => true })
+}
+
+// Whether `f` only lends its `parameter`th argument: every use of it reads a
+// scalar through it (`p.len`, `p.get(i)`) and no call stores it, so nothing
+// made from it outlives the call. Pattern and closure bindings carry no
+// origins here, so a use that hands the whole value on counts as keeping it.
+parameter_lent* = (c :: Checker, f: Function, parameter: usize)
+                   Res<bool, AllocError> {
+    f.body.match({
+        None     => Ok(false),
+        Ok(body) => f.params.get(parameter).match({
+            None  => Ok(false),
+            Ok(p) => {
+                scan ::= LendScan(
+                    check: c,
+                    name: p.name.text,
+                    uses: 0,
+                    reads: 0,
+                    counted: c.alloc.Map<ExprId, bool>()
+                );
+                c.tree.walk(c.alloc, WalkNode.Block(body), scan).try();
+                Ok(scan.uses == scan.reads && !c.store_effects.keeps_parameter(
+                    body,
+                    parameter
+                ))
+            },
+        }),
+    })
+}
+
+LendScan = {
+    check: Checker,
+    name: str,
+    uses :: usize,
+    reads :: usize,
+    counted :: Map<ExprId, bool>,
+
+    // `base` is the parameter itself and `read`, the value read through it,
+    // is a scalar.
+    read = (self :: @Self, base: ExprId, read: ExprId) Res<AllocError> {
+        named = self.check.tree.expr_at(base).kind.match({
+            Name(n) => n.text.eq(self.name),
+            _       => false,
+        });
+        fresh = self.counted.get(base).match({ Ok(_) => false, None => true });
+        (named && fresh && self.scalar_at(read)).match({
+            false => Ok,
+            true  => {
+                self.reads = self.reads + 1;
+                self.counted.set(base, true)
+            },
+        })
+    }
+
+    scalar_at = (self: @Self, id: ExprId) bool {
+        self.check.expr_memo.get(id).match({
+            Ok(ty) => scalar(self.check, ty),
+            None   => false,
+        })
+    }
+}
+
+scalar = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Prim(p)     => !p.name.eq("str"),
+        Res(result) => scalar(c, result.value) && result.form.match({
+            Absence => true,
+            _       => scalar(c, result.error),
+        }),
+        _           => false,
+    })
+}
+
+LendScan.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id) => self.check.tree.expr_at(id).kind.match({
+                    Name(n)    => {
+                        n.text.eq(self.name).then(() { self.uses = self.uses + 1; });
+                        Ok
+                    },
+                    Call(call) => self.check.tree.expr_at(
+                        call.callee
+                    ).kind.match({
+                        Access(a) => self.read(a.base, id),
+                        _         => Ok,
+                    }),
+                    Access(a)  => self.read(a.base, id),
+                    _          => Ok,
+                }),
+                _        => Ok,
+            }),
+            Leave(_)    => Ok,
+        })
+    }
+})
+
+// `consume` of the parameter outside any lambda or match: on every path.
+parameter_consumed* = (c :: Checker, f: Function, parameter: usize)
+                       Res<bool, AllocError> {
+    consume_scan(c, f, parameter, false)
+}
+
+// `consume` of the parameter inside a lambda or match: on some paths only.
+parameter_consumed_conditionally* = (
+    c         :: Checker,
+    f         : Function,
+    parameter : usize
+) Res<bool, AllocError> {
+    consume_scan(c, f, parameter, true)
+}
+
+consume_scan = (c :: Checker, f: Function, parameter: usize, nested: bool)
+               Res<bool, AllocError> {
+    f.body.match({
+        None     => Ok(false),
+        Ok(body) => f.params.get(parameter).match({
+            None  => Ok(false),
+            Ok(p) => {
+                scan ::= ConsumeScan(
+                    check: c,
+                    name: p.name.text,
+                    found: false,
+                    nested: false,
+                    depth: 0
+                );
+                c.tree.walk(c.alloc, WalkNode.Block(body), scan).try();
+                Ok(nested.match({ true => scan.nested, false => scan.found }))
+            },
+        }),
+    })
+}
+
+ConsumeScan = {
+    check: Checker,
+    name: str,
+    found :: bool,
+    nested :: bool,
+    depth :: usize,
+}
+
+ConsumeScan.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id) => self.check.tree.expr_at(id).kind.match({
+                    Consume(k) => self.check.tree.expr_at(
+                        k.operand
+                    ).kind.match({
+                        Name(n) => {
+                            n.text.eq(self.name).then(() {
+                                (self.depth == 0).match({
+                                    true  => { self.found = true; },
+                                    false => { self.nested = true; },
+                                });
+                            });
+                            Ok
+                        },
+                        _       => Ok,
+                    }),
+                    Lambda(_)  => { self.depth = self.depth + 1; Ok },
+                    Match(_)   => { self.depth = self.depth + 1; Ok },
+                    _          => Ok,
+                }),
+                _        => Ok,
+            }),
+            Leave(node) => node.match({
+                Expr(id) => self.check.tree.expr_at(id).kind.match({
+                    Lambda(_) => { self.depth = self.depth - 1; Ok },
+                    Match(_)  => { self.depth = self.depth - 1; Ok },
+                    _         => Ok,
+                }),
+                _        => Ok,
+            }),
+        })
+    }
+})
+
 call_stores* = (c :: Checker, own :: Own, id: ExprId, call: Call)
                Res<AllocError> {
     c.store_effects.selected_summary(c, id).when_ok((summary) {

@@ -1,0 +1,54 @@
+// A consumed Bytes is handed to the receiver without a copy: a behaviour
+// that only reads it frees it when the turn ends, one that consumes it owns
+// it, and any other use keeps it until the actor ends. Built before the
+// first spawn, grown past one block, and grown after a send.
+{ Res, Ok, None, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+{ Actor, ActorError, ActorStartError, Ref, Context, Bytes, bytes } = std.actor
+
+Worker = { saved :: Res<Bytes> = None, view :: usize = 0, turns :: usize = 0 }
+Worker.impl(Actor, {
+    // only reads: freed when the turn ends
+    read = (self :: @Self, ctx: Context, b: Bytes) {
+        self.turns = self.turns + 1;
+        println("read {} first {}", b.len, b.get(0).value_or(0));
+    }
+    // consumed into state: the actor owns it
+    keep = (self :: @Self, ctx: Context, b: Bytes) {
+        self.turns = self.turns + 1;
+        self.saved = Ok(consume b);
+    }
+    // any other use: the actor keeps it until it ends
+    look = (self :: @Self, ctx: Context, b: Bytes) {
+        self.turns = self.turns + 1;
+        println("look {}", b.view());
+    }
+    show = (self :: @Self, ctx: Context) {
+        self.saved.match({
+            Ok(b) => println("saved {}", b.view()),
+            None  => println("nothing saved"),
+        });
+    }
+    stopped = (self :: @Self, ctx: Context) { println("turns {}", self.turns); }
+})
+
+Error = AllocError | ActorStartError | ActorError
+main = (env: Env) Res<i32, Error> {
+    early ::= bytes("made before spawn").try();
+    w = env.spawn(Worker()).try();
+    w.look(consume early).try();
+    a ::= bytes("hello").try();
+    w.read(consume a).try();
+    big ::= Bytes();
+    Range(0, 100000).loop((i) { big.add(120).try(); });
+    w.read(consume big).try();
+    k ::= bytes("kept").try();
+    k.add(" and grown").try();
+    w.keep(consume k).try();
+    w.show().try();
+    w.stop();
+    w.join();
+    Ok(0)
+}

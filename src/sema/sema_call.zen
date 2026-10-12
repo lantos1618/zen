@@ -1674,7 +1674,7 @@ refuse_actor_payloads = (
         None  => Ok,
         Ok(_) => {
             actuals.loop((h, i, a) {
-                transferred = c.actor_byte_buffer(a.ty) && call.args.get(i).match({
+                transferred = (c.actor_byte_buffer(a.ty) || c.actor_owned_bytes(a.ty)) && call.args.get(i).match({
                     None    => false,
                     Ok(arg) => c.actor_consumed_argument(arg.value),
                 });

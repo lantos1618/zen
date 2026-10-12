@@ -1,0 +1,27 @@
+// A u8x16 state field sits 16-aligned in the actor record: gcc may store
+// it with an aligned vector move.
+{ splat_u8x16, add_wrap, lane } = std.simd
+{ Res, Ok, None, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+{ Actor, ActorError, ActorStartError, Ref, Context, Bytes, bytes } = std.actor
+Error = AllocError | ActorStartError | ActorError
+
+W = { v :: u8x16 }
+W.impl(Actor, {
+    bump = (self :: @Self, ctx: Context, n: u8) { self.v = self.v.add_wrap(splat_u8x16(
+        n
+    )); }
+    stopped = (self :: @Self, ctx: Context) { println(
+        "lane {}",
+        self.v.lane(3)
+    ); }
+})
+main = (env: Env) Res<i32, Error> {
+    w = env.spawn(W(v: splat_u8x16(0))).try();
+    Range(0, 10).loop((i) { w.bump(2).try(); });
+    w.stop();
+    w.join();
+    Ok(0)
+}

@@ -2,12 +2,17 @@
 """Interpreter (--backend jit) against the compiled backends.
 
 For each workload and backend:
-  front  the compiler's frontend and lowering: `zen build --backend c` to a
-         file (the jit runs the same lowering, so this is its frontend too);
+  front  the compiler's frontend and lowering: `zen build --backend X` to a
+         file, median of --reps. The jit's front is measured, not proxied:
+         its fitted intercept, i.e. process start, frontend, lowering,
+         decoding and setup together;
   tool   the external toolchain (cc -O0/-O2, as+ld), median of --reps;
   slope  time per unit of work (one round): a least-squares fit of the
-         median wall time over four sizes, with R^2, free of startup and
-         setup. Each size is run once to warm up, then --reps times.
+         median wall time over four sizes, with R^2 and a 95% confidence
+         interval (Student t), free of startup and setup. Every size of every
+         backend is run once to warm up; then --reps rounds each time every
+         backend at every size, the backend order rotating each round, so
+         drift and thermal state are spread over all backends alike.
 Every timed run's stdout must equal the reference for that size (c-O2's),
 or the row is marked MISMATCH. Runs are pinned to one CPU with taskset when
 available. Rows whose spread (max-min over all sizes, as a share of the
@@ -26,9 +31,13 @@ WORKLOADS = [
     ("blake2b",  "tests/native/bench/blake2b",  (8, 24, 40, 64), (1, 2, 3, 4),    "MiB"),
     ("chacha20", "tests/native/bench/chacha20", (8, 24, 40, 64), (1, 2, 3, 4),    "MiB"),
     ("fib24",    "tests/bench/jit/fib",         (64, 192, 320, 512), (8, 24, 40, 64), "fib(24)"),
+    ("map",      "tests/bench/jit/map",         (16, 48, 80, 128), (4, 8, 12, 16), "round"),
 ]
 PYTHON_REFS = {"sha256": (os.path.join(HERE, "ref_sha256.py"), (1, 2, 3, 4)),
-               "fib24": (os.path.join(HERE, "ref_fib.py"), (4, 8, 12, 16))}
+               "fib24": (os.path.join(HERE, "ref_fib.py"), (8, 24, 40, 64)),
+               "map": (os.path.join(HERE, "ref_map.py"), (8, 24, 40, 64))}
+# Two-sided 95% Student t by degrees of freedom.
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306}
 
 def capture(argv):
     try:
@@ -44,23 +53,29 @@ def timed(argv):
 class Mismatch(Exception):
     pass
 
-def measure(argv, sizes, reps, pin, reference, label):
-    """Median, min and max wall time per size; checks every run's stdout."""
-    rows = []
-    for size in sizes:
-        run = pin + argv + [str(size)]
-        timed(run)  # warm-up, discarded
-        times = []
-        for _ in range(reps):
-            dt, p = timed(run)
-            if p.returncode != 0:
-                raise RuntimeError(f"{' '.join(run)} exited {p.returncode}: {p.stdout[-300:]}{p.stderr[-300:]}")
-            want = reference.setdefault(size, p.stdout)
-            if p.stdout != want:
-                raise Mismatch(f"{label} at size {size}: {p.stdout.strip()!r} != {want.strip()!r}")
-            times.append(dt)
-        rows.append({"size": size, "median": statistics.median(times), "min": min(times), "max": max(times)})
-    return fit(rows)
+def run_checked(run, reference, size, label):
+    dt, p = timed(run)
+    if p.returncode != 0:
+        raise RuntimeError(f"{' '.join(run)} exited {p.returncode}: {p.stdout[-300:]}{p.stderr[-300:]}")
+    want = reference.setdefault(size, p.stdout)
+    if p.stdout != want:
+        raise Mismatch(f"{label} at size {size}: {p.stdout.strip()!r} != {want.strip()!r}")
+    return dt
+
+def measure(runners, reps, pin):
+    """Times every runner (label, argv, sizes, reference) round-robin: one
+    checked warm-up per size, then `reps` rounds in a rotating order."""
+    times = {label: {size: [] for size in sizes} for label, _, sizes, _ in runners}
+    for label, argv, sizes, reference in runners:
+        for size in sizes:
+            run_checked(pin + argv + [str(size)], reference, size, label)
+    for r in range(reps):
+        k = r % len(runners)
+        for label, argv, sizes, reference in runners[k:] + runners[:k]:
+            for size in sizes:
+                times[label][size].append(run_checked(pin + argv + [str(size)], reference, size, label))
+    return {label: fit([{"size": size, "median": statistics.median(ts), "min": min(ts), "max": max(ts)}
+                        for size, ts in by.items()]) for label, by in times.items()}
 
 def fit(rows):
     xs = [r["size"] for r in rows]
@@ -71,10 +86,12 @@ def fit(rows):
     intercept = my - slope * mx
     ss_res = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(xs, ys))
     ss_tot = sum((y - my) ** 2 for y in ys)
+    df = len(xs) - 2
+    ci = T95.get(df, 1.96) * (ss_res / df / sxx) ** 0.5 if df > 0 else float("inf")
     signal = slope * (xs[-1] - xs[0])
     spread = max(r["max"] - r["min"] for r in rows)
     return {"points": rows, "per_unit": slope, "intercept": intercept,
-            "r2": 1 - ss_res / ss_tot if ss_tot else 1.0,
+            "ci95": ci, "r2": 1 - ss_res / ss_tot if ss_tot else 1.0,
             "noise": spread / signal if signal > 0 else float("inf")}
 
 def main():
@@ -105,8 +122,8 @@ def main():
         reference = {}
         base = [zen, "build", root, "--entry", "main.zen", "--std", "src"]
         builds = [("c-O2", "c", ["cc", "-O2"]), ("c-O0", "c", ["cc", "-O0"]), ("asm", "asm", None), ("js", "js", None)]
-        front = []
         try:
+            runners, extra = [], {}
             for label, backend, cc in builds:
                 if backend == "js" and not node:
                     continue
@@ -128,23 +145,19 @@ def main():
                     else:
                         dt = 0.0
                     tools.append(dt)
-                if backend == "c":
-                    front += fronts
                 argv = ["node", src] if backend == "js" else [exe]
-                result = measure(argv, sizes, args.reps, pin, reference, label)
-                for size in jsizes:
-                    if size not in reference:
-                        measure(argv, [size, size + 1], 1, pin, reference, label)
-                result.update(front=statistics.median(fronts), tool=statistics.median(tools))
-                row["backends"][label] = result
-            result = measure(base + ["--backend", "jit", "--"], jsizes, args.reps, pin, reference, "jit")
-            result.update(front=statistics.median(front), tool=0.0)
-            row["backends"]["jit"] = result
+                runners.append((label, argv, sizes, reference))
+                extra[label] = {"front": statistics.median(fronts), "tool": statistics.median(tools)}
+            # c-O2 fixes the expected output at the jit's sizes too.
+            for size in jsizes:
+                run_checked(pin + runners[0][1] + [str(size)], reference, size, "c-O2")
+            runners.append(("jit", base + ["--backend", "jit", "--"], jsizes, reference))
             if name in PYTHON_REFS:
                 script, psizes = PYTHON_REFS[name]
-                result = measure(["python3", script], psizes, args.reps, pin, {}, "cpython")
-                result.update(front=0.0, tool=0.0)
-                row["backends"]["cpython"] = result
+                runners.append(("cpython", ["python3", script], psizes, {}))
+            for label, result in measure(runners, args.reps, pin).items():
+                result.update(extra.get(label, {"front": result["intercept"] if label == "jit" else 0.0, "tool": 0.0}))
+                row["backends"][label] = result
         except Mismatch as e:
             row["mismatch"] = str(e)
         results["workloads"].append(row)
@@ -156,11 +169,11 @@ def print_row(row):
     print(f"\n== {row['name']} (ms per {row['unit']}) outputs {'MISMATCH: ' + row['mismatch'] if row['mismatch'] else 'match'}")
     o2 = row["backends"].get("c-O2", {}).get("per_unit")
     o0 = row["backends"].get("c-O0", {}).get("per_unit")
-    print(f"{'backend':8} {'front s':>8} {'tool s':>7} {'per unit':>10} {'R^2':>7} {'noise':>6} {'vs O2':>7} {'vs O0':>7}")
+    print(f"{'backend':8} {'front s':>8} {'tool s':>7} {'per unit':>10} {'95% CI':>8} {'R^2':>7} {'noise':>6} {'vs O2':>7} {'vs O0':>7}")
     for label, b in row["backends"].items():
         ratio = lambda ref: f"{b['per_unit'] / ref:.1f}x" if ref else "-"
         flag = " NOISY" if b["noise"] > 0.10 else ""
-        print(f"{label:8} {b['front']:8.2f} {b['tool']:7.2f} {b['per_unit'] * 1000:10.2f} {b['r2']:7.4f} "
+        print(f"{label:8} {b['front']:8.2f} {b['tool']:7.2f} {b['per_unit'] * 1000:10.2f} {'±%.1f%%' % (100 * b['ci95'] / b['per_unit']):>8} {b['r2']:7.4f} "
               f"{b['noise'] * 100:5.1f}% {ratio(o2):>7} {ratio(o0):>7}{flag}")
 
 if __name__ == "__main__":

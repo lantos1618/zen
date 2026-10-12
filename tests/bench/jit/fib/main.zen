@@ -1,19 +1,25 @@
 { Res, Ok, Range } = std.core
-{ AllocError } = std.mem
+{ AllocError, Ptr } = std.mem
 { Env } = std.env
 { println } = std.io
 
 // Calls and integer arithmetic: fib(24) computed `rounds` times (argument,
-// default 64), so the run time is linear in `rounds`. The argument depends on
-// the round so a C compiler cannot hoist the call out of the loop.
-fib = (n: i64) i64 {
-    (n < 2).match({ true => n, false => fib(n - 1) + fib(n - 2) })
+// default 64). The depth depends on the argument and every call is counted
+// through memory, so a C compiler can neither fold nor hoist the calls; the
+// printed count lets the harness check every backend made all of them.
+fib = (n: u64, calls: Ptr<u64>) u64 {
+    calls.write(0, calls.read(0) + 1);
+    (n < 2).match({ true => n, false => fib(n - 1, calls) + fib(n - 2, calls) })
 }
 
 main = (env: Env) Res<i32, AllocError> {
-    rounds = env.argv.get(1).match({ Ok(s) => s.parse_usize().value_or(64), None => 64 });
-    total :: i64 = 0;
-    Range(0, rounds).loop((r) { total = total +% fib((r % 2 == 0).match({ true => 24, false => 23 })); });
-    println("{} rounds fib {}", rounds, total);
+    a ::= env.mem.alloc();
+    rounds     = env.argv.get(1).match({ Ok(s) => s.parse_usize().value_or(64), None => 64 });
+    depth: u64 = 24 + (rounds / 1000000000).to_u64();
+    calls      = a.raw(8, 8).try().to<u64>();
+    calls.write(0, 0);
+    total :: u64 = 0;
+    Range(0, rounds).loop((r) { total = total +% fib(depth, calls); });
+    println("{} rounds fib {} calls {}", rounds, total, calls.read(0));
     Ok(0)
 }

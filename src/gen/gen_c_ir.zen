@@ -488,7 +488,8 @@ C = {
                     && self.untouched(f, b, j + 1, k, dest)
             },
             false => (at == 0).match({
-                true  => self.once(f, base) && quiet(f, b, j + 1, k)
+                true  => held(f, base) && self.once(f, base)
+                    && quiet(f, b, j + 1, k)
                     && !self.reaches(f, call, base),
                 false => false,
             }),
@@ -1525,6 +1526,19 @@ slot_ty = (f: Func, slot: usize) Scalar {
 }
 
 // Nothing between the load and the call writes memory.
+// A `::` parameter's pointer: a place the caller holds for the whole call.
+// Any other pointer is a `Ptr`, whose `read` is a copy.
+held = (f: Func, slot: usize) bool {
+    f.places.match({
+        Ok(places) => {
+            found ::= false;
+            places.loop((p) { (p == slot).then(() { found = true; }); });
+            found
+        },
+        None       => false,
+    })
+}
+
 quiet = (f: Func, b: usize, from: usize, to: usize) bool {
     clear ::= true;
     f.blocks.get(b).match({

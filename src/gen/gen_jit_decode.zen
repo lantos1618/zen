@@ -309,3 +309,126 @@ bits_of = (scratch: usize, value: i64) u64 {
 moved = (ty: Scalar) usize { ty.match({ Unit => 0, Block(l) => l.size, _ => width(
     ty
 ) }) }
+
+// Extremes of a signed class and the ceiling of an unsigned one.
+minimum* = (ty: Scalar) i64 {
+    ty.match({ I8 => -128, I16 => -32768, I32 => -2147483648, _ => i64.MIN })
+}
+
+maximum* = (ty: Scalar) i64 {
+    ty.match({ I8 => 127, I16 => 32767, I32 => 2147483647, _ => i64.MAX })
+}
+
+ceiling* = (ty: Scalar) u64 {
+    ty.match({ U8 => 255, Bool => 255, U16 => 65535, U32 => 4294967295, _ => u64.MAX })
+}
+
+// The encoded form the interpreter runs: each step is eight words (op, a,
+// b, c, n, w, slow, x) at a fixed stride, so fetching one is a load, not a
+// checked lookup and a copy. `op` is a small integer that also fixes the
+// width or the fused branch; `x` is the extension code of a narrow result,
+// a narrow maximum, or a fused branch's false target. Call arguments and
+// the parameter pairs (offset, size) follow the steps.
+STEP: usize = 64
+
+size_of* = (code: Code) usize {
+    code.steps.len * STEP + code.args.len * 8 + code.params.len * 16
+}
+
+// Writes `code` at `at` (`size_of` bytes); returns its parameter pairs.
+encode* = (code: Code, at: usize) usize {
+    args   = at + code.steps.len * STEP;
+    params = args + code.args.len * 8;
+    code.steps.loop((h, i, s) {
+        out = at + i * STEP;
+        put(out, 1, s.a);
+        put(out, 2, s.b);
+        put(out, 3, s.c);
+        pointer_at(out).to<u64>().write(4, s.n);
+        put(out, 5, s.w);
+        put(out, 6, s.slow);
+        put(out, 7, 0);
+        op: usize = s.kind.match({
+            ConstWord       => 0,
+            CopyWord        => 1,
+            CopyBlock       => 2,
+            AddressOf       => 3,
+            Load            => (s.w == 8).match({
+                true  => 4,
+                false => { put(out, 7, widening(s.ty)); 5 },
+            }),
+            Store           => (s.w == 8).match({ true => 6, false => 7 }),
+            AddSigned       => narrow(out, s, 8),
+            SubSigned       => narrow(out, s, 9),
+            MulSigned       => narrow(out, s, 10),
+            AddUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 14 },
+            SubUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 15 },
+            MulUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 16 },
+            CompareSigned   => fused(out, s, code, i, 17),
+            CompareUnsigned => fused(out, s, code, i, 18),
+            Bits            => (s.w >= 9 && s.w <= 11).match({
+                true  => s.w + 19,
+                false => {
+                    put(out, 4, width(s.ty));
+                    put(out, 7, widening(s.ty));
+                    19
+                },
+            }),
+            Call            => { put(out, 2, args + s.b * 8); 20 },
+            Jump            => 21,
+            Branch          => 22,
+            Return          => {
+                put(
+                    out,
+                    4,
+                    s.ty.match({ Unit => 0, Block(l) => l.size, _ => 8 })
+                );
+                23
+            },
+            Trap            => 24,
+            Slow            => 25,
+        });
+        put(out, 0, op);
+    });
+    code.args.loop((h, i, v) { put(args, i, v); });
+    Range(0, code.params.len).loop((i) {
+        put(params, 2 * i, code.params.get(i).value_or(0));
+        put(params, 2 * i + 1, code.sizes.get(i).value_or(0));
+    });
+    params
+}
+
+// A checked signed step: 64-bit, or narrow with its bounds in n and x.
+narrow = (out: usize, s: Step, op: usize) usize {
+    (s.w == 8).match({
+        true  => op,
+        false => {
+            pointer_at(out).to<i64>().write(4, minimum(s.ty));
+            pointer_at(out).to<i64>().write(7, maximum(s.ty));
+            op + 3
+        },
+    })
+}
+
+// A comparison whose result the next step branches on is fused with it:
+// it still writes its cell, then goes to n (true) or x (false).
+fused = (out: usize, s: Step, code: Code, i: usize, op: usize) usize {
+    code.steps.get(i + 1).match({
+        None       => op,
+        Ok(branch) => branch.kind.match({
+            Branch => (branch.a == s.a).match({
+                false => op,
+                true  => { put(out, 4, branch.b); put(out, 7, branch.c); op + 9 },
+            }),
+            _      => op,
+        }),
+    })
+}
+
+// How a narrow result is re-extended to its word (gen_jit_interp
+// `extend_code`): 0 none, then i8, u8 or bool, i16, u16, i32, u32.
+widening = (ty: Scalar) usize {
+    ty.match({ I8 => 1, U8 => 2, Bool => 2, I16 => 3, U16 => 4, I32 => 5, U32 => 6, _ => 0 })
+}
+
+put = (at: usize, k: usize, value: usize) { pointer_at(at).to<usize>().write(k, value); }

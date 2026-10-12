@@ -33,7 +33,7 @@
     trap_message, width, signed, integer, float
 } = gen.gen_ir
 { Sys, Platform, constant_value } = gen.gen_sys
-{ Code, Step, Kind, decode } = gen.gen_jit_decode
+{ Code, decode, encode, size_of, minimum, maximum, ceiling } = gen.gen_jit_decode
 
 // How a run ended. `Returned` continues the caller; the others unwind to
 // the outermost call (or to a guarded call, for a trap).
@@ -132,7 +132,24 @@ execute* = (a: Alloc, program: Program, platform: Platform, argv: Vec<str>)
                     ).try()
                 ).try();
             });
+            // Every function's (table, frame size, parameters, count), then
+            // the encoded functions themselves, in one mapping.
+            total :: usize = program.functions.len * 32;
+            codes.loop((c) { total = total + size_of(c); });
+            info = mapped(mmap(0, round_up(total, 4096), 3, anonymous, -1, 0));
+            at :: usize = info + program.functions.len * 32;
+            (info != 0).then(() {
+                codes.loop((h, i, c) {
+                    entry = pointer_at(info + i * 32).to<usize>();
+                    entry.write(0, at);
+                    entry.write(1, frames.get(i).value_or(0));
+                    entry.write(2, encode(c, at));
+                    entry.write(3, c.params.len);
+                    at = at + size_of(c);
+                });
+            });
             vm ::= Interp(
+                info: info,
                 codes: codes,
                 program: program,
                 platform: platform,
@@ -152,7 +169,7 @@ execute* = (a: Alloc, program: Program, platform: Platform, argv: Vec<str>)
                 held: 0,
                 word: 0
             );
-            Ok(Ok(vm.main()))
+            (info == 0).match({ true => Ok(None), false => Ok(Ok(vm.main())) })
         },
     })
 }
@@ -212,6 +229,9 @@ Interp = {
     word :: usize,
     // Each function decoded once (gen_jit_decode).
     codes: Vec<Code>,
+    // gen_jit_decode `encode`d functions, through a table of four words per
+    // function: steps, frame size, parameter pairs, parameter count.
+    info: usize,
 
     // The entry's result, then the exit hook a program may install in its
     // first process word, as `zr_exit` runs it.
@@ -327,165 +347,159 @@ Interp = {
 
     run = (self :: @Self, index: usize, f: Func, frame: usize, out: usize)
           Outcome {
-        self.codes.get(index).match({
-            None     => self.fault("a function that was not decoded"),
-            Ok(code) => self.perform(index, f, code, frame, out),
-        })
+        self.perform(index, frame, out)
     }
 
-    // The decoded steps of function `index`, from the first.
-    perform = (self :: @Self, index: usize, f: Func, code: Code, frame: usize,
-               out: usize) Outcome {
+    // The encoded steps of function `index` (gen_jit_decode `encode`).
+    perform = (self :: @Self, index: usize, frame: usize, out: usize)
+              Outcome {
+        table = part(self.info +% index *% 32, 0);
         pc    :: usize = 0;
         ended :: Outcome = Outcome.Returned;
         going ::= true;
         going.loop((h) {
+            s = table +% pc *% 64;
+            next :: usize = pc +% 1;
             stop :: Res<Outcome> = None;
-            next :: usize = pc + 1;
-            code.steps.get(pc).match({
-                None  => { stop = Ok(self.fault(
-                    "a step past the end of a function"
+            part(s, 0).match({
+                1  => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2))
+                ),
+                0  => set_u64(frame +% part(s, 1), part_u64(s, 4)),
+                4  => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% part(s, 3)).to<u64>().read(0)
+                ),
+                6  => pointer_at(load_usize(frame +% part(s, 1)) +% part(s, 3))
+                    .to<u64>()
+                    .write(0, load_u64(frame +% part(s, 2))),
+                26 => {
+                    left  = load_i64(frame +% part(s, 2));
+                    right = load_i64(frame +% part(s, 3));
+                    holds = ordered_code(
+                        part(s, 5),
+                        left < right,
+                        left == right
+                    );
+                    set_u64(frame +% part(s, 1), truth(holds));
+                    next = holds.match({ true => part(s, 4), false => part(s, 7) });
+                },
+                27 => {
+                    left  = load_u64(frame +% part(s, 2));
+                    right = load_u64(frame +% part(s, 3));
+                    holds = ordered_code(
+                        part(s, 5),
+                        left < right,
+                        left == right
+                    );
+                    set_u64(frame +% part(s, 1), truth(holds));
+                    next = holds.match({ true => part(s, 4), false => part(s, 7) });
+                },
+                21 => { next = part(s, 1); },
+                22 => {
+                    next = (pointer_at(frame +% part(s, 1)).read(0) != 0).match({
+                        true  => part(s, 2),
+                        false => part(s, 3),
+                    });
+                },
+                8  => { stop = self.wide_signed(index, frame, s, Op.Add); },
+                9  => { stop = self.wide_signed(index, frame, s, Op.Sub); },
+                10 => { stop = self.wide_signed(index, frame, s, Op.Mul); },
+                11 => { stop = self.narrow_signed(index, frame, s, Op.Add); },
+                12 => { stop = self.narrow_signed(index, frame, s, Op.Sub); },
+                13 => { stop = self.narrow_signed(index, frame, s, Op.Mul); },
+                14 => { stop = self.unsigned(index, frame, s, Op.Add); },
+                15 => { stop = self.unsigned(index, frame, s, Op.Sub); },
+                16 => { stop = self.unsigned(index, frame, s, Op.Mul); },
+                28 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_and(load_u64(frame +% part(s, 3)))
+                ),
+                29 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_or(load_u64(frame +% part(s, 3)))
+                ),
+                30 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_xor(load_u64(frame +% part(s, 3)))
+                ),
+                19 => {
+                    n     = part(s, 4);
+                    left  = load_u64(frame +% part(s, 2));
+                    right = load_u64(frame +% part(s, 3));
+                    set_u64(
+                        frame +% part(s, 1),
+                        bits(
+                            op_of(part(s, 5)),
+                            low(left, n),
+                            low(right, n),
+                            left,
+                            right,
+                            n * 8
+                        )
+                    );
+                    extend_code(frame +% part(s, 1), part(s, 7));
+                },
+                17 => {
+                    left  = load_i64(frame +% part(s, 2));
+                    right = load_i64(frame +% part(s, 3));
+                    set_u64(
+                        frame +% part(s, 1),
+                        truth(ordered_code(
+                            part(s, 5),
+                            left < right,
+                            left == right
+                        ))
+                    );
+                },
+                18 => {
+                    left  = load_u64(frame +% part(s, 2));
+                    right = load_u64(frame +% part(s, 3));
+                    set_u64(
+                        frame +% part(s, 1),
+                        truth(ordered_code(
+                            part(s, 5),
+                            left < right,
+                            left == right
+                        ))
+                    );
+                },
+                20 => { stop = self.call(frame, s); },
+                23 => {
+                    size = part(s, 4);
+                    (size == 8).match({
+                        true  => set_u64(out, load_u64(frame +% part(s, 1))),
+                        false => move_bytes(out, frame +% part(s, 1), size),
+                    });
+                    going = false;
+                    h.break();
+                },
+                2  => move_bytes(
+                    frame +% part(s, 1),
+                    frame +% part(s, 2),
+                    part(s, 4)
+                ),
+                3  => set_usize(frame +% part(s, 1), frame +% part(s, 2)),
+                5  => {
+                    set_u64(frame +% part(s, 1), 0);
+                    move_bytes(
+                        frame +% part(s, 1),
+                        load_usize(frame +% part(s, 2)) +% part(s, 3),
+                        part(s, 5)
+                    );
+                    extend_code(frame +% part(s, 1), part(s, 7));
+                },
+                7  => move_bytes(
+                    load_usize(frame +% part(s, 1)) +% part(s, 3),
+                    frame +% part(s, 2),
+                    part(s, 5)
+                ),
+                24 => { stop = Ok(self.trapped(index, part(s, 4))); },
+                25 => { stop = self.cold(index, frame, part(s, 4)); },
+                _  => { stop = Ok(self.fault(
+                    "a step the interpreter does not know"
                 )); },
-                Ok(s) => s.kind.match({
-                    ConstWord       => set_u64(frame + s.a, s.n),
-                    CopyWord        => set_u64(
-                        frame + s.a,
-                        load_u64(frame + s.b)
-                    ),
-                    CopyBlock       => move_bytes(
-                        frame + s.a,
-                        frame + s.b,
-                        s.n.to_usize().value_or(0)
-                    ),
-                    AddressOf       => set_usize(frame + s.a, frame + s.b),
-                    Load            => (s.w == 8).match({
-                        true  => set_u64(
-                            frame + s.a,
-                            pointer_at(load_usize(frame + s.b) + s.c).to<u64>().read(0)
-                        ),
-                        false => {
-                            set_u64(frame + s.a, 0);
-                            move_bytes(
-                                frame + s.a,
-                                load_usize(frame + s.b) + s.c,
-                                s.w
-                            );
-                            extend(frame + s.a, s.ty);
-                        },
-                    }),
-                    Store           => (s.w == 8).match({
-                        true  => pointer_at(load_usize(frame + s.a) + s.c).to<u64>().write(0, load_u64(frame + s.b)),
-                        false => move_bytes(
-                            load_usize(frame + s.a) + s.c,
-                            frame + s.b,
-                            s.w
-                        ),
-                    }),
-                    AddSigned       => { stop = self.signed(
-                        index,
-                        f,
-                        code,
-                        frame,
-                        s,
-                        Op.Add
-                    ); },
-                    SubSigned       => { stop = self.signed(
-                        index,
-                        f,
-                        code,
-                        frame,
-                        s,
-                        Op.Sub
-                    ); },
-                    MulSigned       => { stop = self.signed(
-                        index,
-                        f,
-                        code,
-                        frame,
-                        s,
-                        Op.Mul
-                    ); },
-                    AddUnsigned     => { stop = self.unsigned(
-                        index,
-                        f,
-                        code,
-                        frame,
-                        s,
-                        Op.Add
-                    ); },
-                    SubUnsigned     => { stop = self.unsigned(
-                        index,
-                        f,
-                        code,
-                        frame,
-                        s,
-                        Op.Sub
-                    ); },
-                    MulUnsigned     => { stop = self.unsigned(
-                        index,
-                        f,
-                        code,
-                        frame,
-                        s,
-                        Op.Mul
-                    ); },
-                    CompareSigned   => set_u64(
-                        frame + s.a,
-                        truth(ordered_code(
-                            s.w,
-                            load_i64(frame + s.b) < load_i64(frame + s.c),
-                            load_i64(frame + s.b) == load_i64(frame + s.c)
-                        ))
-                    ),
-                    CompareUnsigned => set_u64(
-                        frame + s.a,
-                        truth(ordered_code(
-                            s.w,
-                            load_u64(frame + s.b) < load_u64(frame + s.c),
-                            load_u64(frame + s.b) == load_u64(frame + s.c)
-                        ))
-                    ),
-                    Bits            => {
-                        n = width(s.ty);
-                        set_u64(
-                            frame + s.a,
-                            bits(
-                                op_of(s.w),
-                                low(load_u64(frame + s.b), n),
-                                low(load_u64(frame + s.c), n),
-                                load_u64(frame + s.b),
-                                load_u64(frame + s.c),
-                                n * 8
-                            )
-                        );
-                        extend(frame + s.a, s.ty);
-                    },
-                    Call            => { stop = self.call(frame, code, s); },
-                    Jump            => { next = s.a; },
-                    Branch          => {
-                        next = (pointer_at(frame + s.a).read(0) != 0).match({ true => s.b, false => s.c });
-                    },
-                    Return          => {
-                        move_bytes(out, frame + s.a, cell_size(s.ty));
-                        going = false;
-                        h.break();
-                    },
-                    Trap            => {
-                        stop = Ok(code.faults.get(s.n.to_usize().value_or(
-                            0
-                        )).match({
-                            Ok(fault) => self.trap(fault.span, fault.what),
-                            None      => self.fault("a trap without its fault"),
-                        }));
-                    },
-                    Slow            => { stop = self.slow(
-                        index,
-                        f,
-                        code,
-                        frame,
-                        s.n.to_usize().value_or(0)
-                    ); },
-                }),
             });
             stop.match({
                 Ok(outcome) => { ended = outcome; going = false; h.break(); },
@@ -496,86 +510,93 @@ Interp = {
     }
 
     // The IR instruction behind a step, run the general way.
-    slow = (self :: @Self, index: usize, f: Func, code: Code, frame: usize,
-            at: usize) Res<Outcome> {
-        code.slow.get(at).match({
-            None            => Ok(self.fault(
-                "a slow step without its instruction"
-            )),
-            Ok(instruction) => self.step(index, f, frame, instruction),
+    cold = (self :: @Self, index: usize, frame: usize, at: usize)
+           Res<Outcome> {
+        self.codes.get(index).match({
+            None     => Ok(self.fault("a step without its function")),
+            Ok(code) => self.program.functions.get(index).match({
+                None  => Ok(self.fault("a step without its function")),
+                Ok(f) => code.slow.get(at).match({
+                    None            => Ok(self.fault(
+                        "a slow step without its instruction"
+                    )),
+                    Ok(instruction) => self.step(index, f, frame, instruction),
+                }),
+            }),
         })
     }
 
-    // Checked signed arithmetic; an overflow traps through the IR form.
-    signed = (self :: @Self, index: usize, f: Func, code: Code, frame: usize,
-              s: Step, op: Op) Res<Outcome> {
-        a                = load_i64(frame + s.b);
-        b                = load_i64(frame + s.c);
-        result: Res<i64> = (s.w == 8).match({
-            true  => signed_wide(op, a, b),
-            false => {
-                sum = op.match({ Add => a + b, Sub => a - b, _ => a * b });
-                (sum < minimum(s.ty) || sum > maximum(s.ty)).match({ true => None, false => Ok(sum) })
-            },
-        });
-        result.match({
-            Ok(value) => { set_i64(frame + s.a, value); None },
-            None      => self.slow(index, f, code, frame, s.slow),
+    trapped = (self :: @Self, index: usize, at: usize) Outcome {
+        self.codes.get(index).match({
+            None     => self.fault("a trap without its fault"),
+            Ok(code) => code.faults.get(at).match({
+                Ok(fault) => self.trap(fault.span, fault.what),
+                None      => self.fault("a trap without its fault"),
+            }),
         })
     }
 
-    unsigned = (self :: @Self, index: usize, f: Func, code: Code, frame: usize,
-                s: Step, op: Op) Res<Outcome> {
+    // Checked arithmetic; an overflow traps through the IR form.
+    wide_signed = (self :: @Self, index: usize, frame: usize, s: usize, op: Op)
+                  Res<Outcome> {
+        signed_wide(
+            op,
+            load_i64(frame +% part(s, 2)),
+            load_i64(frame +% part(s, 3))
+        ).match({
+            Ok(value) => { set_i64(frame +% part(s, 1), value); None },
+            None      => self.cold(index, frame, part(s, 6)),
+        })
+    }
+
+    narrow_signed = (self :: @Self, index: usize, frame: usize, s: usize,
+                     op: Op) Res<Outcome> {
+        a   = load_i64(frame +% part(s, 2));
+        b   = load_i64(frame +% part(s, 3));
+        sum = op.match({ Add => a + b, Sub => a - b, _ => a * b });
+        (sum < part_i64(s, 4) || sum > part_i64(s, 7)).match({
+            true  => self.cold(index, frame, part(s, 6)),
+            false => { set_i64(frame +% part(s, 1), sum); None },
+        })
+    }
+
+    unsigned = (self :: @Self, index: usize, frame: usize, s: usize, op: Op)
+               Res<Outcome> {
         unsigned_exact(
             op,
-            load_u64(frame + s.b),
-            load_u64(frame + s.c),
-            ceiling(s.ty)
+            load_u64(frame +% part(s, 2)),
+            load_u64(frame +% part(s, 3)),
+            part_u64(s, 4)
         ).match({
-            Ok(value) => { set_u64(frame + s.a, value); None },
-            None      => self.slow(index, f, code, frame, s.slow),
+            Ok(value) => { set_u64(frame +% part(s, 1), value); None },
+            None      => self.cold(index, frame, part(s, 6)),
         })
     }
 
-    // A decoded call: arguments copied by the callee's parameter sizes.
-    call = (self :: @Self, frame: usize, code: Code, s: Step) Res<Outcome> {
-        callee = s.n.to_usize().value_or(0);
-        self.codes.get(callee).match({
-            None       => Ok(self.fault(
-                "a call to a function that does not exist"
-            )),
-            Ok(target) => self.program.functions.get(callee).match({
-                None  => Ok(self.fault(
-                    "a call to a function that does not exist"
-                )),
-                Ok(g) => {
-                    saved = self.top;
-                    inner = self.push(callee);
-                    (inner == 0).match({
-                        true  => Ok(self.overflowed()),
-                        false => {
-                            Range(0, s.c).loop((i) {
-                                to   = inner + target.params.get(i).value_or(0);
-                                from = frame + code.args.get(s.b + i).value_or(0);
-                                size = target.sizes.get(i).value_or(0);
-                                (size == 8).match({
-                                    true  => set_u64(to, load_u64(from)),
-                                    false => move_bytes(to, from, size),
-                                });
-                            });
-                            ended    = self.perform(
-                                callee,
-                                g,
-                                target,
-                                inner,
-                                frame + s.a
-                            );
-                            self.top = saved;
-                            unwound(ended)
-                        },
-                    })
-                },
-            }),
+    // A call: arguments copied by the callee's parameter pairs.
+    call = (self :: @Self, frame: usize, s: usize) Res<Outcome> {
+        callee = part(s, 4);
+        info   = self.info +% callee *% 32;
+        inner  = self.top;
+        (inner +% part(info, 1) > self.limit).match({
+            true  => Ok(self.overflowed()),
+            false => {
+                self.top = inner +% part(info, 1);
+                args     = part(s, 2);
+                params   = part(info, 2);
+                Range(0, part(s, 3)).loop((i) {
+                    to   = inner +% part(params, 2 *% i);
+                    size = part(params, 2 *% i +% 1);
+                    from = frame +% part(args, i);
+                    (size == 8).match({
+                        true  => set_u64(to, load_u64(from)),
+                        false => move_bytes(to, from, size),
+                    });
+                });
+                ended    = self.perform(callee, inner, frame +% part(s, 1));
+                self.top = inner;
+                unwound(ended)
+            },
         })
     }
 
@@ -1326,6 +1347,25 @@ set_i64 = (at: usize, value: i64) { pointer_at(at).to<i64>().write(0, value); }
 set_usize = (at: usize, value: usize) { pointer_at(at).to<usize>().write(0, value); }
 set_f64 = (at: usize, value: f64) { pointer_at(at).to<f64>().write(0, value); }
 
+// Word `k` of an encoded step or table.
+part = (at: usize, k: usize) usize { pointer_at(at).to<usize>().read(k) }
+part_u64 = (at: usize, k: usize) u64 { pointer_at(at).to<u64>().read(k) }
+part_i64 = (at: usize, k: usize) i64 { pointer_at(at).to<i64>().read(k) }
+
+// `extend` by gen_jit_decode's `widening` code.
+extend_code = (at: usize, code: usize) {
+    p = pointer_at(at);
+    code.match({
+        1 => set_i64(at, p.to<i8>().read(0).to_i64()),
+        2 => set_u64(at, p.read(0).to_u64()),
+        3 => set_i64(at, p.to<i16>().read(0).to_i64()),
+        4 => set_u64(at, p.to<u16>().read(0).to_u64()),
+        5 => set_i64(at, p.to<i32>().read(0).to_i64()),
+        6 => set_u64(at, p.to<u32>().read(0).to_u64()),
+        _ => (),
+    })
+}
+
 // A system-call argument read at its declared width.
 int = (at: usize) i32 { pointer_at(at).to<i32>().read(0) }
 word32 = (at: usize) u32 { pointer_at(at).to<u32>().read(0) }
@@ -1355,18 +1395,6 @@ low = (value: u64, n: usize) u64 {
 }
 
 ONE: u64 = 1
-
-minimum = (ty: Scalar) i64 {
-    ty.match({ I8 => -128, I16 => -32768, I32 => -2147483648, _ => i64.MIN })
-}
-
-maximum = (ty: Scalar) i64 {
-    ty.match({ I8 => 127, I16 => 32767, I32 => 2147483647, _ => i64.MAX })
-}
-
-ceiling = (ty: Scalar) u64 {
-    ty.match({ U8 => 255, Bool => 255, U16 => 65535, U32 => 4294967295, _ => u64.MAX })
-}
 
 // Checked i64 Add, Sub and Mul; None on overflow.
 signed_wide = (op: Op, a: i64, b: i64) Res<i64> {

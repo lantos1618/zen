@@ -27,6 +27,8 @@
 { Pat, PatReading, read_pattern, value_agrees } = sema.sema
 { is_drop_type } = sema.sema_drop
 { Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ sym_fn, sym_local } = gen.gen_name
+{ written_secret } = sema.sema_secret
 { Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, SysValue } = gen.gen_ir
@@ -3378,10 +3380,14 @@ Lowerer* = {
         f.params.loop((p) { params.add(p).try(LowerError.OutOfMemory); });
         kinds ::= self.alloc.Vec<LocalKind>();
         params.loop((p) {
-            ty         = p.type.ok_or(unsupported(
+            ty = p.type.ok_or(unsupported(
                 p.span,
                 "an inferred parameter type"
             )).try();
+            // tools/ct seeds its taint analysis from gen_c's Secret markers.
+            (!written_secret(self.check, ty, callee.module))
+                .ensure(unsupported(p.span, "a Secret parameter"))
+                .try();
             t          = self.callee_type(callee, ty).try();
             capability = self.shape(t).try().class.match({ Unit => self.is_capability(t), _ => false });
             capability.match({
@@ -3471,6 +3477,11 @@ Lowerer* = {
             true  => Scalar.I32,
             false => self.class_of(ret_ty).try(),
         });
+        symbol       = self.c_symbol(callee, entry).try();
+        locals       = (symbol.len > 0 && f.params.len == parameters).match({
+            true  => Ok(self.c_locals(f).try()),
+            false => None,
+        });
         Ok(Func(
             name: f.name.text,
             parameters: parameters,
@@ -3480,8 +3491,57 @@ Lowerer* = {
             guards: Ok(Guards(
                 tests: self.tag_guards,
                 reads: self.payload_reads
-            ))
+            )),
+            symbol: symbol,
+            locals: locals
         ))
+    }
+
+    // The symbol gen_c spells for a free function; "" for members and the
+    // entry, which keep the renderer's own names.
+    c_symbol = (self :: @Self, callee: Callee, entry: bool) Res<str, LowerError> {
+        free = callee.member.match({ Ok(_) => false, None => !entry });
+        free.match({
+            false => Ok(""),
+            true  => {
+                sig ::= self.alloc.Vec<TyId>();
+                callee.f.params.loop((p) {
+                    ty = p.type.ok_or(unsupported(
+                        p.span,
+                        "an inferred parameter type"
+                    )).try();
+                    sig.add(
+                        self.callee_type(callee, ty).try()
+                    ).try(LowerError.OutOfMemory);
+                });
+                qname ::= self.alloc.String().try(LowerError.OutOfMemory);
+                qname.fmt(
+                    "{}.{}",
+                    self.check.world.module_name(callee.owner),
+                    callee.f.name.text
+                ).try(LowerError.OutOfMemory);
+                out ::= self.alloc.String().try(LowerError.OutOfMemory);
+                sym_fn(
+                    out,
+                    self.check.types,
+                    self.check.world,
+                    qname.view(),
+                    sig,
+                    callee.inst
+                ).try(LowerError.OutOfMemory);
+                Ok(out.view())
+            },
+        })
+    }
+
+    c_locals = (self :: @Self, f: Function) Res<Vec<str>, LowerError> {
+        out ::= self.alloc.Vec<str>();
+        f.params.loop((p) {
+            name ::= self.alloc.String().try(LowerError.OutOfMemory);
+            sym_local(name, p.name.text, 1).try(LowerError.OutOfMemory);
+            out.add(name.view()).try(LowerError.OutOfMemory);
+        });
+        Ok(out)
     }
 
     // A function that cannot run: same signature, a trap for a body.

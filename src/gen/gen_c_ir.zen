@@ -33,6 +33,7 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         first: a.Vec<usize>(),
         borrowed: a.Vec<bool>(),
         taken: a.Vec<bool>(),
+        names: a.Vec<str>(),
         origin: a.Vec<usize>(),
         escaped: a.Vec<bool>(),
         stored: a.Vec<bool>(),
@@ -73,6 +74,7 @@ C = {
     first :: Vec<usize>,
     borrowed :: Vec<bool>,
     taken :: Vec<bool>,
+    names :: Vec<str>,
     // From `survey`, per slot of one function: the slot an address slot
     // points at (plus one; zero for none), whether that slot's address
     // leaves loads (`escaped`), is stored through (`stored`), and whether an
@@ -115,23 +117,23 @@ C = {
         self.out.add(
             "int main(int argc, char **argv, char **envp) {\n  zr_argc = (uint64_t)argc;\n  zr_argv = (uint64_t)(uintptr_t)argv;\n  zr_envp = (uint64_t)(uintptr_t)envp;\n"
         ).try();
-        unit_entry.match({
-            true  => self.out.fmt(
-                "  zf{}();\n  zr_exit(0);\n}}\n",
-                program.entry
-            ),
-            false => self.out.fmt(
-                "  zr_exit((int)zf{}());\n}}\n",
-                program.entry
-            ),
-        })
+        self.out.add(
+            unit_entry.match({ true => "  ", false => "  zr_exit((int)" })
+        ).try();
+        self.callee_name(program.entry).try();
+        self.out.add(unit_entry.match({
+            true  => "();\n  zr_exit(0);\n}\n",
+            false => "());\n}\n",
+        }))
     }
 
     signature = (self :: @Self, index: usize, function: Func) Res<(), AllocError> {
         self.need(function.result).try();
         self.out.add("static ZR_U ").try();
         self.out.ctype(function.result).try();
-        self.out.fmt(" zf{}(", index).try();
+        self.out.add(" ").try();
+        self.callee_name(index).try();
+        self.out.add("(").try();
         (function.parameters == 0).then(() { self.out.add("void").try(); });
         // A body lowered to traps alone never reads its parameters, though
         // the source did, and a unit parameter carries nothing to read; only
@@ -146,13 +148,30 @@ C = {
             (stub || ty.match({ Unit => true, _ => false })).then(() {
                 self.out.add("ZR_U ").try();
             });
+            self.by_pointer(index, i).then(() { self.out.add("const ").try(); });
             self.out.ctype(ty).try();
-            self.by_pointer(index, i).match({
-                true  => self.out.fmt(" *zp{}", i),
-                false => self.out.fmt(" v{}", i),
+            borrowed = self.by_pointer(index, i);
+            self.out.add(borrowed.match({ true => " *", false => " " })).try();
+            local = param_name(function, i);
+            (local.len > 0).match({
+                true  => self.out.add(local),
+                false => {
+                    self.out.add(
+                        borrowed.match({ true => "zp", false => "v" })
+                    ).try();
+                    self.out.fmt("{}", i)
+                },
             }).try();
         });
         self.out.add(')')
+    }
+
+    callee_name = (self :: @Self, index: usize) Res<(), AllocError> {
+        symbol = self.names.get(index).value_or("");
+        (symbol.len > 0).match({
+            true  => self.out.add(symbol),
+            false => self.out.fmt("zf{}", index),
+        })
     }
 
     // Which aggregate parameters travel by pointer. A function whose address
@@ -171,6 +190,9 @@ C = {
             });
         });
         self.taken.set(program.entry, true);
+        program.functions.loop(
+            (function) { self.names.add(function.symbol).try(); }
+        );
         program.functions.loop((h, index, function) {
             self.first.add(self.borrowed.len).try();
             self.survey(function).try();
@@ -523,10 +545,16 @@ C = {
                     true  => Ok,
                     false => {
                         self.layouts.add(layout).try();
+                        // One field per line, as gen_c spells records, so
+                        // tools/ct can lay out the parameters it audits.
                         self.head.fmt(
-                            "typedef struct {{ unsigned char b[{}]; }} __attribute__((aligned({}))) zb{}_{};\n",
+                            "struct zb{}_{} {{\n    unsigned char b[{}];\n}} __attribute__((aligned({})));\ntypedef struct zb{}_{} zb{}_{};\n",
+                            layout.size,
+                            layout.align,
                             at_least_one(layout.size),
                             at_least_one(layout.align),
+                            layout.size,
+                            layout.align,
                             layout.size,
                             layout.align
                         )
@@ -542,9 +570,18 @@ C = {
         self.out.add(" {\n").try();
         // A borrowed parameter's reads go through its pointer.
         Range(0, function.parameters).loop((i) {
-            self.by_pointer(index, i).then(() {
-                self.out.fmt("#define v{} (*zp{})\n", i, i).try();
-            });
+            local    = param_name(function, i);
+            borrowed = self.by_pointer(index, i);
+            (local.len > 0).match({
+                true  => borrowed.match({
+                    true  => self.out.fmt("#define v{} (*{})\n", i, local),
+                    false => self.out.fmt("#define v{} {}\n", i, local),
+                }),
+                false => borrowed.match({
+                    true  => self.out.fmt("#define v{} (*zp{})\n", i, i),
+                    false => Ok,
+                }),
+            }).try();
         });
         self.survey(function).try();
         self.copies = 0;
@@ -649,7 +686,7 @@ C = {
         });
         self.out.add("}\n").try();
         Range(0, function.parameters).loop((i) {
-            self.by_pointer(index, i).then(() {
+            (self.by_pointer(index, i) || param_name(function, i).len > 0).then(() {
                 self.out.fmt("#undef v{}\n", i).try();
             });
         });
@@ -852,11 +889,11 @@ C = {
                     value.out
                 )
             },
-            CodeAddress(value)  => self.out.fmt(
-                "  v{} = (uint64_t)(uintptr_t)&zf{};\n",
-                value.out,
-                value.function
-            ),
+            CodeAddress(value)  => {
+                self.out.fmt("  v{} = (uint64_t)(uintptr_t)&", value.out).try();
+                self.callee_name(value.function).try();
+                self.out.add(";\n")
+            },
             InvokeAt(value)     => self.indirect(f, value),
             // Outside `supports`; the driver refuses it before rendering.
             _                   => self.out.add(OUTSIDE),
@@ -877,7 +914,9 @@ C = {
             });
         });
         copy ::= first;
-        self.out.fmt("  v{} = zf{}(", call.out, call.function).try();
+        self.out.fmt("  v{} = ", call.out).try();
+        self.callee_name(call.function).try();
+        self.out.add("(").try();
         call.args.loop((h, i, slot) {
             (i > 0).then(() { self.out.add(", ").try(); });
             self.copied(call, i, slot).match({
@@ -1772,4 +1811,9 @@ class_of = (ty: Scalar) usize {
         F64      => 11,
         Block(_) => 12,
     })
+}
+
+// The parameter's gen_c name, or "" for the renderer's own.
+param_name = (function: Func, i: usize) str {
+    function.locals.match({ Ok(names) => names.get(i).value_or(""), None => "" })
 }

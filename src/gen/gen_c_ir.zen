@@ -574,20 +574,51 @@ C = {
                 });
             });
         });
+        // A sanitizer pads every addressable local and re-marks it at every
+        // label, so under one the block slots share a single frame instead.
+        frame ::= false;
+        Range(function.parameters, function.slots.len).loop((i) {
+            ty = slot_ty(function, i);
+            self.need(ty).try();
+            self.framed(function, i).then(() {
+                (!frame).then(() {
+                    self.out.add("#ifdef ZR_ASAN\n  ZR_U struct {").try();
+                });
+                frame = true;
+                self.out.add(" ").try();
+                self.out.ctype(ty).try();
+                self.out.fmt(" v{};", i).try();
+            });
+        });
+        frame.then(() {
+            self.out.add(
+                " } *const zr_fr = __builtin_alloca_with_align(sizeof *zr_fr, 8 * __alignof__(*zr_fr));\n"
+            ).try();
+            Range(function.parameters, function.slots.len).loop((i) {
+                self.framed(function, i).then(() {
+                    self.out.fmt("#define v{} zr_fr->v{}\n", i, i).try();
+                });
+            });
+            self.out.add("#else\n").try();
+            Range(function.parameters, function.slots.len).loop((i) {
+                self.framed(function, i).then(() {
+                    self.out.add("  ZR_U ").try();
+                    self.out.ctype(slot_ty(function, i)).try();
+                    self.out.fmt(" v{};\n", i).try();
+                });
+            });
+            self.out.add("#endif\n").try();
+        });
         // The verifier has proved every read follows a write, so zeroing is
         // only a hint: an optimizer folds the zeroed scalars well, while an
         // unoptimized build would store each one on every call (ZR_Z).
         Range(function.parameters, function.slots.len).loop((i) {
-            ty = slot_ty(function, i);
-            self.need(ty).try();
-            (self.target.get(i).value_or(0) == 0).then(() {
-                self.out.add("  ZR_U ").try();
-                self.out.ctype(ty).try();
-                is_block(ty).match({
-                    true  => self.out.fmt(" v{};\n", i),
-                    false => self.out.fmt(" v{} ZR_Z;\n", i),
-                }).try();
-            });
+            (self.target.get(i).value_or(0) == 0 && !self.framed(function, i))
+                .then(() {
+                    self.out.add("  ZR_U ").try();
+                    self.out.ctype(slot_ty(function, i)).try();
+                    self.out.fmt(" v{} ZR_Z;\n", i).try();
+                });
         });
         self.labels.clear();
         function.blocks.loop((_) { self.labels.add(false).try(); });
@@ -623,11 +654,14 @@ C = {
             });
         });
         Range(function.parameters, function.slots.len).loop((i) {
-            (self.target.get(i).value_or(0) != 0).then(() {
-                self.out.fmt("#undef v{}\n", i).try();
-            });
+            (self.target.get(i).value_or(0) != 0 || self.framed(function, i))
+                .then(() { self.out.fmt("#undef v{}\n", i).try(); });
         });
         Ok
+    }
+
+    framed = (self: @Self, f: Func, slot: usize) bool {
+        self.target.get(slot).value_or(0) == 0 && is_block(slot_ty(f, slot))
     }
 
     // `next` is the block rendered after this one; a jump to it falls through.
@@ -1380,6 +1414,9 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("#include <sys/syscall.h>\n").try();
     out.add("#endif\n").try();
     out.add("#define ZR_U __attribute__((unused))\n").try();
+    out.add(
+        "#if defined(__SANITIZE_ADDRESS__)\n#define ZR_ASAN 1\n#elif defined(__has_feature)\n#if __has_feature(address_sanitizer)\n#define ZR_ASAN 1\n#endif\n#endif\n"
+    ).try();
     // Scalar loads and stores through an address use these may_alias,
     // byte-aligned spellings: a plain move even unoptimized, and still
     // defined under strict aliasing. GCC ignores may_alias on a typedef of

@@ -23,6 +23,8 @@ Kind* = { ConstWord
     | AddUnsigned
     | SubUnsigned
     | MulUnsigned
+    | DivUnsigned
+    | RemUnsigned
     | CompareSigned
     | CompareUnsigned
     | Bits
@@ -256,7 +258,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
 }
 
 // The fast kind of an integer binary operation; None for what stays slow
-// (floats, division, Unit comparisons).
+// (floats, signed division, Unit comparisons).
 arithmetic = (op: Op, ty: Scalar) Res<Kind> {
     (integer(ty) || ty.match({ Bool => true, Ptr => true, _ => false })).match({
         false => None,
@@ -276,8 +278,8 @@ arithmetic = (op: Op, ty: Scalar) Res<Kind> {
                     ty
                 ).match({ true => Kind.MulSigned, false => Kind.MulUnsigned })
             ),
-            Div          => None,
-            Rem          => None,
+            Div          => unsigned_integer(ty).match({ true => Ok(Kind.DivUnsigned), false => None }),
+            Rem          => unsigned_integer(ty).match({ true => Ok(Kind.RemUnsigned), false => None }),
             Equal        => Ok(compare(ty)),
             NotEqual     => Ok(compare(ty)),
             Less         => Ok(compare(ty)),
@@ -288,6 +290,8 @@ arithmetic = (op: Op, ty: Scalar) Res<Kind> {
         }),
     })
 }
+
+unsigned_integer = (ty: Scalar) bool { integer(ty) && !signed(ty) }
 
 compare = (ty: Scalar) Kind { signed(
     ty
@@ -364,16 +368,11 @@ encode* = (code: Code, at: usize) usize {
             AddUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 14 },
             SubUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 15 },
             MulUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 16 },
+            DivUnsigned     => 43,
+            RemUnsigned     => 44,
             CompareSigned   => fused(out, s, code, i, 17),
             CompareUnsigned => fused(out, s, code, i, 18),
-            Bits            => (s.w >= 9 && s.w <= 11).match({
-                true  => s.w + 19,
-                false => {
-                    put(out, 4, width(s.ty));
-                    put(out, 7, widening(s.ty));
-                    19
-                },
-            }),
+            Bits            => bit_step(out, s),
             Call            => { put(out, 2, args + s.b * 8); 20 },
             Jump            => 21,
             Branch          => 22,
@@ -396,6 +395,28 @@ encode* = (code: Code, at: usize) usize {
         put(params, 2 * i + 1, code.sizes.get(i).value_or(0));
     });
     params
+}
+
+// A bit step: and/or/xor read whole words; 64-bit and u32 wrapping
+// arithmetic, shifts and rotates get their own opcodes; the rest take the
+// general path with its width in n and extension code in x.
+bit_step = (out: usize, s: Step) usize {
+    plain = s.w == 6 || s.w == 7 || s.w == 8 || s.w >= 12 && s.w <= 14;
+    lane  = s.w.match({ 6 => 0, 7 => 1, 8 => 2, 12 => 3, 13 => 4, _ => 5 });
+    (s.w >= 9 && s.w <= 11).match({
+        true  => s.w + 19,
+        false => (plain && width(s.ty) == 8).match({
+            true  => 31 + lane,
+            false => (plain && s.ty.match({ U32 => true, _ => false })).match({
+                true  => 37 + lane,
+                false => {
+                    put(out, 4, width(s.ty));
+                    put(out, 7, widening(s.ty));
+                    19
+                },
+            }),
+        }),
+    })
 }
 
 // A checked signed step: 64-bit, or narrow with its bounds in n and x.

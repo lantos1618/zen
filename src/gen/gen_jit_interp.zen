@@ -424,6 +424,82 @@ Interp = {
                     frame +% part(s, 1),
                     load_u64(frame +% part(s, 2)).bit_xor(load_u64(frame +% part(s, 3)))
                 ),
+                31 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)) +% load_u64(frame +% part(s, 3))
+                ),
+                32 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)) -% load_u64(frame +% part(s, 3))
+                ),
+                33 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)) *% load_u64(frame +% part(s, 3))
+                ),
+                34 => set_u64(frame +% part(s, 1), shifted(s, frame, true)),
+                35 => set_u64(frame +% part(s, 1), shifted(s, frame, false)),
+                36 => {
+                    a    = load_u64(frame +% part(s, 2));
+                    turn = load_usize(frame +% part(s, 3)) % 64;
+                    set_u64(frame +% part(s, 1), (turn == 0).match({
+                        true  => a,
+                        false => a.shift_right(turn).bit_or(a.shift_left(64 - turn)),
+                    }));
+                },
+                37 => set_u64(
+                    frame +% part(s, 1),
+                    (load_u64(frame +% part(s, 2)) +% load_u64(frame +% part(s, 3)))
+                        .bit_and(4294967295)
+                ),
+                38 => set_u64(
+                    frame +% part(s, 1),
+                    (load_u64(frame +% part(s, 2)) -% load_u64(frame +% part(s, 3)))
+                        .bit_and(4294967295)
+                ),
+                39 => set_u64(
+                    frame +% part(s, 1),
+                    (load_u64(frame +% part(s, 2)) *% load_u64(frame +% part(s, 3)))
+                        .bit_and(4294967295)
+                ),
+                40 => set_u64(frame +% part(s, 1), shifted32(s, frame, true)),
+                41 => set_u64(frame +% part(s, 1), shifted32(s, frame, false)),
+                42 => {
+                    a    = load_u64(frame +% part(s, 2)).bit_and(4294967295);
+                    turn = load_usize(frame +% part(s, 3)) % 32;
+                    set_u64(frame +% part(s, 1), (turn == 0).match({
+                        true  => a,
+                        false => a.shift_right(turn).bit_or(a.shift_left(32 - turn))
+                            .bit_and(4294967295),
+                    }));
+                },
+                43 => {
+                    r = load_u64(frame +% part(s, 3));
+                    (r == 0).match({
+                        true  => { stop = self.cold(
+                            index,
+                            frame,
+                            part(s, 6)
+                        ); },
+                        false => { set_u64(
+                            frame +% part(s, 1),
+                            load_u64(frame +% part(s, 2)) / r
+                        ); },
+                    });
+                },
+                44 => {
+                    r = load_u64(frame +% part(s, 3));
+                    (r == 0).match({
+                        true  => { stop = self.cold(
+                            index,
+                            frame,
+                            part(s, 6)
+                        ); },
+                        false => { set_u64(
+                            frame +% part(s, 1),
+                            load_u64(frame +% part(s, 2)) % r
+                        ); },
+                    });
+                },
                 19 => {
                     n     = part(s, 4);
                     left  = load_u64(frame +% part(s, 2));
@@ -1485,6 +1561,29 @@ floating = (op: Op, a: f64, b: f64, out: usize) {
 
 // Wrapping arithmetic and bit operations on unsigned words: `a` and `b`
 // are the operands cut to their widths, `left` and `right` the full words.
+// A 64-bit shift; counts of 64 or more give 0, as in `bits`.
+shifted = (s: usize, frame: usize, left: bool) u64 {
+    a     = load_u64(frame +% part(s, 2));
+    count = load_usize(frame +% part(s, 3));
+    (count >= 64).match({
+        true  => 0,
+        false => left.match({ true => a.shift_left(count), false => a.shift_right(count) }),
+    })
+}
+
+// A u32 shift on a zero-extended word; counts of 32 or more give 0.
+shifted32 = (s: usize, frame: usize, left: bool) u64 {
+    a     = load_u64(frame +% part(s, 2)).bit_and(4294967295);
+    count = load_usize(frame +% part(s, 3));
+    (count >= 32).match({
+        true  => 0,
+        false => left.match({
+            true  => a.shift_left(count).bit_and(4294967295),
+            false => a.shift_right(count),
+        }),
+    })
+}
+
 bits = (op: Op, a: u64, b: u64, left: u64, right: u64, count: usize) u64 {
     shift = right.to_usize().value_or(count);
     op.match({

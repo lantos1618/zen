@@ -8,6 +8,7 @@
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
 { Res, Ok, None, Range } = std.core
+{ written } = gen.gen_asm_flow
 { pointer_at } = std.sys
 { Func, Scalar, Instruction, Terminator, Op, Fault, width, signed, integer, float } = gen.gen_ir
 
@@ -53,6 +54,8 @@ Code* = {
     // Parameter cell offsets and sizes, for the caller's argument copies.
     params* :: Vec<usize>,
     sizes* :: Vec<usize>,
+    // (offset, bits) pairs of the slots `decode` fills once per call.
+    consts* :: Vec<u64>,
 }
 
 // Comparison operators as `w` codes.
@@ -73,7 +76,8 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
         slow: a.Vec<Instruction>(),
         faults: a.Vec<Fault>(),
         params: a.Vec<usize>(),
-        sizes: a.Vec<usize>()
+        sizes: a.Vec<usize>(),
+        consts: a.Vec<u64>()
     );
     Range(0, f.parameters).loop((i) {
         code.params.add(cell_of(offsets, base, i)).try();
@@ -81,11 +85,53 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
             class_of(f, i).match({ Unit => 0, Block(l) => l.size, _ => 8 })
         ).try();
     });
+    // Slots only ever set to one constant are filled once per call, from
+    // the image after the parameter pairs, instead of by a step each time.
+    sets  ::= a.Vec<usize>();
+    value ::= a.Vec<i64>();
+    fixed ::= a.Vec<bool>();
+    Range(0, f.slots.len).loop((i) {
+        sets.add(0).try();
+        value.add(0).try();
+        fixed.add(i >= f.parameters).try();
+    });
+    f.blocks.loop((block) {
+        block.code.loop((instruction) {
+            instruction.match({
+                Constant(v)  => {
+                    (sets.get(v.out).value_or(0) > 0 && value.get(v.out).value_or(0) != v.value).then(() { fixed.set(v.out, false); });
+                    sets.set(v.out, sets.get(v.out).value_or(0) + 1);
+                    value.set(v.out, v.value);
+                },
+                AddressOf(v) => { fixed.set(v.slot, false); fixed.set(v.out, false); },
+                _            => written(instruction).match({
+                    Ok(slot) => { fixed.set(slot, false); },
+                    None     => (),
+                }),
+            });
+        });
+    });
+    Range(0, f.slots.len).loop((i) {
+        (fixed.get(i).value_or(false) && sets.get(i).value_or(0) > 0).match({
+            true  => {
+                code.consts.add(cell_of(offsets, base, i).to_u64()).try();
+                code.consts.add(bits_of(
+                    scratch,
+                    value.get(i).value_or(0)
+                )).try();
+            },
+            false => (),
+        });
+    });
     // Each block's first step, then jumps patched from block numbers.
     starts ::= a.Vec<usize>();
     f.blocks.loop((block) {
         starts.add(code.steps.len).try();
         block.code.loop((instruction) {
+            pinned     = instruction.match({
+                Constant(v) => fixed.get(v.out).value_or(false),
+                _           => false,
+            });
             step: Step = instruction.match({
                 Constant(v)    => float(class_of(f, v.out)).match({
                     true  => Step(
@@ -202,7 +248,9 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                 }),
                 _              => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
             });
-            code.steps.add(step).try();
+            pinned.match({ true => (), false => { code.steps.add(
+                step
+            ).try(); } });
         });
         exit: Step = block.exit.match({
             Return(slot)   => Step(
@@ -350,11 +398,12 @@ ceiling* = (ty: Scalar) u64 {
 // checked lookup and a copy. `op` is a small integer that also fixes the
 // width or the fused branch; `x` is the extension code of a narrow result,
 // a narrow maximum, or a fused branch's false target. Call arguments and
-// the parameter pairs (offset, size) follow the steps.
+// the parameter pairs (offset, size) follow the steps, then the constant
+// image: a count and that many (offset, bits) pairs.
 STEP: usize = 64
 
 size_of* = (code: Code) usize {
-    code.steps.len * STEP + code.args.len * 8 + code.params.len * 16
+    code.steps.len * STEP + code.args.len * 8 + code.params.len * 16 + 8 + code.consts.len * 8
 }
 
 // Writes `code` at `at` (`size_of` bytes); returns its parameter pairs.
@@ -426,6 +475,11 @@ encode* = (code: Code, at: usize) usize {
         put(params, 2 * i, code.params.get(i).value_or(0));
         put(params, 2 * i + 1, code.sizes.get(i).value_or(0));
     });
+    image = params + code.params.len * 16;
+    put(image, 0, code.consts.len / 2);
+    code.consts.loop(
+        (h, i, v) { pointer_at(image).to<u64>().write(i + 1, v); }
+    );
     params
 }
 

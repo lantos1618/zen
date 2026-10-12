@@ -354,6 +354,13 @@ Interp = {
     perform = (self :: @Self, index: usize, frame: usize, out: usize)
               Outcome {
         table = part(self.info +% index *% 32, 0);
+        image = part(self.info +% index *% 32, 2) +% part(self.info +% index *% 32, 3) *% 16;
+        Range(0, part(image, 0)).loop((i) {
+            set_u64(
+                frame +% part(image, 1 +% 2 *% i),
+                part_u64(image, 2 +% 2 *% i)
+            );
+        });
         pc    :: usize = 0;
         ended :: Outcome = Outcome.Returned;
         going ::= true;

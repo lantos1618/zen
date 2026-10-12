@@ -1,0 +1,4 @@
+// A lowering that re-solves a type beside sema instead of reading its answer.
+{ subst, unify } = sema.sema_inst
+{ type_of } = sema.sema_type
+{ Program } = gen.gen_ir

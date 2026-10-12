@@ -1,0 +1,15 @@
+// `realloc<u8>` on an allocator settles the supplying impl member's own type
+// parameter in sema, so lowering reads the call's instance instead of solving it.
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+{ null_ptr } = std.mem
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    p = a.realloc<u8>(null_ptr<u8>(), 9).try();
+    a.free(p);
+    println("ok");
+    Ok(0)
+}

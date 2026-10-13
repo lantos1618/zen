@@ -296,7 +296,7 @@ Interp = {
                                 cell_size(slot_ty(f, i))
                             );
                         });
-                        ended    = self.run(callee, f, inner, out);
+                        ended    = self.perform(callee, inner, out);
                         self.top = saved;
                         ended
                     },
@@ -316,7 +316,7 @@ Interp = {
                 None  => self.fault(
                     "a call through an address that is not a function"
                 ),
-                Ok(f) => {
+                Ok(_) => {
                     index = code - CODE_BASE;
                     saved = self.top;
                     inner = self.push(index);
@@ -335,7 +335,7 @@ Interp = {
                                     second
                                 ); }
                             );
-                            ended    = self.run(index, f, inner, out);
+                            ended    = self.perform(index, inner, out);
                             self.top = saved;
                             ended
                         },
@@ -343,11 +343,6 @@ Interp = {
                 },
             }),
         })
-    }
-
-    run = (self :: @Self, index: usize, f: Func, frame: usize, out: usize)
-          Outcome {
-        self.perform(index, frame, out)
     }
 
     // The encoded steps of function `index` (gen_jit_decode `encode`).

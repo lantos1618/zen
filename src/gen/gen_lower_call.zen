@@ -272,15 +272,13 @@ dot_call_on = (
                 Ok(checked) => checked.declaration.match({ Ok(_) => true, None => false }),
                 None        => false,
             });
-            // A function declared inside a struct and called through the
-            // type (`View.create(a, 16)`): sema records the member's body and
-            // the type that provides it, and there is no receiver.
+            // A function called through the type (`View.create(a, 16)`,
+            // `Item.drop(consume item)`): sema records the type that provides
+            // it, and the body when the type declares it rather than an impl.
             member: Res<CheckedCall> = selected.match({
-                Ok(checked) => checked.body.match({
+                Ok(checked) => checked.member_provider.match({
+                    Ok(_) => Ok(checked),
                     None  => None,
-                    Ok(_) => checked.member_provider.match({ Ok(_) => Ok(
-                        checked
-                    ), None => None }),
                 }),
                 None        => None,
             });
@@ -299,10 +297,18 @@ dot_call_on = (
                   ),
                   None        => member.match({
                     Ok(checked) => {
-                        owner   = lo.concrete(checked.member_provider.value_or(
-                            lo.unit_ty
-                        )).try();
-                        callee  = lo.resolve(
+                        // Without a declared body the member is an impl's,
+                        // found from the receiver it is called on.
+                        provider = checked.member_provider.value_or(lo.unit_ty);
+                        written  = checked.body.match({
+                            Ok(_) => provider,
+                            None  => c.args.get(0).match({
+                                Ok(arg) => lo.type_of(arg.value).try(),
+                                None    => provider,
+                            }),
+                        });
+                        owner    = lo.concrete(written).try();
+                        callee   = lo.resolve(
                             owner,
                             a.name.text,
                             checked.body,
@@ -311,7 +317,7 @@ dot_call_on = (
                             None,
                             span
                         ).try();
-                        sources = lo.bind_sources(
+                        sources  = lo.bind_sources(
                             callee.f,
                             c,
                             None,

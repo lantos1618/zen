@@ -452,6 +452,17 @@ Propagate = {
                 dest: self.at(v.dest),
                 value: self.at(v.value)
             )),
+            VolatileLoad(v)  => Instruction.VolatileLoad(Load(
+                out: v.out,
+                base: self.at(v.base),
+                offset: v.offset
+            )),
+            VolatileStore(v) => Instruction.VolatileStore(Store(
+                base: self.at(v.base),
+                offset: v.offset,
+                value: self.at(v.value)
+            )),
+            Barrier          => instruction,
             AtomicLoad(v)    => Instruction.AtomicLoad(Load(
                 out: v.out,
                 base: self.at(v.base),

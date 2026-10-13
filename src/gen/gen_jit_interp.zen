@@ -763,14 +763,14 @@ Interp = {
     step = (self :: @Self, index: usize, f: Func, frame: usize,
             instruction: Instruction) Res<Outcome> {
         instruction.match({
-            Constant(value)     => {
+            Constant(value)      => {
                 at = self.cell(index, frame, value.out);
                 set_i64(at, value.value);
                 extend(at, slot_ty(f, value.out));
                 same(slot_ty(f, value.out), Scalar.U128).then(() { set_u64(at + 8, 0); });
                 None
             },
-            Copy(value)         => {
+            Copy(value)          => {
                 move_bytes(
                     self.cell(index, frame, value.out),
                     self.cell(index, frame, value.source),
@@ -778,9 +778,9 @@ Interp = {
                 );
                 None
             },
-            UnaryValue(value)   => self.unary(index, f, frame, value),
-            BinaryValue(value)  => self.binary(index, f, frame, value),
-            Invoke(call)        => {
+            UnaryValue(value)    => self.unary(index, f, frame, value),
+            BinaryValue(value)   => self.binary(index, f, frame, value),
+            Invoke(call)         => {
                 ended = self.invoke(
                     index,
                     frame,
@@ -790,27 +790,32 @@ Interp = {
                 );
                 unwound(ended)
             },
-            PrintValue(value)   => { self.print(index, frame, value); None },
-            Text(text)          => {
+            PrintValue(value)    => { self.print(index, frame, value); None },
+            Text(text)           => {
                 self.emit(1, address_of(text.ptr()), text.len);
                 None
             },
-            Cast(value)         => { self.convert(
+            Cast(value)          => { self.convert(
                 index,
                 f,
                 frame,
                 value
             ); None },
-            AddressOf(value)    => {
+            AddressOf(value)     => {
                 set_usize(
                     self.cell(index, frame, value.out),
                     self.cell(index, frame, value.slot)
                 );
                 None
             },
-            LoadValue(value)    => { self.load(index, f, frame, value); None },
-            StoreValue(value)   => { self.store(index, f, frame, value); None },
-            CopyBytes(value)    => {
+            LoadValue(value)     => { self.load(index, f, frame, value); None },
+            StoreValue(value)    => { self.store(
+                index,
+                f,
+                frame,
+                value
+            ); None },
+            CopyBytes(value)     => {
                 move_bytes(
                     self.value(index, frame, value.dest),
                     self.value(index, frame, value.source),
@@ -818,14 +823,14 @@ Interp = {
                 );
                 None
             },
-            Bytes(value)        => {
+            Bytes(value)         => {
                 set_usize(
                     self.cell(index, frame, value.out),
                     address_of(value.bytes.ptr())
                 );
                 None
             },
-            WriteOut(value)     => {
+            WriteOut(value)      => {
                 self.emit(
                     descriptor(value.stream),
                     self.value(index, frame, value.data),
@@ -833,8 +838,8 @@ Interp = {
                 );
                 None
             },
-            System(call)        => self.system(index, f, frame, call),
-            Startup(value)      => {
+            System(call)         => self.system(index, f, frame, call),
+            Startup(value)       => {
                 at = self.cell(index, frame, value.out);
                 set_usize(at, value.value.match({
                     Argc    => self.argc,
@@ -844,7 +849,7 @@ Interp = {
                 }));
                 None
             },
-            MapPages(value)     => {
+            MapPages(value)      => {
                 bytes = self.value(index, frame, value.bytes);
                 got   = mapped(mmap(0, bytes + 16, 3, self.anonymous, -1, 0));
                 (got != 0).then(() { set_usize(got, bytes + 16); });
@@ -854,12 +859,12 @@ Interp = {
                 );
                 None
             },
-            UnmapPages(slot)    => {
+            UnmapPages(slot)     => {
                 at = self.value(index, frame, slot);
                 (at != 0).then(() { munmap(at - 16, load_usize(at - 16)); });
                 None
             },
-            SysConst(value)     => {
+            SysConst(value)      => {
                 at = self.cell(index, frame, value.out);
                 set_i64(at, value.name.match({
                     PthreadThreads => 1,
@@ -868,29 +873,42 @@ Interp = {
                 extend(at, slot_ty(f, value.out));
                 None
             },
-            Flush               => { self.flush(); None },
-            FormatFloat(value)  => { self.format_float(
+            Flush                => { self.flush(); None },
+            FormatFloat(value)   => { self.format_float(
                 index,
                 frame,
                 value
             ); None },
-            AtomicLoad(value)   => { self.load(index, f, frame, value); None },
-            AtomicStore(value)  => { self.store(index, f, frame, value); None },
-            AtomicUpdate(value) => { self.update(
+            VolatileLoad(value)  => { self.load(index, f, frame, value); None },
+            VolatileStore(value) => { self.store(
                 index,
                 f,
                 frame,
                 value
             ); None },
-            CompareSwap(value)  => { self.swap(index, f, frame, value); None },
-            CodeAddress(value)  => {
+            Barrier              => None,
+            AtomicLoad(value)    => { self.load(index, f, frame, value); None },
+            AtomicStore(value)   => { self.store(
+                index,
+                f,
+                frame,
+                value
+            ); None },
+            AtomicUpdate(value)  => { self.update(
+                index,
+                f,
+                frame,
+                value
+            ); None },
+            CompareSwap(value)   => { self.swap(index, f, frame, value); None },
+            CodeAddress(value)   => {
                 set_usize(
                     self.cell(index, frame, value.out),
                     CODE_BASE + value.function
                 );
                 None
             },
-            InvokeAt(call)      => {
+            InvokeAt(call)       => {
                 code = self.value(index, frame, call.target);
                 (code < CODE_BASE).match({
                     true  => Ok(self.fault(
@@ -909,7 +927,7 @@ Interp = {
                 })
             },
             // Refused before the program runs (`refused_by_jit`).
-            _                   => Ok(self.fault(
+            _                    => Ok(self.fault(
                 "an instruction the jit backend refuses"
             )),
         })

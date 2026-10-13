@@ -1386,11 +1386,15 @@ machine = (
 ) Res<Value, LowerError> {
     op.match({
         // Keeping the low bits of a wider unsigned word is what `Cast` does.
-        Truncate  => lo.conversion(id, sources, span),
-        MulWide   => lo.wide_product(id, sources, span),
-        AddCarry  => lo.carry(id, sources, false, span),
-        SubBorrow => lo.carry(id, sources, true, span),
-        _         => Err(unsupported(span, machine_refusal(op))),
+        Truncate        => lo.conversion(id, sources, span),
+        MulWide         => lo.wide_product(id, sources, span),
+        AddCarry        => lo.carry(id, sources, false, span),
+        SubBorrow       => lo.carry(id, sources, true, span),
+        CompilerBarrier => {
+            lo.add(Instruction.Barrier).try();
+            lo.unit()
+        },
+        _               => Err(unsupported(span, machine_refusal(op))),
     })
 }
 
@@ -1946,17 +1950,17 @@ pointer_call = (
             (!(copies && lo.check.contains_drop(elem).try(LowerError.OutOfMemory))).ensure(unsupported(span, "copying a Drop owner through Ptr")).try();
             stride = lo.element_size(elem).try();
             name.match({
-                "read"      => {
+                "read"           => {
                     at = lo.element_at(receiver, sources, stride, span).try();
                     lo.read(Place(base: Base.Through(at), offset: 0, ty: elem))
                 },
                 // A take is a read whose source slot the caller retires;
                 // the bytes move exactly as a read copies them.
-                "take"      => {
+                "take"           => {
                     at = lo.element_at(receiver, sources, stride, span).try();
                     lo.read(Place(base: Base.Through(at), offset: 0, ty: elem))
                 },
-                "write"     => {
+                "write"          => {
                     at    = lo.element_at(
                         receiver,
                         sources,
@@ -1973,11 +1977,11 @@ pointer_call = (
                     ).try();
                     lo.unit()
                 },
-                "offset"    => {
+                "offset"         => {
                     at = lo.element_at(receiver, sources, stride, span).try();
                     Ok(Value(slot: at, ty: ty))
                 },
-                "back"      => {
+                "back"           => {
                     count = lo.expr_as(
                         sources.source_expr(1, span).try(),
                         lo.prim("usize").try()
@@ -1993,7 +1997,7 @@ pointer_call = (
                     ))).try();
                     Ok(out)
                 },
-                "bytes"     => {
+                "bytes"          => {
                     count = lo.expr_as(
                         sources.source_expr(1, span).try(),
                         lo.prim("usize").try()
@@ -2001,7 +2005,7 @@ pointer_call = (
                     bytes = lo.scaled(count.slot, stride).try();
                     Ok(Value(slot: bytes, ty: ty))
                 },
-                "copy_from" => {
+                "copy_from"      => {
                     source = lo.expr(sources.source_expr(1, span).try()).try();
                     count  = lo.expr_as(
                         sources.source_expr(2, span).try(),
@@ -2015,8 +2019,38 @@ pointer_call = (
                     ))).try();
                     lo.unit()
                 },
-                "to"        => Ok(Value(slot: receiver.slot, ty: ty)),
-                "is_null"   => {
+                "read_volatile"  => {
+                    lo.volatile_word(elem, span).try();
+                    at  = lo.element_at(receiver, sources, stride, span).try();
+                    out = lo.temp(elem).try();
+                    lo.add(Instruction.VolatileLoad(Load(
+                        out: out.slot,
+                        base: at,
+                        offset: 0
+                    ))).try();
+                    Ok(out)
+                },
+                "write_volatile" => {
+                    lo.volatile_word(elem, span).try();
+                    at    = lo.element_at(
+                        receiver,
+                        sources,
+                        stride,
+                        span
+                    ).try();
+                    value = lo.expr_as(
+                        sources.source_expr(2, span).try(),
+                        elem
+                    ).try();
+                    lo.add(Instruction.VolatileStore(Store(
+                        base: at,
+                        offset: 0,
+                        value: value.slot
+                    ))).try();
+                    lo.unit()
+                },
+                "to"             => Ok(Value(slot: receiver.slot, ty: ty)),
+                "is_null"        => {
                     zero = lo.word_const(Scalar.Ptr, 0).try();
                     out  = lo.temp(ty).try();
                     lo.add(Instruction.BinaryValue(Binary(
@@ -2028,7 +2062,7 @@ pointer_call = (
                     ))).try();
                     Ok(out)
                 },
-                "same"      => {
+                "same"           => {
                     other = lo.expr(sources.source_expr(1, span).try()).try();
                     out   = lo.temp(ty).try();
                     lo.add(Instruction.BinaryValue(Binary(
@@ -2040,12 +2074,20 @@ pointer_call = (
                     ))).try();
                     Ok(out)
                 },
-                _           => Err(unsupported(span, "this pointer operation")),
+                _                => Err(unsupported(
+                    span,
+                    "this pointer operation"
+                )),
             })
         },
     })
 }
 
+// A volatile access moves one scalar word; a record has no single access.
+volatile_word = (lo :: Lowerer, elem: TyId, span: Span) Res<LowerError> {
+    lo.class_of(elem).try().match({ Block(_) => false, _ => true })
+        .ensure(unsupported(span, "a volatile access to an aggregate"))
+}
 pointee = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
     lo.check.types.at(ty).match({
         Named(n) => n.args.get(0).ok_or(unsupported(nowhere(), "a Ptr without an element type")),

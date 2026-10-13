@@ -187,6 +187,11 @@ Instruction* = { Constant: Const
     // Write out buffered standard output now (before blocking on input).
     | Flush
     | FormatFloat: FloatFormat
+    // One access each, performed exactly once and in order with every other
+    // volatile access; `Barrier` keeps memory accesses from moving across it.
+    | VolatileLoad: Load
+    | VolatileStore: Store
+    | Barrier
     // A validated machine primitive (gen_ir_machine). Not yet produced:
     // its operands need slot types beyond Scalar, so the verifier rejects it.
     | Machine: MachineCall

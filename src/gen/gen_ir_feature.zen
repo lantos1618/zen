@@ -141,6 +141,7 @@ instruction_need = (instruction: Instruction) Res<IrFeature> {
         Flush              => Ok(IrFeature.Sys),
         Host(_)            => Ok(IrFeature.Host),
         Wait(_)            => Ok(IrFeature.Host),
+        Barrier            => None,
         AtomicLoad(_)      => Ok(IrFeature.Threads),
         AtomicStore(_)     => Ok(IrFeature.Threads),
         AtomicUpdate(_)    => Ok(IrFeature.Threads),

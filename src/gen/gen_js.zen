@@ -368,28 +368,28 @@ JavaScript = {
 
     instruction = (self :: @Self, instruction: Instruction) Res<AllocError> {
         instruction.match({
-            Constant(value)    => self.constant(value.out, value.value),
-            Copy(value)        => self.copy(value.out, value.source),
-            UnaryValue(value)  => self.unary(value),
-            BinaryValue(value) => self.binary(value),
-            Invoke(call)       => self.call(call),
-            PrintValue(value)  => self.print(value),
-            Text(bytes)        => (!bytes.is_empty()).match({
+            Constant(value)      => self.constant(value.out, value.value),
+            Copy(value)          => self.copy(value.out, value.source),
+            UnaryValue(value)    => self.unary(value),
+            BinaryValue(value)   => self.binary(value),
+            Invoke(call)         => self.call(call),
+            PrintValue(value)    => self.print(value),
+            Text(bytes)          => (!bytes.is_empty()).match({
                 true  => {
                     name = self.static_bytes(bytes).try();
                     self.out.fmt("      zwrite(1, zk{}, {});\n", name, bytes.len)
                 },
                 false => Ok,
             }),
-            Cast(value)        => self.convert(value),
-            AddressOf(value)   => {
+            Cast(value)          => self.convert(value),
+            AddressOf(value)     => {
                 self.open(value.out).try();
                 self.at(value.slot).try();
                 self.close(value.out)
             },
-            LoadValue(value)   => self.load(value),
-            StoreValue(value)  => self.store(value),
-            CopyBytes(value)   => {
+            LoadValue(value)     => self.load(value),
+            StoreValue(value)    => self.store(value),
+            CopyBytes(value)     => {
                 self.out.add("      zcopy(").try();
                 self.lo(value.dest).try();
                 self.out.add(", ").try();
@@ -398,13 +398,13 @@ JavaScript = {
                 self.lo(value.bytes).try();
                 self.out.add(");\n")
             },
-            Bytes(value)       => {
+            Bytes(value)         => {
                 name = self.static_bytes(value.bytes).try();
                 self.open(value.out).try();
                 self.out.fmt("zk{}", name).try();
                 self.close(value.out)
             },
-            WriteOut(value)    => {
+            WriteOut(value)      => {
                 self.out.fmt("      zwrite({}, ", descriptor(
                     value.stream
                 )).try();
@@ -413,8 +413,8 @@ JavaScript = {
                 self.lo(value.len).try();
                 self.out.add(");\n")
             },
-            System(call)       => self.system(call),
-            Startup(value)     => value.value.match({
+            System(call)         => self.system(call),
+            Startup(value)       => value.value.match({
                 Argc    => {
                     self.open(value.out).try();
                     self.out.add("zargc").try();
@@ -434,43 +434,46 @@ JavaScript = {
                 // Outside `supports` (Threads); refused before rendering.
                 Globals => self.out.add(OUTSIDE_SUPPORTS),
             }),
-            MapPages(value)    => {
+            MapPages(value)      => {
                 self.open(value.out).try();
                 self.out.add("zpages(").try();
                 self.lo(value.bytes).try();
                 self.out.add(")").try();
                 self.close(value.out)
             },
-            UnmapPages(slot)   => {
+            UnmapPages(slot)     => {
                 self.out.add("      zunpages(").try();
                 self.lo(slot).try();
                 self.out.add(");\n")
             },
-            SysConst(value)    => self.constant(
+            SysConst(value)      => self.constant(
                 value.out,
                 constant_value(value.name, Platform.LinuxX86_64)
             ),
-            Flush              => self.out.add("      zflush();\n"),
+            Flush                => self.out.add("      zflush();\n"),
             // Formatting into memory has no JavaScript lowering yet.
-            FormatFloat(_)     => self.out.add(OUTSIDE_SUPPORTS),
-            Host(call)         => self.host(call),
+            FormatFloat(_)       => self.out.add(OUTSIDE_SUPPORTS),
+            Host(call)           => self.host(call),
             // gen_verify refuses a machine primitive, so none reaches here.
-            Machine(_)         => self.out.add(
+            Machine(_)           => self.out.add(
                 "      throw new Error(\"unverified machine primitive\");\n"
             ),
             // Suspend; the runtime resumes with a handler id.
-            Wait(slot)         => {
+            Wait(slot)           => {
                 self.open(slot).try();
                 self.out.add("(yield 0) >>> 0").try();
                 self.close(slot)
             },
+            VolatileLoad(value)  => self.load(value),
+            VolatileStore(value) => self.store(value),
+            Barrier              => Ok,
             // Outside `supports`; the driver refuses them before rendering.
-            AtomicLoad(_)      => self.out.add(OUTSIDE_SUPPORTS),
-            AtomicStore(_)     => self.out.add(OUTSIDE_SUPPORTS),
-            AtomicUpdate(_)    => self.out.add(OUTSIDE_SUPPORTS),
-            CompareSwap(_)     => self.out.add(OUTSIDE_SUPPORTS),
-            CodeAddress(_)     => self.out.add(OUTSIDE_SUPPORTS),
-            InvokeAt(_)        => self.out.add(OUTSIDE_SUPPORTS),
+            AtomicLoad(_)        => self.out.add(OUTSIDE_SUPPORTS),
+            AtomicStore(_)       => self.out.add(OUTSIDE_SUPPORTS),
+            AtomicUpdate(_)      => self.out.add(OUTSIDE_SUPPORTS),
+            CompareSwap(_)       => self.out.add(OUTSIDE_SUPPORTS),
+            CodeAddress(_)       => self.out.add(OUTSIDE_SUPPORTS),
+            InvokeAt(_)          => self.out.add(OUTSIDE_SUPPORTS),
         })
     }
 

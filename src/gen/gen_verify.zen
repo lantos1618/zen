@@ -111,16 +111,16 @@ Check = {
 
     instruction = (self: @Self, instruction: Instruction) Res<VerifyError> {
         instruction.match({
-            Constant(value)     => {
+            Constant(value)      => {
                 ty = self.slot(value.out).try();
                 fits(ty, value.value).ensure(self.fault(IrReason.Constant)).try();
                 Ok
             },
-            Copy(value)         => self.expect(
+            Copy(value)          => self.expect(
                 value.out,
                 self.slot(value.source).try()
             ),
-            UnaryValue(value)   => {
+            UnaryValue(value)    => {
                 ty = self.slot(value.input).try();
                 value.op.match({
                     Neg => signed(ty) || float(ty),
@@ -128,13 +128,13 @@ Check = {
                 }).ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.out, ty)
             },
-            BinaryValue(value)  => self.binary(
+            BinaryValue(value)   => self.binary(
                 value.left,
                 value.right,
                 value.out,
                 value.op
             ),
-            Invoke(call)        => {
+            Invoke(call)         => {
                 callee = self.program.functions.get(call.function)
                     .ok_or(self.fault(IrReason.Callee)).try();
                 (callee.parameters == call.args.len).ensure(self.fault(
@@ -146,60 +146,60 @@ Check = {
                 });
                 self.expect(call.out, callee.result)
             },
-            PrintValue(value)   => {
+            PrintValue(value)    => {
                 ((word(value.ty) && !same(value.ty, Scalar.U128)) || same(value.ty, Scalar.Unit))
                     .ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.value, value.ty)
             },
-            Text(_)             => Ok,
-            Cast(value)         => {
+            Text(_)              => Ok,
+            Cast(value)          => {
                 self.word_slot(value.input).try();
                 self.word_slot(value.out).try();
                 Ok
             },
-            AddressOf(value)    => {
+            AddressOf(value)     => {
                 self.slot(value.slot).try();
                 self.expect(value.out, Scalar.Ptr)
             },
-            LoadValue(value)    => {
+            LoadValue(value)     => {
                 self.slot(value.out).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            StoreValue(value)   => {
+            StoreValue(value)    => {
                 self.slot(value.value).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            CopyBytes(value)    => {
+            CopyBytes(value)     => {
                 self.expect(value.dest, Scalar.Ptr).try();
                 self.expect(value.source, Scalar.Ptr).try();
                 self.expect(value.bytes, Scalar.U64)
             },
-            Bytes(value)        => {
+            Bytes(value)         => {
                 self.expect(value.out, Scalar.Ptr)
             },
-            WriteOut(value)     => {
+            WriteOut(value)      => {
                 self.expect(value.data, Scalar.Ptr).try();
                 self.expect(value.len, Scalar.U64)
             },
-            System(call)        => {
+            System(call)         => {
                 (call.args.len == arity(call.call)).ensure(self.fault(IrReason.Arguments)).try();
                 call.args.loop((slot) { self.word_slot(slot).try(); });
                 self.expect(call.out, Scalar.I64)
             },
-            MapPages(value)     => {
+            MapPages(value)      => {
                 self.expect(value.bytes, Scalar.U64).try();
                 self.expect(value.out, Scalar.Ptr)
             },
-            UnmapPages(slot)    => {
+            UnmapPages(slot)     => {
                 self.expect(slot, Scalar.Ptr)
             },
-            Flush               => Ok,
-            FormatFloat(value)  => {
+            Flush                => Ok,
+            FormatFloat(value)   => {
                 self.expect(value.dest, Scalar.Ptr).try();
                 self.expect(value.value, Scalar.F64).try();
                 self.expect(value.out, Scalar.U64)
             },
-            Host(call)          => {
+            Host(call)           => {
                 (call.args.len == call.marshal.len).ensure(self.fault(
                     IrReason.Arguments
                 )).try();
@@ -231,42 +231,51 @@ Check = {
                 }).ensure(self.fault(IrReason.Type)).try();
                 Ok
             },
-            Wait(slot)          => {
+            Wait(slot)           => {
                 self.expect(slot, Scalar.U32)
             },
-            SysConst(value)     => integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try(),
-            Startup(value)      => {
+            SysConst(value)      => integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try(),
+            Startup(value)       => {
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
                 self.expect(value.out, ty)
             },
             // Scalar slots cannot hold a machine operation's operands.
-            Machine(_)          => Err(self.fault(IrReason.Type)),
-            AtomicLoad(value)   => {
+            Machine(_)           => Err(self.fault(IrReason.Type)),
+            VolatileLoad(value)  => {
+                scalar_word(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            VolatileStore(value) => {
+                scalar_word(self.slot(value.value).try()).ensure(self.fault(IrReason.Type)).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            Barrier              => Ok,
+            AtomicLoad(value)    => {
                 self.atomic_word(value.out).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            AtomicStore(value)  => {
+            AtomicStore(value)   => {
                 self.atomic_word(value.value).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            AtomicUpdate(value) => {
+            AtomicUpdate(value)  => {
                 ty = self.atomic_word(value.out).try();
                 value.op.match({ Add => integer(ty), Swap => true })
                     .ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.value, ty).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            CompareSwap(value)  => {
+            CompareSwap(value)   => {
                 ty = self.atomic_word(value.out).try();
                 self.expect(value.expected, ty).try();
                 self.expect(value.desired, ty).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            CodeAddress(value)  => {
+            CodeAddress(value)   => {
                 self.program.functions.get(value.function).ok_or(self.fault(IrReason.Callee)).try();
                 self.expect(value.out, Scalar.Ptr)
             },
-            InvokeAt(call)      => {
+            InvokeAt(call)       => {
                 self.expect(call.target, Scalar.Ptr).try();
                 // Every renderer passes these in argument registers.
                 (call.args.len <= INDIRECT_ARGUMENTS).ensure(self.fault(
@@ -370,74 +379,80 @@ Check = {
 
     reads = (self: @Self, flags :: Init, instruction: Instruction) Res<VerifyError> {
         instruction.match({
-            Constant(_)         => Ok,
-            Copy(value)         => self.initialized(flags, value.source),
-            UnaryValue(value)   => self.initialized(flags, value.input),
-            BinaryValue(value)  => {
+            Constant(_)          => Ok,
+            Copy(value)          => self.initialized(flags, value.source),
+            UnaryValue(value)    => self.initialized(flags, value.input),
+            BinaryValue(value)   => {
                 self.initialized(flags, value.left).try();
                 self.initialized(flags, value.right)
             },
-            Invoke(call)        => {
+            Invoke(call)         => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok
             },
-            PrintValue(value)   => self.initialized(flags, value.value),
-            Text(_)             => Ok,
-            Cast(value)         => self.initialized(flags, value.input),
-            AddressOf(_)        => Ok,
-            LoadValue(value)    => self.initialized(flags, value.base),
-            StoreValue(value)   => {
+            PrintValue(value)    => self.initialized(flags, value.value),
+            Text(_)              => Ok,
+            Cast(value)          => self.initialized(flags, value.input),
+            AddressOf(_)         => Ok,
+            LoadValue(value)     => self.initialized(flags, value.base),
+            StoreValue(value)    => {
                 self.initialized(flags, value.base).try();
                 self.initialized(flags, value.value)
             },
-            CopyBytes(value)    => {
+            CopyBytes(value)     => {
                 self.initialized(flags, value.dest).try();
                 self.initialized(flags, value.source).try();
                 self.initialized(flags, value.bytes)
             },
-            Bytes(_)            => Ok,
-            WriteOut(value)     => {
+            Bytes(_)             => Ok,
+            WriteOut(value)      => {
                 self.initialized(flags, value.data).try();
                 self.initialized(flags, value.len)
             },
-            System(call)        => {
+            System(call)         => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok
             },
-            Startup(_)          => Ok,
-            MapPages(value)     => self.initialized(flags, value.bytes),
-            UnmapPages(slot)    => self.initialized(flags, slot),
-            SysConst(_)         => Ok,
-            Flush               => Ok,
-            FormatFloat(value)  => {
+            Startup(_)           => Ok,
+            MapPages(value)      => self.initialized(flags, value.bytes),
+            UnmapPages(slot)     => self.initialized(flags, slot),
+            SysConst(_)          => Ok,
+            Flush                => Ok,
+            FormatFloat(value)   => {
                 self.initialized(flags, value.dest).try();
                 self.initialized(flags, value.value)
             },
-            Machine(call)       => {
+            Machine(call)        => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok
             },
-            Host(call)          => {
+            Host(call)           => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok
             },
-            Wait(_)             => Ok,
-            AtomicLoad(value)   => self.initialized(flags, value.base),
-            AtomicStore(value)  => {
+            Wait(_)              => Ok,
+            VolatileLoad(value)  => self.initialized(flags, value.base),
+            VolatileStore(value) => {
                 self.initialized(flags, value.base).try();
                 self.initialized(flags, value.value)
             },
-            AtomicUpdate(value) => {
+            Barrier              => Ok,
+            AtomicLoad(value)    => self.initialized(flags, value.base),
+            AtomicStore(value)   => {
                 self.initialized(flags, value.base).try();
                 self.initialized(flags, value.value)
             },
-            CompareSwap(value)  => {
+            AtomicUpdate(value)  => {
+                self.initialized(flags, value.base).try();
+                self.initialized(flags, value.value)
+            },
+            CompareSwap(value)   => {
                 self.initialized(flags, value.base).try();
                 self.initialized(flags, value.expected).try();
                 self.initialized(flags, value.desired)
             },
-            CodeAddress(_)      => Ok,
-            InvokeAt(call)      => {
+            CodeAddress(_)       => Ok,
+            InvokeAt(call)       => {
                 self.initialized(flags, call.target).try();
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok
@@ -483,6 +498,7 @@ write = (flags :: Init, instruction: Instruction) {
         SysConst(value)     => { flags.note(value.out); },
         Host(value)         => { flags.note(value.out); },
         Wait(slot)          => { flags.note(slot); },
+        VolatileLoad(value) => { flags.note(value.out); },
         AtomicLoad(value)   => { flags.note(value.out); },
         AtomicUpdate(value) => { flags.note(value.out); },
         CompareSwap(value)  => { flags.note(value.out); },
@@ -1034,47 +1050,50 @@ Payloads = {
         // Writes through a pointer, listed without a fallback for the same
         // reason as `written`.
         instruction.match({
-            StoreValue(s)   => self.forget_through(state, s.base),
-            CopyBytes(c)    => self.forget_through(state, c.dest),
-            Invoke(c)       => c.args.loop(
+            StoreValue(s)    => self.forget_through(state, s.base),
+            CopyBytes(c)     => self.forget_through(state, c.dest),
+            Invoke(c)        => c.args.loop(
                 (a) { self.forget_argument(state, a); }
             ),
-            System(c)       => c.args.loop(
+            System(c)        => c.args.loop(
                 (a) { self.forget_argument(state, a); }
             ),
-            Host(c)         => c.args.loop(
+            Host(c)          => c.args.loop(
                 (a) { self.forget_argument(state, a); }
             ),
-            AtomicStore(v)  => self.forget_through(state, v.base),
-            AtomicUpdate(v) => self.forget_through(state, v.base),
-            CompareSwap(v)  => self.forget_through(state, v.base),
-            InvokeAt(c)     => c.args.loop(
+            VolatileStore(v) => self.forget_through(state, v.base),
+            AtomicStore(v)   => self.forget_through(state, v.base),
+            AtomicUpdate(v)  => self.forget_through(state, v.base),
+            CompareSwap(v)   => self.forget_through(state, v.base),
+            InvokeAt(c)      => c.args.loop(
                 (a) { self.forget_argument(state, a); }
             ),
-            AtomicLoad(_)   => (),
-            CodeAddress(_)  => (),
-            Machine(c)      => {
+            VolatileLoad(_)  => (),
+            Barrier          => (),
+            AtomicLoad(_)    => (),
+            CodeAddress(_)   => (),
+            Machine(c)       => {
                 c.outs.loop((slot) { self.forget_slot(state, slot); });
                 c.args.loop((a) { self.forget_argument(state, a); });
             },
-            Wait(_)         => (),
-            Constant(_)     => (),
-            Copy(_)         => (),
-            UnaryValue(_)   => (),
-            BinaryValue(_)  => (),
-            PrintValue(_)   => (),
-            Text(_)         => (),
-            Cast(_)         => (),
-            AddressOf(_)    => (),
-            LoadValue(_)    => (),
-            Bytes(_)        => (),
-            WriteOut(_)     => (),
-            Startup(_)      => (),
-            MapPages(_)     => (),
-            UnmapPages(_)   => (),
-            SysConst(_)     => (),
-            Flush           => (),
-            FormatFloat(v)  => self.forget_through(state, v.dest),
+            Wait(_)          => (),
+            Constant(_)      => (),
+            Copy(_)          => (),
+            UnaryValue(_)    => (),
+            BinaryValue(_)   => (),
+            PrintValue(_)    => (),
+            Text(_)          => (),
+            Cast(_)          => (),
+            AddressOf(_)     => (),
+            LoadValue(_)     => (),
+            Bytes(_)         => (),
+            WriteOut(_)      => (),
+            Startup(_)       => (),
+            MapPages(_)      => (),
+            UnmapPages(_)    => (),
+            SysConst(_)      => (),
+            Flush            => (),
+            FormatFloat(v)   => self.forget_through(state, v.dest),
         });
     }
 
@@ -1113,37 +1132,40 @@ Payloads = {
 // payload fact about that slot would outlive the write.
 written = (instruction: Instruction) Res<usize> {
     instruction.match({
-        Constant(v)     => Ok(v.out),
-        Copy(v)         => Ok(v.out),
-        UnaryValue(v)   => Ok(v.out),
-        BinaryValue(v)  => Ok(v.out),
-        Invoke(v)       => Ok(v.out),
-        Cast(v)         => Ok(v.out),
-        AddressOf(v)    => Ok(v.out),
-        LoadValue(v)    => Ok(v.out),
-        Bytes(v)        => Ok(v.out),
-        System(v)       => Ok(v.out),
-        Startup(v)      => Ok(v.out),
-        MapPages(v)     => Ok(v.out),
-        SysConst(v)     => Ok(v.out),
-        Host(v)         => Ok(v.out),
-        Wait(slot)      => Ok(slot),
-        AtomicLoad(v)   => Ok(v.out),
-        AtomicUpdate(v) => Ok(v.out),
-        CompareSwap(v)  => Ok(v.out),
-        CodeAddress(v)  => Ok(v.out),
-        InvokeAt(v)     => Ok(v.out),
-        AtomicStore(_)  => None,
+        Constant(v)      => Ok(v.out),
+        Copy(v)          => Ok(v.out),
+        UnaryValue(v)    => Ok(v.out),
+        BinaryValue(v)   => Ok(v.out),
+        Invoke(v)        => Ok(v.out),
+        Cast(v)          => Ok(v.out),
+        AddressOf(v)     => Ok(v.out),
+        LoadValue(v)     => Ok(v.out),
+        Bytes(v)         => Ok(v.out),
+        System(v)        => Ok(v.out),
+        Startup(v)       => Ok(v.out),
+        MapPages(v)      => Ok(v.out),
+        SysConst(v)      => Ok(v.out),
+        Host(v)          => Ok(v.out),
+        Wait(slot)       => Ok(slot),
+        VolatileLoad(v)  => Ok(v.out),
+        AtomicLoad(v)    => Ok(v.out),
+        AtomicUpdate(v)  => Ok(v.out),
+        CompareSwap(v)   => Ok(v.out),
+        CodeAddress(v)   => Ok(v.out),
+        InvokeAt(v)      => Ok(v.out),
+        VolatileStore(_) => None,
+        Barrier          => None,
+        AtomicStore(_)   => None,
         // A machine primitive writes several slots; `forget` clears each.
-        Machine(_)      => None,
-        PrintValue(_)   => None,
-        Text(_)         => None,
-        StoreValue(_)   => None,
-        CopyBytes(_)    => None,
-        WriteOut(_)     => None,
-        UnmapPages(_)   => None,
-        Flush           => None,
-        FormatFloat(v)  => Ok(v.out),
+        Machine(_)       => None,
+        PrintValue(_)    => None,
+        Text(_)          => None,
+        StoreValue(_)    => None,
+        CopyBytes(_)     => None,
+        WriteOut(_)      => None,
+        UnmapPages(_)    => None,
+        Flush            => None,
+        FormatFloat(v)   => Ok(v.out),
     })
 }
 
@@ -1160,4 +1182,9 @@ refill_words = (
     words.clear();
     Range(0, count).loop((_) { words.add(value).try(VerifyError.OutOfMemory); });
     Ok
+}
+
+// A volatile access moves one scalar word, never a block or unit.
+scalar_word = (ty: Scalar) bool {
+    ty.match({ Block(_) => false, Unit => false, _ => true })
 }

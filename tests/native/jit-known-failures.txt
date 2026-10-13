@@ -63,7 +63,6 @@ tests/corpus/std/constant_time	constant_time.zen:53:18: error: unsupported by th
 tests/corpus/std/display_allocating_overload_picked_by_argument	display_allocating_overload_picked_by_argument.zen:34:13: error: unsupported by this backend: a value conversion this backend does not model (`()` to `std.text.text_string.String`)
 tests/corpus/std/os_entropy	std/entropy.zen:23:27: error: unsupported by this backend: a member without a body this backend can find (`std.mem.mem_ptr.Ptr<u8,>`)
 tests/corpus/std/secret_discipline_accepts_constant_time_code	secret_discipline_accepts_constant_time_code.zen:59:49: error: unsupported by this backend: the machine primitive truncate_*
-tests/corpus/std/signed_shift_right_fills_with_the_sign	signed_shift_right_fills_with_the_sign.zen:27:9: error: unsupported by this backend: an arithmetic shift of a signed word
 tests/corpus/std/simd_bmi2	std/simd.zen:215:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
 tests/corpus/std/simd_features	simd_features.zen:96:25: error: unsupported by this backend: the std.simd operation lane
 tests/corpus/std/simd_sha	std/simd.zen:230:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)

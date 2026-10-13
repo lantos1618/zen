@@ -25,7 +25,7 @@
 { Write, Stream, TrapKind, Marshal, HostCall } = gen.gen_ir
 { word, integer, signed, same, float } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
-{ machine_op, machine_refusal } = gen.gen_ir_machine
+{ MachineOp, machine_op, machine_refusal } = gen.gen_ir_machine
 { Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee } = gen.gen_lower_core
 { DeferEntry, Local } = gen.gen_lower_core
 { member_call, mem_call, sys_call, resolve, to_bound, handle_for_place } = gen.gen_lower_member
@@ -1363,18 +1363,114 @@ intrinsic = (
     span    : Span
 )
             Res<Value, LowerError> {
+    machine = lo.check.primitives.get(callee.owner).match({
+        Ok(p) => machine_op(p.name),
+        None  => None,
+    });
+    machine.match({
+        Ok(op) => lo.machine(id, op, sources, span),
+        None   => lo.library_intrinsic(id, callee, sources, c, span),
+    })
+}
+
+// The machine primitives the scalar IR spells with its own operations. The
+// rest (std.simd, volatile access, u128 arithmetic) are refused by name
+// rather than by their operands.
+machine = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    op      : MachineOp,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    op.match({
+        // Keeping the low bits of a wider unsigned word is what `Cast` does.
+        Truncate  => lo.conversion(id, sources, span),
+        AddCarry  => lo.carry(id, sources, false, span),
+        SubBorrow => lo.carry(id, sources, true, span),
+        _         => Err(unsupported(span, machine_refusal(op))),
+    })
+}
+
+// `[sum, carry]` of `a + b + (c & 1)`, or `[difference, borrow]` of
+// `a - b - (c & 1)`, on u64 words and without a branch: a wrapped sum is
+// below its left operand exactly when it carried, and a wrapped difference
+// is above it exactly when it borrowed. At most one of the two steps does.
+carry = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    borrow  : bool,
+    span    : Span
+) Res<Value, LowerError> {
+    word      = lo.prim("u64").try();
+    a         = lo.expr_as(sources.source_expr(0, span).try(), word).try();
+    b         = lo.expr_as(sources.source_expr(1, span).try(), word).try();
+    c         = lo.expr_as(sources.source_expr(2, span).try(), word).try();
+    one       = lo.word_const(Scalar.U64, 1).try();
+    bit       = lo.binary_slot(Scalar.U64, Op.And, c.slot, one, span).try();
+    step      = borrow.match({ true => Op.WrapSub, false => Op.WrapAdd });
+    first     = lo.binary_slot(Scalar.U64, step, a.slot, b.slot, span).try();
+    whole     = lo.binary_slot(Scalar.U64, step, first, bit, span).try();
+    left      = borrow.match({
+        true  => lo.binary_slot(Scalar.Bool, Op.Less, a.slot, first, span),
+        false => lo.binary_slot(Scalar.Bool, Op.Less, first, a.slot, span),
+    }).try();
+    right     = borrow.match({
+        true  => lo.binary_slot(Scalar.Bool, Op.Less, first, whole, span),
+        false => lo.binary_slot(Scalar.Bool, Op.Less, whole, first, span),
+    }).try();
+    either    = lo.binary_slot(Scalar.Bool, Op.Or, left, right, span).try();
+    out_carry = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.Cast(Convert(out: out_carry, input: either))).try();
+    out  = lo.temp(lo.type_of(id).try()).try();
+    base = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: base, slot: out.slot))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: base,
+        offset: 0,
+        value: whole
+    ))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: base,
+        offset: 8,
+        value: out_carry
+    ))).try();
+    Ok(out)
+}
+
+// A fresh `class` slot holding `left op right`.
+binary_slot = (
+    lo    :: Lowerer,
+    class : Scalar,
+    op    : Op,
+    left  : usize,
+    right : usize,
+    span  : Span
+) Res<usize, LowerError> {
+    out = lo.slot_of(class).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out,
+        left: left,
+        right: right,
+        op: op,
+        span: span
+    ))).try();
+    Ok(out)
+}
+
+library_intrinsic = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    callee  : Callee,
+    sources : Vec<Source>,
+    c       : Call,
+    span    : Span
+)
+            Res<Value, LowerError> {
     decl   = callee.owner;
     module = lo.check.world.module_name(decl);
     name   = callee.f.name.text;
-    // A machine primitive (std.simd, volatile access, u128 arithmetic) has
-    // no native lowering yet; name the operation instead of its operands.
-    lo.check.primitives.get(decl).match({
-        Ok(p) => machine_op(p.name).match({
-            Ok(op) => Err(unsupported(span, machine_refusal(op))),
-            None   => Ok,
-        }),
-        None  => Ok,
-    }).try();
     // Numeric operations are free functions validated by declaration.
     numeric    = callee.member.match({ None => true, Ok(_) => false });
     conversion = numeric.match({ true => lo.check.numeric_conversions.get(
@@ -1626,6 +1722,60 @@ bits* = (
 )
         Res<Value, LowerError> {
     ty = lo.type_of(id).try();
+    (name.eq("shift_right") && lo.prim_name(ty).is_in(["i8", "i16", "i32", "i64"])).match({
+        true  => lo.arithmetic_shift(ty, lhs, rhs, span),
+        false => lo.logical_bits(ty, name, lhs, rhs, span),
+    })
+}
+
+// `shift_right` of a signed word copies the sign into the vacated bits.
+// With `m` all ones for a negative value and zero otherwise it is
+// `((x ^ m) >> n) ^ m` over the logical shift, whose operand never has its
+// sign bit set; a count at or past the width gives `m`, the limit of
+// shifting one bit at a time. The receiver is evaluated before the count.
+arithmetic_shift = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    lhs  : ExprId,
+    rhs  : ExprId,
+    span : Span
+) Res<Value, LowerError> {
+    class    = lo.class_of(ty).try();
+    value    = lo.expr_as(lhs, ty).try();
+    count    = lo.expr_as(rhs, lo.prim("usize").try()).try();
+    zero     = lo.word_const(class, 0).try();
+    negative = lo.binary_slot(
+        Scalar.Bool,
+        Op.Less,
+        value.slot,
+        zero,
+        span
+    ).try();
+    sign     = lo.slot_of(class).try();
+    lo.add(Instruction.Cast(Convert(out: sign, input: negative))).try();
+    mask    = lo.binary_slot(class, Op.WrapSub, zero, sign, span).try();
+    flipped = lo.binary_slot(class, Op.Xor, value.slot, mask, span).try();
+    shifted = lo.binary_slot(class, Op.Shr, flipped, count.slot, span).try();
+    out     = lo.temp(ty).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out.slot,
+        left: shifted,
+        right: mask,
+        op: Op.Xor,
+        span: span
+    ))).try();
+    Ok(out)
+}
+
+logical_bits = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    name : str,
+    lhs  : ExprId,
+    rhs  : ExprId,
+    span : Span
+)
+        Res<Value, LowerError> {
     lo.bit_word(ty, name, span).try();
     op       = bit_op(name).ok_or(unsupported(span, bit_refusal(lo.alloc, name))).try();
     left     = lo.expr_as(lhs, ty).try();
@@ -1700,9 +1850,9 @@ bit_op = (name: str) Res<Op> {
     })
 }
 
-// The IR's bit operations act on unsigned words of at most 64 bits: `Shr`
-// is the logical shift, so a signed `shift_right` (arithmetic) has no
-// lowering yet, and u128 has no scalar class.
+// The IR's bit operations act on unsigned words of at most 64 bits (a
+// signed `shift_right` is lowered by `arithmetic_shift`), and u128 has no
+// scalar class.
 bit_word = (
     lo   :: Lowerer,
     ty   : TyId,
@@ -1712,17 +1862,14 @@ bit_word = (
     word = lo.prim_name(ty);
     word.is_in(["u8", "u16", "u32", "u64", "usize"]).match({
         true  => Ok,
-        false => Err(unsupported(span, (name.eq("shift_right") && word.is_in(["i8", "i16", "i32", "i64"])).match({
-            true  => "an arithmetic shift of a signed word",
-            false => lo.alloc.String(
-                "the bit operation `{}` on `{}`",
-                name,
-                word
-            ).match({
+        false => Err(unsupported(span, lo.alloc.String(
+            "the bit operation `{}` on `{}`",
+            name,
+            word
+        ).match({
                 Ok(t)  => t.view(),
                 Err(_) => "a bit operation on this word",
-            }),
-        }))),
+            }))),
     })
 }
 

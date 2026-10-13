@@ -64,7 +64,6 @@ tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main # UN
 tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main # UNSUPPORTED: main.zen:24:9: error: unsupported by this backend: alternatives of a value without them (`i64`)
 tests/corpus/codegen/a_recorded_call_never_falls_back_to_another_declaration # UNSUPPORTED: a_recorded_call_never_falls_back_to_another_declaration.zen:4:45: nothing is at that path: tried `se
 tests/corpus/codegen/a_unit_try_in_tail_position_builds_its_res/main # UNSUPPORTED: main.zen:23:9: error: unsupported by this backend: this expression in a native executable
-tests/corpus/codegen/byte_order_reads_and_writes_round_trip # UNSUPPORTED: byte_order_reads_and_writes_round_trip.zen:8:22: error: unsupported by this backend: this pointer op
 tests/corpus/codegen/c_abi_integer_spelling # UNSUPPORTED: c_abi_integer_spelling.zen:23:30: error: unsupported by this backend: the compiler-provided operatio
 tests/corpus/codegen/call_effect_summaries_reuse_completed_subtrees # UNSUPPORTED: call_effect_summaries_reuse_completed_subtrees.zen:4:15: nothing is at that path: tried `gen/gen_c/g
 tests/corpus/codegen/native_constants_in_different_functions_keep_their_own_values # UNSUPPORTED: native_constants_in_different_functions_keep_their_own_values.zen:17:18: error: unsupported by this 
@@ -218,13 +217,11 @@ tests/corpus/std/cli_nested_commands_and_trailing_args # UNSUPPORTED: cli_nested
 tests/corpus/std/constant_time # UNSUPPORTED: constant_time.zen:50:18: error: unsupported by this backend: the machine primitive truncate_*
 tests/corpus/std/os_entropy # UNSUPPORTED: os_entropy.zen:5:23: error: unsupported by this backend: a call without successful semantic checking
 tests/corpus/std/secret_discipline_accepts_constant_time_code # UNSUPPORTED: secret_discipline_accepts_constant_time_code.zen:56:42: error: unsupported by this backend: the mach
-tests/corpus/std/signed_shift_right_fills_with_the_sign # UNSUPPORTED: signed_shift_right_fills_with_the_sign.zen:26:9: error: unsupported by this backend: an arithmetic s
 tests/corpus/std/simd_bmi2 # UNSUPPORTED: std/simd.zen:214:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_features # UNSUPPORTED: simd_features.zen:93:25: error: unsupported by this backend: the std.simd operation lane
 tests/corpus/std/simd_sha # UNSUPPORTED: std/simd.zen:229:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_vectors # UNSUPPORTED: simd_vectors.zen:43:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements # UNSUPPORTED: std/math/math.zen:14:28: error: unsupported by this backend: alternatives of a value without them (`
-tests/corpus/std/volatile_and_inline # UNSUPPORTED: volatile_and_inline.zen:15:28: error: unsupported by this backend: this pointer operation
 tests/corpus/std/wide_integers # UNSUPPORTED: wide_integers.zen:16:15: error: unsupported by this backend: the machine primitive mul_wide (64x64 -
 tests/corpus/string-basic/a_float_fits_the_buffer/main # UNSUPPORTED: main.zen:39:25: error: unsupported by this backend: formatting an f64 into text
 tests/corpus/traps/simd_lane_out_of_bounds # UNSUPPORTED: simd_lane_out_of_bounds.zen:7:12: error: unsupported by this backend: the std.simd operation splat_*

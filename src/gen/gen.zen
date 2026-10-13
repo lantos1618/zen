@@ -12,7 +12,7 @@
 { Codegen, Target } = std.build
 { String, str } = std.text
 { lower, LowerError } = gen.gen_lower
-{ Program, float } = gen.gen_ir
+{ Program, Scalar, float, same } = gen.gen_ir
 { emit_js, emit_app, emit_runtime, PAGE, supports } = gen.gen_js
 { emit_c, c_supports } = gen.gen_c_ir
 { refused, describe } = gen.gen_ir_feature
@@ -467,6 +467,7 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
     program.functions.loop((function) {
         function.slots.loop((ty) {
             float(ty).then(() { found = Ok(AsmRefusal(what: "floating-point values", function: function.name)); });
+            same(ty, Scalar.U128).then(() { found = Ok(AsmRefusal(what: "128-bit integers", function: function.name)); });
         });
         function.blocks.loop((block) {
             block.code.loop((instruction) {

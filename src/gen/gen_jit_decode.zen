@@ -10,7 +10,7 @@
 { Res, Ok, None, Range } = std.core
 { reads, written, exit_read, NONE } = gen.gen_asm_flow
 { pointer_at } = std.sys
-{ Func, Scalar, Instruction, Terminator, Op, Fault, Binary, width, signed, integer, float } = gen.gen_ir
+{ Func, Scalar, Instruction, Terminator, Op, Fault, Binary, width, signed, integer, float, same } = gen.gen_ir
 
 Kind* = { ConstWord
     | CopyWord
@@ -93,7 +93,10 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
     Range(0, f.slots.len).loop((i) {
         sets.add(0).try();
         value.add(0).try();
-        fixed.add(i >= f.parameters).try();
+        fixed.add(i >= f.parameters && !same(
+            class_of(f, i),
+            Scalar.U128
+        )).try();
     });
     f.blocks.loop((block) {
         block.code.loop((instruction) {
@@ -112,7 +115,8 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
         });
     });
     Range(0, f.slots.len).loop((i) {
-        (fixed.get(i).value_or(false) && sets.get(i).value_or(0) > 0).match({
+        (fixed.get(i).value_or(false) && sets.get(i).value_or(0) > 0
+            && !same(class_of(f, i), Scalar.U128)).match({
             true  => {
                 code.consts.add(cell_of(offsets, base, i).to_u64()).try();
                 code.consts.add(bits_of(
@@ -213,7 +217,9 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                || returning.match({ Ok(_) => true, None => false });
             shift      = fold.match({ Ok(d) => d.by, None => 0 });
             step: Step = instruction.match({
-                Constant(v)    => float(class_of(f, v.out)).match({
+                Constant(v)    => same(class_of(f, v.out), Scalar.U128).match({
+                    true => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                    false => float(class_of(f, v.out)).match({
                     true  => Step(
                         kind: Kind.ConstWord,
                         a: cell_of(offsets, base, v.out),
@@ -232,8 +238,17 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                         w: 8,
                         ty: class_of(f, v.out)
                     ),
-                }),
+                }) }),
                 Copy(v)        => class_of(f, v.out).match({
+                    U128     => Step(
+                        kind: Kind.CopyBlock,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.source),
+                        c: 0,
+                        n: 16,
+                        w: 0,
+                        ty: Scalar.U128
+                    ),
                     Block(l) => Step(
                         kind: Kind.CopyBlock,
                         a: cell_of(offsets, base, v.out),
@@ -262,34 +277,41 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                         ty: class_of(f, v.out)
                     ),
                 }),
-                LoadValue(v)   => Step(
-                    kind: Kind.Load,
-                    a: cell_of(offsets, base, v.out),
-                    b: cell_of(
-                        offsets,
-                        base,
-                        fold.match({ Ok(d) => d.base, None => v.base })
-                    ),
-                    c: v.offset + shift,
-                    n: fold.match({ Ok(d) => d.scale.to_u64(), None => 0 }),
-                    w: moved(class_of(f, v.out)),
-                    ty: class_of(f, v.out),
-                    index: indexed_cell(offsets, base, fold)
-                ),
-                StoreValue(v)  => Step(
-                    kind: Kind.Store,
-                    a: cell_of(
-                        offsets,
-                        base,
-                        fold.match({ Ok(d) => d.base, None => v.base })
-                    ),
-                    b: cell_of(offsets, base, v.value),
-                    c: v.offset + shift,
-                    n: fold.match({ Ok(d) => d.scale.to_u64(), None => 0 }),
-                    w: moved(class_of(f, v.value)),
-                    ty: class_of(f, v.value),
-                    index: indexed_cell(offsets, base, fold)
-                ),
+                LoadValue(v)   => same(class_of(f, v.out), Scalar.U128).match({
+                    true => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                    false => Step(
+                        kind: Kind.Load,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(
+                            offsets,
+                            base,
+                            fold.match({ Ok(d) => d.base, None => v.base })
+                        ),
+                        c: v.offset + shift,
+                        n: fold.match({ Ok(d) => d.scale.to_u64(), None => 0 }),
+                        w: moved(class_of(f, v.out)),
+                        ty: class_of(f, v.out),
+                        index: indexed_cell(offsets, base, fold)
+                    ) }),
+                StoreValue(v)  => same(
+                    class_of(f, v.value),
+                    Scalar.U128
+                ).match({
+                    true => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                    false => Step(
+                        kind: Kind.Store,
+                        a: cell_of(
+                            offsets,
+                            base,
+                            fold.match({ Ok(d) => d.base, None => v.base })
+                        ),
+                        b: cell_of(offsets, base, v.value),
+                        c: v.offset + shift,
+                        n: fold.match({ Ok(d) => d.scale.to_u64(), None => 0 }),
+                        w: moved(class_of(f, v.value)),
+                        ty: class_of(f, v.value),
+                        index: indexed_cell(offsets, base, fold)
+                    ) }),
                 AddressOf(v)   => Step(
                     kind: Kind.AddressOf,
                     a: cell_of(offsets, base, v.out),
@@ -806,7 +828,7 @@ through = (code: Code, start: usize, cell: usize, truth: bool) usize {
 // The fast kind of an integer binary operation; None for what stays slow
 // (floats, signed division, Unit comparisons).
 arithmetic = (op: Op, ty: Scalar) Res<Kind> {
-    (integer(ty) || ty.match({ Bool => true, Ptr => true, _ => false })).match({
+    wordish(ty).match({
         false => None,
         true  => op.match({
             Add          => Ok(
@@ -838,9 +860,8 @@ arithmetic = (op: Op, ty: Scalar) Res<Kind> {
 }
 
 // A scalar that lives in one word without float bits.
-wordish = (ty: Scalar) bool { integer(
-    ty
-) || ty.match({ Bool => true, Ptr => true, _ => false }) }
+wordish = (ty: Scalar) bool { (integer(ty) && !same(ty, Scalar.U128))
+    || ty.match({ Bool => true, Ptr => true, _ => false }) }
 
 unsigned_integer = (ty: Scalar) bool { integer(ty) && !signed(ty) }
 

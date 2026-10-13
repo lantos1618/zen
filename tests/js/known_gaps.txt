@@ -73,12 +73,6 @@ tests/corpus/codegen/nested_capability_receiver_dispatches/main # UNSUPPORTED: e
 tests/corpus/codegen/struct_return_behavior # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/codegen/unit_pointer_is_an_opaque_handle # UNSUPPORTED: unit_pointer_is_an_opaque_handle.zen:16:5: error: unsupported by this backend: the compiler-provided
 tests/corpus/enums/represented_enum_round_trips # UNSUPPORTED: represented_enum_round_trips.zen:5:15: error: unsupported by this backend: an unknown variant
-tests/corpus/env/args_answer_is_typed_at_the_call # UNSUPPORTED: args_answer_is_typed_at_the_call.zen:18:19: error: unsupported by this backend: this environment ope
-tests/corpus/env/args_fills_a_schema # UNSUPPORTED: args_fills_a_schema.zen:47:10: error: unsupported by this backend: this environment operation
-tests/corpus/env/args_missing_names_the_field # UNSUPPORTED: args_missing_names_the_field.zen:37:10: error: unsupported by this backend: this environment operati
-tests/corpus/env/args_parse_names_the_field # UNSUPPORTED: args_parse_names_the_field.zen:37:10: error: unsupported by this backend: this environment operation
-tests/corpus/env/args_surplus_word_is_parse_of_the_last_positional # UNSUPPORTED: args_surplus_word_is_parse_of_the_last_positional.zen:37:10: error: unsupported by this backend: thi
-tests/corpus/env/args_unknown_flag_is_parse_of_the_word # UNSUPPORTED: args_unknown_flag_is_parse_of_the_word.zen:37:10: error: unsupported by this backend: this environme
 tests/corpus/env/fs_lock_excludes_until_released # FAIL: exit 1 (expected 0) stdout differs (0 bytes, expected 107) 
 tests/corpus/env/fs_lock_survives_a_move_across_frames # FAIL: exit 1 (expected 0) stdout differs (0 bytes, expected 36) 
 tests/corpus/env/fs_read_special_file_with_zero_stat_size/main # FAIL: exit 1 (expected 0) stdout differs (0 bytes, expected 14) 

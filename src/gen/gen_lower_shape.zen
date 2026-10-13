@@ -97,6 +97,16 @@ prim_class* = (name: str) Res<Scalar> {
 // `str` is a borrowed pointer and length.
 STR_LAYOUT*: Layout = Layout(size: 16, align: 8)
 
+SCOPE_TYPE: str = "std.core.scope.Scope"
+
+// Whether `ty` is std.core's Scope, the type of `@scope`.
+is_scope* = (lo :: Lowerer, ty: TyId) bool {
+    lo.check.types.at(ty).match({
+        Named(n) => n.name.eq("Scope") && lo.check.world.module_name(n.decl).eq("std.core.scope"),
+        _        => false,
+    })
+}
+
 // Capability records the runtime supplies; they carry no data here.
 capability* = (qualified: str) bool {
     qualified.is_in([
@@ -205,7 +215,8 @@ named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
         lo.check.world.module_name(n.decl),
         n.name
     ).try(LowerError.OutOfMemory);
-    (qualified.view().eq("std.mem.mem_ptr.Ptr")).match({
+    // A Scope is the address of its block's defer record (gen_lower_scope).
+    (qualified.view().eq("std.mem.mem_ptr.Ptr") || qualified.view().eq(SCOPE_TYPE)).match({
         true  => Ok(Shape(class: Scalar.Ptr, form: Form.Plain)),
         false => capability(qualified.view()).match({
             true  => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),

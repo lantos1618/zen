@@ -927,6 +927,15 @@ names_function* = (lo :: Lowerer) Res<Func, LowerError> {
         lo.push_frame(lo.alloc.Inst(), 0, lo.unit_ty, None, None).try()
     );
     word = lo.prim("usize").try();
+    // Reached even before any turn is known, so lowering the table again
+    // once every turn is known calls nothing new.
+    lo.enqueue(
+        lo.std_function(
+            "std.actor.actor_runtime",
+            "actor_name",
+            nowhere()
+        ).try()
+    ).try();
     lo.turn_names.loop((t) {
         args ::= lo.one(lo.code_of(t.index).try()).try();
         text = lo.slot_of(Scalar.Ptr).try();

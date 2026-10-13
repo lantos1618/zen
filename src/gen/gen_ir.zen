@@ -195,7 +195,8 @@ TrapKind* = { Overflow
     | DivideByZero
     | OutOfBounds
     | Unreachable
-    | OutOfMemory }
+    | OutOfMemory
+    | DeferLimit }
 Fault* = { what*: TrapKind, span*: Span }
 
 Terminator* = { Return: usize | Jump: usize | Branch: Branch | Trap: Fault }
@@ -252,6 +253,7 @@ trap_message* = (what: TrapKind) str {
         OutOfBounds  => "index out of bounds",
         Unreachable  => "unreachable match arm",
         OutOfMemory  => "out of memory",
+        DeferLimit   => "too many deferred closures on one block",
     })
 }
 

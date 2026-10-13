@@ -4,18 +4,15 @@
 # is refused, fails with any other line, or leaves the corpus, and when an
 # unlisted test fails: fix a gap, then delete its line.
 tests/corpus/actor/bytes_payload_moves_to_receiver	bytes_payload_moves_to_receiver.zen:41:5: error: unsupported by this backend: an actor payload without a concrete mailbox transfer
-tests/corpus/actor/dynamic_str_is_copied	dynamic_str_is_copied.zen:1:1: error: unsupported by this backend: a name table that reaches a new function
 tests/corpus/actor/safe_nested_payload_crosses_actor	safe_nested_payload_crosses_actor.zen:27:15: error: unsupported by this backend: a type sema did not settle
 tests/corpus/actor/vector_state_is_16_aligned	vector_state_is_16_aligned.zen:22:9: error: unsupported by this backend: u8x16 values
 tests/corpus/bitwise/secret_words_take_public_counts	secret_words_take_public_counts.zen:6:8: error: unsupported by this backend: a Secret parameter
 tests/corpus/bitwise/u128_words	:0:0: error: unsupported by this backend: u128 values
 tests/corpus/casts-conversions/float_narrowing_rounds_and_exact_conversions_check/main	main.zen:29:30: error: unsupported by this backend: f32 values
 tests/corpus/casts-conversions/float_widening_is_exact/main	:0:0: error: unsupported by this backend: f32 values
-tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main	main.zen:34:13: error: unsupported by this backend: this expression in a native executable
 tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main	main.zen:23:27: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i64`)
 tests/corpus/closures-capture/i_local_function_reads_the_live_frame/main	main.zen:21:5: error: unsupported by this backend: nested declarations
 tests/corpus/closures-capture/j_local_function_try_returns_from_its_writer/main	main.zen:35:5: error: unsupported by this backend: nested declarations
-tests/corpus/codegen/a_unit_try_in_tail_position_builds_its_res/main	main.zen:28:9: error: unsupported by this backend: this expression in a native executable
 tests/corpus/codegen/byte_order_reads_and_writes_round_trip	byte_order_reads_and_writes_round_trip.zen:11:22: error: unsupported by this backend: this pointer operation
 tests/corpus/codegen/c_abi_integer_spelling	c_abi_integer_spelling.zen:28:30: error: unsupported by this backend: the compiler-provided operation `c_abi_integer_spelling.abs`
 tests/corpus/codegen/native_constants_in_different_functions_keep_their_own_values	native_constants_in_different_functions_keep_their_own_values.zen:22:18: error: unsupported by this backend: a C macro other than a target predefine
@@ -28,20 +25,9 @@ tests/corpus/generics/inline_method_keeps_its_type_arguments/main	main.zen:10:20
 tests/corpus/impl-traits/dispatch_picks_each_type_own_impl/main	main.zen:23:42: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/math/power_and_rounding	power_and_rounding.zen:13:34: error: unsupported by this backend: a float literal with more than 15 significant digits or a decimal exponent beyond 22
 tests/corpus/math/scalar	scalar.zen:9:21: error: unsupported by this backend: a float literal with more than 15 significant digits or a decimal exponent beyond 22
-tests/corpus/meta/alias_name_is_what_was_written	alias_name_is_what_was_written.zen:36:22: error: unsupported by this backend: this expression in a native executable
-tests/corpus/meta/field_count_via_meta	field_count_via_meta.zen:69:9: error: unsupported by this backend: a call without successful semantic checking
-tests/corpus/meta/field_walk_shadowing	field_walk_shadowing.zen:17:5: error: unsupported by this backend: an expression sema published no type for
-tests/corpus/meta/field_walk_via_meta	field_walk_via_meta.zen:76:25: error: unsupported by this backend: a call without successful semantic checking
-tests/corpus/meta/primitive_name_is_its_own_spelling	primitive_name_is_its_own_spelling.zen:48:22: error: unsupported by this backend: this expression in a native executable
-tests/corpus/meta/type_name_via_meta	type_name_via_meta.zen:28:38: error: unsupported by this backend: this expression in a native executable
 tests/corpus/net/dns_resolve/main	std/net/socket.zen:175:12: error: unsupported by this backend: a native C record
 tests/corpus/net/tcp_connect/main	std/net/socket.zen:248:27: error: unsupported by this backend: a member without a body this backend can find (`std.mem.mem_ptr.Ptr<std.net.socket.AddrInfo,>`)
 tests/corpus/net/tls_connect/main	std/net/tls.zen:261:13: error: unsupported by this backend: the compiler-provided operation `std.net.tls.SSL_shutdown`
-tests/corpus/own/defer_cap_is_thirty_two/main	main.zen:26:9: error: unsupported by this backend: this expression in a native executable
-tests/corpus/own/defer_captures_at_registration	defer_captures_at_registration.zen:17:10: error: unsupported by this backend: this expression in a native executable
-tests/corpus/own/scope_captured_by_non_escaping_closure	scope_captured_by_non_escaping_closure.zen:18:9: error: unsupported by this backend: this expression in a native executable
-tests/corpus/own/scope_nests_per_block	scope_nests_per_block.zen:10:13: error: unsupported by this backend: this expression in a native executable
-tests/corpus/own/scope_passed_inward	scope_passed_inward.zen:18:14: error: unsupported by this backend: this expression in a native executable
 tests/corpus/own/send_consumed_buffer	send_consumed_buffer.zen:58:38: error: unsupported by this backend: the compiler-provided operation `send_consumed_buffer.abort`
 tests/corpus/parse/impl_decl_statement	impl_decl_statement.zen:22:35: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/printing/floats_print_only_through_f64/main	:0:0: error: unsupported by this backend: f32 values

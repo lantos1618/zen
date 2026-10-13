@@ -15,7 +15,7 @@
 // as a pointer to the caller's copy; an aggregate result is written through
 // the indirect-result register x8, as AAPCS64 does for large composites.
 
-{ Alloc, AllocError } = std.mem
+{ Alloc, AllocError, Mem } = std.mem
 { str, String } = std.text
 { Res, Ok, None, loop, Range } = std.core
 { Vec } = std.collections
@@ -35,11 +35,11 @@
 
 Arm64Os* = { Linux | Darwin }
 
-Arm64* = { alloc*: Alloc, os*: Arm64Os }
+Arm64* = { alloc*: Alloc, mem*: Mem, os*: Arm64Os }
 
 Arm64.impl(Target, {
     emit = (self: @Self, original: Program) Res<String, AllocError> {
-        program = prepare(self.alloc, original).try();
+        program = prepare(self.alloc, self.mem, original).try();
         writer ::= Assembly(
             alloc: self.alloc,
             os: self.os,

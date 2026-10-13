@@ -24,7 +24,7 @@ Backend = { LegacyC | IrC | Js | Asm }
 host_assembly = (env: Env, a: Alloc, program: Program) Res<String, AllocError> {
     host_target().match({
         None        => a.String(),
-        Ok(machine) => emit_assembly(a, machine, program).try().match({
+        Ok(machine) => emit_assembly(a, env.mem, machine, program).try().match({
             None     => a.String(),
             Ok(text) => Ok(text),
         }),

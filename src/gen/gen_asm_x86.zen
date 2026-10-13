@@ -11,7 +11,7 @@
 // pointer to the caller's copy, and an aggregate result is written through a
 // hidden pointer passed in %rdi, as System V does for MEMORY-class values.
 
-{ Alloc, AllocError } = std.mem
+{ Alloc, AllocError, Mem } = std.mem
 { str, String } = std.text
 { Res, Ok, None, loop, Range } = std.core
 { Vec } = std.collections
@@ -31,11 +31,11 @@
 
 // This target fixes the instruction set, object dialect, OS and calling ABI:
 // x86-64, ELF with GNU assembler syntax, Linux system calls, System V calls.
-X86_64Linux* = { alloc*: Alloc }
+X86_64Linux* = { alloc*: Alloc, mem*: Mem }
 
 X86_64Linux.impl(Target, {
     emit = (self: @Self, original: Program) Res<String, AllocError> {
-        program = prepare(self.alloc, original).try();
+        program = prepare(self.alloc, self.mem, original).try();
         writer ::= Assembly(
             alloc: self.alloc,
             program: program,

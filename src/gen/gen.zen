@@ -306,7 +306,7 @@ Generation* = {
                         },
                         Ok(platform) => execute(
                             self.alloc,
-                            prepare(self.alloc, program).try(),
+                            prepare(self.alloc, self.mem, program).try(),
                             platform,
                             argv
                         ).try().match({
@@ -361,7 +361,12 @@ Generation* = {
                Res<Res<String>, AllocError> {
         self.target.match({
             None        => Ok(None),
-            Ok(machine) => emit_assembly(self.alloc, machine, program),
+            Ok(machine) => emit_assembly(
+                self.alloc,
+                self.mem,
+                machine,
+                program
+            ),
         })
     }
 }
@@ -482,18 +487,20 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
 // Target selection happens here, at the generation boundary; the renderer
 // contract does not import its implementations. None: no renderer exists
 // for this machine. The caller verifies the program first.
-emit_assembly* = (alloc: Alloc, machine: Target, program: Program)
+emit_assembly* = (alloc: Alloc, mem: Mem, machine: Target, program: Program)
                  Res<Res<String>, AllocError> {
     machine.os.match({
         Linux   => machine.arch.match({
-            X86_64 => Ok(Ok(X86_64Linux(alloc: alloc).emit(program).try())),
+            X86_64 => Ok(Ok(
+                X86_64Linux(alloc: alloc, mem: mem).emit(program).try()
+            )),
             Arm64  => Ok(Ok(
-                Arm64(alloc: alloc, os: Arm64Os.Linux).emit(program).try()
+                Arm64(alloc: alloc, mem: mem, os: Arm64Os.Linux).emit(program).try()
             )),
         }),
         Macos   => machine.arch.match({
             Arm64  => Ok(Ok(
-                Arm64(alloc: alloc, os: Arm64Os.Darwin).emit(program).try()
+                Arm64(alloc: alloc, mem: mem, os: Arm64Os.Darwin).emit(program).try()
             )),
             X86_64 => Ok(None),
         }),

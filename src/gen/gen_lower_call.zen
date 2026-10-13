@@ -37,6 +37,7 @@
 { variant_index, size_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
 { json_door, outcome_door } = gen.gen_lower_door
+{ env_args } = gen.gen_lower_env
 
 // One argument position after binding names and the receiver.
 Source* = { Given: ExprId | Absent | Computed: Value | Located: Place }
@@ -2126,6 +2127,7 @@ env_call = (
             lo.console_answer(id, span)
         },
         "flush"     => lo.console_answer(id, span),
+        "args"      => lo.env_args(id, sources, span),
         // Threads and actors (gen_lower_thread, gen_lower_actor).
         "sleep"     => lo.sleep_thread(id, c, sources, span),
         "spawn"     => lo.receiver_kind(sources).eq("Threads").match({

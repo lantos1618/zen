@@ -243,7 +243,7 @@ Runner = {
         Ok
     }
 
-    // Launch under an alarm (10 s; 180 s for the jit), with the test's arguments, environment
+    // Launch under an alarm (10 s; 600 s for the jit), with the test's arguments, environment
     // and stdin; a POSIX shell only performs the redirection.
     // Stages the run directory and returns the shell command that runs it.
     launch = (self: @Self, c: Case, binary: str, dir: str) Res<String, AllocError> {
@@ -289,10 +289,10 @@ Runner = {
         self.run(setup).try();
         command ::= self.a.String().try();
         command.fmt("cd '{}' && ", run_dir.view()).try();
-        // The jit compiles inside the run, and a test importing compiler
-        // modules spends over 10 s in the frontend alone, so its alarm is
-        // tests/run.py's compile and run timeouts together (120 s + 60 s).
-        alarm: str = self.jit().match({ true => "180", false => "10" });
+        // The jit compiles inside the run and interprets it: a test that
+        // imports the lsp takes 165 s on an 8-core VM and over 180 s on a CI
+        // runner, so the jit's alarm only catches hangs.
+        alarm: str = self.jit().match({ true => "600", false => "10" });
         command.fmt("exec perl -e 'alarm {}; exec @ARGV' ", alarm).try();
         // The harness exports two over-long names for this test alone.
         c.base.ends_with("env_var_resolves_a_name_of_any_length").then(() {

@@ -18,7 +18,7 @@
 { Ast, ExprId, BlockId, TypeId, Function, Literal, Bind, Deferred, Stmt } = std.ast
 { Span } = std.source
 { BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index } = std.ast
-{ TParam, Arg } = std.ast
+{ TParam, Arg, Member } = std.ast
 { PatternId } = std.ast
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at } = sema.sema
@@ -44,6 +44,7 @@
 { call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
 { SynthAt, TurnName, lower_pending } = gen.gen_lower_thread
 { owner_of } = sema.sema_inst
+{ alias_module } = sema.sema_module
 
 // A value computed into a slot, with its concrete (substituted) type.
 Value* = { slot*: usize, ty*: TyId }
@@ -2206,7 +2207,83 @@ Lowerer* = {
             true  => self.prim_constant(ty, type_name, member, span),
             false => self.c_bound(type_name).match({
                 true  => self.predefined(ty, member, span),
-                false => self.variant_for(id, ty, member, span),
+                false => self.type_const(
+                    type_name,
+                    member,
+                    ty,
+                    span
+                ).try().match({
+                    Ok(value) => Ok(value),
+                    None      => self.variant_for(id, ty, member, span),
+                }),
+            }),
+        })
+    }
+
+    // `Type.NAME` for a constant or defaulted field of the type's body, and
+    // `alias.NAME` for a constant of the module an import alias binds.
+    type_const = (self :: @Self, type_name: str, member: str, ty: TyId, span: Span)
+                 Res<Res<Value>, LowerError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(
+            self.here().module,
+            type_name,
+            defs
+        ).try(LowerError.OutOfMemory);
+        owner = defs.find((d) {
+            d.kind.match({ StructDef => true, EnumDef => true, AliasDef => true, _ => false })
+        });
+        owner.match({
+            None    => Ok(None),
+            Ok(def) => self.check.alias_module(def.id).match({
+                Ok(module) => self.module_const(module, member, ty, span),
+                None       => self.body_const(def.id, member, ty),
+            }),
+        })
+    }
+
+    module_const = (self :: @Self, module: usize, name: str, ty: TyId, span: Span)
+                   Res<Res<Value>, LowerError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(
+            module,
+            name,
+            defs
+        ).try(LowerError.OutOfMemory);
+        defs.find(
+            (d) { d.kind.match({ ConstDef => true, _ => false }) }
+        ).match({
+            Ok(d) => Ok(Ok(self.global_const(d, ty, span).try())),
+            None  => Ok(None),
+        })
+    }
+
+    body_const = (self :: @Self, decl: DeclId, name: str, ty: TyId)
+                 Res<Res<Value>, LowerError> {
+        members: Res<Vec<Member>> = decl_at(self.tree, decl).match({
+            Ok(d) => d.kind.match({
+                Struct(s) => Ok(s.members),
+                Enum(e)   => Ok(e.members),
+                _         => None,
+            }),
+            None  => None,
+        });
+        member                    = members.match({
+            Ok(ms) => ms.find((m) { m.name().text.eq(name) }),
+            None   => None,
+        });
+        module                    = decl.module.to_usize();
+        member.match({
+            None  => Ok(None),
+            Ok(m) => m.kind.match({
+                Const(k) => Ok(Ok(
+                    self.const_in(k.value, k.type, module, ty).try()
+                )),
+                Field(f) => f.value.match({
+                    Ok(v) => Ok(Ok(self.const_in(v, f.type, module, ty).try())),
+                    None  => Ok(None),
+                }),
+                _        => Ok(None),
             }),
         })
     }

@@ -186,21 +186,23 @@ Runner = {
             self.a
         ).match({ Ok(s) => s.view(), Err(_) => "." });
         zen  = self.zen.starts_with("/").match({ true => self.a.String("{}", self.zen).try(), false => self.a.String("{}/{}", here, self.zen).try() });
-        // As tests/run.py stages it: the test's root over the compiler
-        // sources, so tests importing compiler modules resolve them.
-        root    = self.a.String("{}.root", binary).try();
-        overlay = self.a.String(
-            "rm -rf '{}' && mkdir -p '{}' && ln -s '{}'/src/* '{}'/ && ln -sfn '{}/{}'/* '{}'/",
-            root.view(),
-            root.view(),
-            here,
-            root.view(),
-            here,
+        // tests/run.py's own staging: the test's files, std and the
+        // compiler modules it imports; then this case's entry, which the
+        // harness may have patched.
+        root  = self.a.String("{}.stage/src", binary).try();
+        stage = self.a.String(
+            "rm -rf '{}.stage' && python3 tests/native/stage.py '{}' '{}' '{}.stage' && cp -f '{}/{}' '{}/{}'",
+            binary,
+            zen.view(),
+            c.base,
+            binary,
             c.root,
-            root.view()
+            c.entry,
+            root.view(),
+            c.entry
         ).try();
         link ::= self.a.Vec<str>();
-        ["/bin/sh", "-c", overlay.view()].loop((w) { link.add(w).try(); });
+        ["/bin/sh", "-c", stage.view()].loop((w) { link.add(w).try(); });
         self.run(link).try();
         script = self.a.String(
             "#!/bin/sh\nexec '{}' build '{}/{}' --entry '{}' --std '{}/{}' --backend jit --argv0 \"$0\" -- \"$@\"\n",
@@ -218,7 +220,7 @@ Runner = {
         Ok
     }
 
-    // Launch under a 10 s alarm, with the test's arguments, environment
+    // Launch under an alarm (10 s; 180 s for the jit), with the test's arguments, environment
     // and stdin; a POSIX shell only performs the redirection.
     // Stages the run directory and returns the shell command that runs it.
     launch = (self: @Self, c: Case, binary: str, dir: str) Res<String, AllocError> {
@@ -231,12 +233,18 @@ Runner = {
         setup ::= self.a.Vec<str>();
         // The program is invoked as `<run dir>/prog`, the name argv[0] tests
         // pin, and the symlink-loop test finds its loop staged beside it.
+        // The jit's `src` is its staged root, std and compiler modules
+        // included, as tests/run.py stages it.
+        root = self.jit().match({
+            true  => self.a.String("{}.stage/src", binary).try(),
+            false => self.a.String("{}", c.root).try(),
+        });
         script ::= self.a.String(
             "rm -rf '{}' && mkdir -p '{}' && ln -sfn '{}/{}' '{}/src' && ln -sfn '{}/{}' '{}/prog'",
             run_dir.view(),
             run_dir.view(),
             here,
-            c.root,
+            root.view(),
             run_dir.view(),
             here,
             binary,
@@ -245,11 +253,24 @@ Runner = {
         c.base.ends_with("symlink_loop_is_failed/main").then(() {
             script.fmt(" && ln -sfn loop '{}/loop'", run_dir.view()).try();
         });
+        // As tests/run.py's ZeroSizeFilePeer: a nonempty FIFO whose stat
+        // size is zero.
+        c.base.ends_with("fs_read_special_file_with_zero_stat_size/main").then(() {
+            script.fmt(
+                " && mkfifo '{}/zero-size-input' && (timeout 130 sh -c \"printf 'zero-sized files still contain bytes\\n' > '{}/zero-size-input'\" > /dev/null 2>&1 &)",
+                run_dir.view(),
+                run_dir.view()
+            ).try();
+        });
         ["/bin/sh", "-c", script.view()].loop((w) { setup.add(w).try(); });
         self.run(setup).try();
         command ::= self.a.String().try();
         command.fmt("cd '{}' && ", run_dir.view()).try();
-        command.add("exec perl -e 'alarm 10; exec @ARGV' ").try();
+        // The jit compiles inside the run, and a test importing compiler
+        // modules spends over 10 s in the frontend alone, so its alarm is
+        // tests/run.py's compile and run timeouts together (120 s + 60 s).
+        alarm: str = self.jit().match({ true => "180", false => "10" });
+        command.fmt("exec perl -e 'alarm {}; exec @ARGV' ", alarm).try();
         // The harness exports two over-long names for this test alone.
         c.base.ends_with("env_var_resolves_a_name_of_any_length").then(() {
             command.add("env ").try();

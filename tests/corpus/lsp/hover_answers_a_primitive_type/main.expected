@@ -9,9 +9,9 @@
 0:20  str  a written primitive: its members
     {"jsonrpc":"2.0","id":14,"result":{"contents":{"kind":"plaintext","value":"str — members: len: usize, is_empty, is_identifier, ptr, get, index, slice, copy_into, find, rfind, contains, count, starts_with, ends_with, after_last, trim, trim_start, trim_end, eq_ignore_case, newline_in, lines, split, split_once, before, parse_i64, parse_i32, parse_u64_radix, parse_u64, parse_usize, parse_u16"},"range":{"start":{"line":0,"character":20},"end":{"line":0,"character":23}}}}
 0:25  n    an i32 parameter at its declaration
-    {"jsonrpc":"2.0","id":15,"result":{"contents":{"kind":"plaintext","value":"i32 — members: MIN, MAX, BITS"},"range":{"start":{"line":0,"character":25},"end":{"line":0,"character":26}}}}
+    {"jsonrpc":"2.0","id":15,"result":{"contents":{"kind":"plaintext","value":"i32 — members: MIN: i32, MAX: i32, BITS: usize"},"range":{"start":{"line":0,"character":25},"end":{"line":0,"character":26}}}}
 0:28  i32  a written primitive: its members
-    {"jsonrpc":"2.0","id":16,"result":{"contents":{"kind":"plaintext","value":"i32 — members: MIN, MAX, BITS"},"range":{"start":{"line":0,"character":28},"end":{"line":0,"character":31}}}}
+    {"jsonrpc":"2.0","id":16,"result":{"contents":{"kind":"plaintext","value":"i32 — members: MIN: i32, MAX: i32, BITS: usize"},"range":{"start":{"line":0,"character":28},"end":{"line":0,"character":31}}}}
 0:33  bool the return type
     {"jsonrpc":"2.0","id":17,"result":{"contents":{"kind":"plaintext","value":"bool — `true` or `false`; a `.match` on it is always exhaustive."},"range":{"start":{"line":0,"character":33},"end":{"line":0,"character":37}}}}
 1:4  b    a bool value, used: the bare name

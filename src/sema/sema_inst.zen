@@ -53,6 +53,14 @@ Inst* = {
 
     // What `v` became, or `v` itself when unbound.
     arg_for* = (self: @Self, v: TyId) TyId { self.lookup(v).value_or(v) }
+
+    // Replaces what a bound `v` became; an unbound `v` stays unbound.
+    rebind* = (self :: @Self, v: TyId, arg: TyId) Res<()> {
+        k = Range(0, self.vars.len).find((k) {
+            self.vars.get(k).match({ Ok(x) => x.eq(v), None => false })
+        }).try();
+        self.args.set(k, arg)
+    }
 }
 
 InstEdge* = {

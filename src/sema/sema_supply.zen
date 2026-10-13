@@ -116,9 +116,17 @@ keep_reachable = (
     supplied_here : bool,
     kept          :: Vec<Member>
 ) Res<AllocError> {
-    (m.named(name) && (m.has_body() || supplied_here)).match({
+    (m.named(name) && (m.has_body() || supplied_here || m.is_hook())).match({
         true  => kept.add(m),
         false => Ok,
+    })
+}
+
+// An optional hook its implementor leaves out keeps the bound's signature.
+is_hook = (m: Member) bool {
+    m.kind.match({
+        Function(f) => f.form.match({ Hook => true, _ => false }),
+        _           => false,
     })
 }
 

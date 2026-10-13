@@ -1,0 +1,17 @@
+// `is_in` reaches `v.eq(x)` through a bound inside a generic loop body; sema
+// publishes that call at the instance. Field defaults are checked too.
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+{ is_in } = std.core
+
+Caps = { a: usize = 1, b: bool = true }
+
+main = (env: Env) Res<i32, AllocError> {
+    xs = [1, 2, 3];
+    println("{}", is_in(2, xs));
+    c = Caps();
+    println("{} {}", c.a, c.b);
+    Ok(0)
+}

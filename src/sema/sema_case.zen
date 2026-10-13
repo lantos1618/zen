@@ -7,6 +7,7 @@
 { Checker, Ctx } = sema.sema_check
 { type_from_ast } = sema.sema_denote
 { union_reading, union_member, member_of } = sema.sema_union
+{ subst, inst_of_named } = sema.sema_inst
 { Res, Ok } = std.core
 
 // One value a scrutinee can be. `payload` is `()` when there is none.
@@ -183,10 +184,11 @@ add_variants = (c :: Checker, e: Enum, n: TyNamed, out :: Vec<Case>)
                Res<bool, AllocError> {
     poison = c.types.unknown().try();
     ctx    = Ctx(n.decl.module.to_usize(), poison);
+    inst   = c.inst_of_named(n).try();
     e.variants.loop((h, v) {
         out.add(Case(
             name: v.name.text,
-            payload: c.variant_payload(v, ctx).try(),
+            payload: c.subst(c.variant_payload(v, ctx).try(), inst).try(),
             has_payload: v.payload.match({ Ok(_) => true, None => false }),
         )).try();
     });

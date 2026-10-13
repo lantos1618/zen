@@ -29,8 +29,8 @@ tests/corpus/file-io/posix_stream/main	main.zen:78:6: error: unsupported by this
 tests/corpus/gen_zen/bodyless_free_function_is_extern/main	main.zen:17:11: error: unsupported by this backend: the compiler-provided operation `main.isdigit`
 tests/corpus/generics/inline_method_keeps_its_type_arguments/main	main.zen:10:20: error: unsupported by this backend: a variant of a type without alternatives (`main.Apply`)
 tests/corpus/impl-traits/dispatch_picks_each_type_own_impl/main	main.zen:23:42: error: unsupported by this backend: a field of a value without record layout
-tests/corpus/math/power_and_rounding	power_and_rounding.zen:13:34: error: unsupported by this backend: a float literal with more than 15 significant digits or a decimal exponent beyond 22
-tests/corpus/math/scalar	scalar.zen:9:21: error: unsupported by this backend: a float literal with more than 15 significant digits or a decimal exponent beyond 22
+tests/corpus/math/power_and_rounding	std/math/math.zen:26:41: error: unsupported by this backend: a member without a body this backend can find (`f64`)
+tests/corpus/math/scalar	std/math/math.zen:19:27: error: unsupported by this backend: a member without a body this backend can find (`f64`)
 tests/corpus/meta/alias_name_is_what_was_written	alias_name_is_what_was_written.zen:36:22: error: unsupported by this backend: this expression in a native executable
 tests/corpus/meta/field_count_via_meta	field_count_via_meta.zen:69:9: error: unsupported by this backend: a call without successful semantic checking
 tests/corpus/meta/field_walk_shadowing	field_walk_shadowing.zen:17:5: error: unsupported by this backend: an expression sema published no type for
@@ -52,11 +52,11 @@ tests/corpus/sema/bound_third_module/	boxy/boxy.zen:8:35: error: unsupported by 
 tests/corpus/sema/computed_field_read	computed_field_read.zen:31:19: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/impl_collision_bound_in_scope	impl_collision_bound_in_scope.zen:37:36: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/statement_tail_is_not_a_value	:0:0: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i32`)
-tests/corpus/std/carry_limbs	carry_limbs.zen:34:9: error: unsupported by this backend: the machine primitive add_carry
-tests/corpus/std/constant_time	constant_time.zen:53:18: error: unsupported by this backend: the machine primitive truncate_*
+tests/corpus/std/carry_limbs	std/simd.zen:218:22: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
+tests/corpus/std/constant_time	constant_time.zen:154:9: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.value_barrier`
 tests/corpus/std/display_allocating_overload_picked_by_argument	display_allocating_overload_picked_by_argument.zen:34:13: error: unsupported by this backend: a value conversion this backend does not model (`()` to `std.text.text_string.String`)
 tests/corpus/std/os_entropy	std/entropy.zen:23:27: error: unsupported by this backend: a member without a body this backend can find (`std.mem.mem_ptr.Ptr<u8,>`)
-tests/corpus/std/secret_discipline_accepts_constant_time_code	secret_discipline_accepts_constant_time_code.zen:59:49: error: unsupported by this backend: the machine primitive truncate_*
+tests/corpus/std/secret_discipline_accepts_constant_time_code	std/ct/ct.zen:48:34: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.declassify_barrier`
 tests/corpus/std/simd_bmi2	std/simd.zen:215:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
 tests/corpus/std/simd_features	simd_features.zen:96:25: error: unsupported by this backend: the std.simd operation lane
 tests/corpus/std/simd_sha	std/simd.zen:230:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)

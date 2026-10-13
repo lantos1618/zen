@@ -1890,7 +1890,7 @@ truncated = (value: f64, into_signed: bool, out: usize) {
         ),
         false => (whole >= HALF_RANGE()).match({
             true  => {
-                set_i64(out, (whole - HALF_RANGE()).to_i64().value_or(i64.MAX));
+                set_i64(out, (whole - HALF_RANGE()).to_i64().value_or(i64.MIN));
                 set_u64(out, load_u64(out) +% 9223372036854775808);
             },
             false => set_i64(out, whole.to_i64().value_or(0)),

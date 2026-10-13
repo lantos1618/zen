@@ -70,18 +70,19 @@ scope_record = (lo :: Lowerer) Res<usize, LowerError> {
                 offset: 0,
                 value: zero
             ))).try(LowerError.OutOfMemory);
-            lo.scopes.set(index, Cleanup(
-                drops: open.drops,
-                defers: open.defers,
-                record: Ok(record)
-            )).ok_or(unsupported(nowhere(), "a missing scope")).try();
+            lo.scopes.set(index, Cleanup(drops: open.drops, defers: open.defers, record: Ok(record))).ok_or(unsupported(nowhere(), "a missing scope")).try();
             Ok(record)
         },
     })
 }
 
 // `scope.defer(closure)` through the record at `scope`.
-defer_into* = (lo :: Lowerer, scope: usize, c: Call, span: Span) Res<Value, LowerError> {
+defer_into* = (
+    lo    :: Lowerer,
+    scope : usize,
+    c     : Call,
+    span  : Span
+) Res<Value, LowerError> {
     arg      = c.args.get(0).ok_or(unsupported(span, "a defer without a closure")).try();
     lambda   = lo.closure_of(Source.Given(arg.value), span).try();
     frame    = lo.frames.get(lambda.frame).ok_or(unsupported(span, "a closure without a frame")).try();
@@ -89,11 +90,11 @@ defer_into* = (lo :: Lowerer, scope: usize, c: Call, span: Span) Res<Value, Lowe
     captures = lo.thread_captures(lambda, 8, span);
     lo.use_frame(saved);
     fields = captures.try();
-    (lo.captures_end(fields).try() <= ENTRY_BYTES).ensure(unsupported(
+    (lo.captures_end(fields).try() <= ENTRY_BYTES).ensure(unsupported(span, "a deferred closure capturing more than 120 bytes")).try();
+    stand_in = frame.scope.ok_or(unsupported(
         span,
-        "a deferred closure capturing more than 120 bytes"
+        "a defer outside a function"
     )).try();
-    stand_in = frame.scope.ok_or(unsupported(span, "a defer outside a function")).try();
     index    = lo.enqueue_synth(
         stand_in,
         Synth.Deferred(LiftedBody(
@@ -106,8 +107,12 @@ defer_into* = (lo :: Lowerer, scope: usize, c: Call, span: Span) Res<Value, Lowe
             captures: fields
         ))
     ).try();
-    count = lo.slot_of(Scalar.U64).try();
-    lo.add(Instruction.LoadValue(Load(out: count, base: scope, offset: 0))).try();
+    count    = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.LoadValue(Load(
+        out: count,
+        base: scope,
+        offset: 0
+    ))).try();
     full = lo.binary_word(Op.GreaterEqual, count, DEFER_MAX, span).try();
     over = lo.label().try();
     fill = lo.label().try();
@@ -118,12 +123,20 @@ defer_into* = (lo :: Lowerer, scope: usize, c: Call, span: Span) Res<Value, Lowe
     entry = lo.entry_at(scope, count, span).try();
     code  = lo.slot_of(Scalar.Ptr).try();
     lo.add(Instruction.CodeAddress(CodeRef(out: code, function: index))).try();
-    lo.add(Instruction.StoreValue(Store(base: entry, offset: 0, value: code))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: entry,
+        offset: 0,
+        value: code
+    ))).try();
     saved_fill = lo.use_frame(lambda.frame);
     fields.loop((f) { lo.store_capture(entry, f).try(); });
     lo.use_frame(saved_fill);
     next = lo.binary_word(Op.Add, count, 1, span).try();
-    lo.add(Instruction.StoreValue(Store(base: scope, offset: 0, value: next))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: scope,
+        offset: 0,
+        value: next
+    ))).try();
     lo.unit()
 }
 
@@ -136,7 +149,9 @@ captures_end = (lo :: Lowerer, captures: Vec<Capture>) Res<usize, LowerError> {
                 ends = c.offset + size_of(lo.class_of(c.ty).try());
                 (ends > end).then(() { end = ends; });
             },
-            Address   => { (c.offset + 8 > end).then(() { end = c.offset + 8; }); },
+            Address   => { (c.offset + 8 > end).then(
+                () { end = c.offset + 8; }
+            ); },
             Authority => (),
         });
     });
@@ -153,31 +168,59 @@ run_record* = (lo :: Lowerer, record: usize) Res<LowerError> {
     done = lo.label().try();
     lo.enter(head).try();
     count = lo.slot_of(Scalar.U64).try();
-    lo.add(Instruction.LoadValue(Load(out: count, base: address, offset: 0))).try();
+    lo.add(Instruction.LoadValue(Load(
+        out: count,
+        base: address,
+        offset: 0
+    ))).try();
     empty = lo.binary_word(Op.Equal, count, 0, span).try();
     lo.branch_to(empty, done, body).try();
     lo.start(body);
     last = lo.binary_word(Op.Sub, count, 1, span).try();
-    lo.add(Instruction.StoreValue(Store(base: address, offset: 0, value: last))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: address,
+        offset: 0,
+        value: last
+    ))).try();
     entry  = lo.entry_at(address, last, span).try();
-    copy   = lo.slot_of(Scalar.Block(Layout(size: ENTRY_BYTES, align: 8))).try();
+    copy   = lo.slot_of(Scalar.Block(Layout(
+        size: ENTRY_BYTES,
+        align: 8
+    ))).try();
     copied = lo.slot_of(Scalar.Ptr).try();
     lo.add(Instruction.AddressOf(Address(out: copied, slot: copy))).try();
     bytes = lo.word_const(Scalar.U64, ENTRY_BYTES.to_i64_bits()).try();
-    lo.add(Instruction.CopyBytes(CopyMem(dest: copied, source: entry, bytes: bytes))).try();
+    lo.add(Instruction.CopyBytes(CopyMem(
+        dest: copied,
+        source: entry,
+        bytes: bytes
+    ))).try();
     code = lo.slot_of(Scalar.Ptr).try();
-    lo.add(Instruction.LoadValue(Load(out: code, base: copied, offset: 0))).try();
+    lo.add(Instruction.LoadValue(Load(
+        out: code,
+        base: copied,
+        offset: 0
+    ))).try();
     args ::= lo.alloc.Vec<usize>();
     args.add(copied).try(LowerError.OutOfMemory);
     ran = lo.slot_of(Scalar.Unit).try();
-    lo.add(Instruction.InvokeAt(IndirectCall(out: ran, target: code, args: args))).try();
+    lo.add(Instruction.InvokeAt(IndirectCall(
+        out: ran,
+        target: code,
+        args: args
+    ))).try();
     lo.finish(Terminator.Jump(head)).try();
     lo.start(done);
     Ok
 }
 
 // The address of entry `index` (a U64 slot) of the record at `scope`.
-entry_at = (lo :: Lowerer, scope: usize, index: usize, span: Span) Res<usize, LowerError> {
+entry_at = (
+    lo    :: Lowerer,
+    scope : usize,
+    index : usize,
+    span  : Span
+) Res<usize, LowerError> {
     base = lo.slot_of(Scalar.U64).try();
     lo.add(Instruction.Cast(Convert(out: base, input: scope))).try();
     skip   = lo.binary_word(Op.Mul, index, ENTRY_BYTES, span).try();
@@ -198,7 +241,7 @@ entry_at = (lo :: Lowerer, scope: usize, index: usize, span: Span) Res<usize, Lo
 // `left op constant` on U64 words; comparisons answer a Bool slot.
 binary_word = (lo :: Lowerer, op: Op, left: usize, right: usize, span: Span)
               Res<usize, LowerError> {
-    class = op.match({
+    class    = op.match({
         Equal        => Scalar.Bool,
         GreaterEqual => Scalar.Bool,
         _            => Scalar.U64,

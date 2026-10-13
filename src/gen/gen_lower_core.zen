@@ -1850,7 +1850,9 @@ Lowerer* = {
         ).match({ Ok(next) => next.defers, None => self.defers.len });
         // Record entries were all registered after the static defers
         // before them, so they run first.
-        scope.record.when_ok((record) { self.run_record(record).try(); }).ignore_absent();
+        scope.record.when_ok(
+            (record) { self.run_record(record).try(); }
+        ).ignore_absent();
         Range(scope.defers, defers_end).loop((k) {
             entry = self.defers.get(defers_end - 1 - (k - scope.defers)).ok_or(unsupported(nowhere(), "a missing defer")).try();
             self.run_defer(entry).try();
@@ -2108,12 +2110,16 @@ Lowerer* = {
             }),
             _       => None,
         });
-        folded = self.meta_access(id, a).try();
+        folded              = self.meta_access(id, a).try();
         folded.match({
             Ok(v) => Ok(v),
             None  => type_name.match({
                 Ok(name) => self.type_member(id, name, a.name.text, span),
-                None     => self.member_const(a.base, a.name.text, id).try().match({
+                None     => self.member_const(
+                    a.base,
+                    a.name.text,
+                    id
+                ).try().match({
                     Ok(v) => Ok(v),
                     None  => self.value_access(id, a, span),
                 }),

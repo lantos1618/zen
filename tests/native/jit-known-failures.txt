@@ -4,7 +4,6 @@
 # is refused, fails with any other line, or leaves the corpus, and when an
 # unlisted test fails: fix a gap, then delete its line.
 tests/corpus/actor/bytes_payload_moves_to_receiver	bytes_payload_moves_to_receiver.zen:41:5: error: unsupported by this backend: an actor payload without a concrete mailbox transfer
-tests/corpus/actor/dynamic_str_is_copied	dynamic_str_is_copied.zen:1:1: error: unsupported by this backend: a name table that reaches a new function
 tests/corpus/actor/safe_nested_payload_crosses_actor	safe_nested_payload_crosses_actor.zen:27:15: error: unsupported by this backend: a type sema did not settle
 tests/corpus/actor/vector_state_is_16_aligned	vector_state_is_16_aligned.zen:22:9: error: unsupported by this backend: u8x16 values
 tests/corpus/bitwise/secret_words_take_public_counts	secret_words_take_public_counts.zen:6:8: error: unsupported by this backend: a Secret parameter

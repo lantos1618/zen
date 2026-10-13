@@ -236,7 +236,10 @@ element = (
 // A function instance with no declaration of its own. It occupies a slot in
 // `Lowerer.pending` like any instance (so calls and code addresses name it
 // by index) and is lowered from this description instead of a Function.
-Synth* = { Lifted: LiftedBody | Deferred: LiftedBody | Actor: ActorEntry | Names }
+Synth* = { Lifted: LiftedBody
+    | Deferred: LiftedBody
+    | Actor: ActorEntry
+    | Names }
 // A turn's source name, `Type.behaviour`, for the trace's name table.
 TurnName* = { index*: usize, name*: String }
 SynthAt* = { index*: usize, synth*: Synth }
@@ -863,7 +866,11 @@ byte_pointer* = (lo :: Lowerer) Res<TyId, LowerError> {
 
 // Bind each capture to its place in `record`: copies read in place, an
 // address reaches the creator's binding, an authority is the type alone.
-bind_captures* = (lo :: Lowerer, record: usize, captures: Vec<Capture>) Res<LowerError> {
+bind_captures* = (
+    lo       :: Lowerer,
+    record   : usize,
+    captures : Vec<Capture>
+) Res<LowerError> {
     captures.loop((c) {
         c.kind.match({
             Copied    => lo.bind_local(

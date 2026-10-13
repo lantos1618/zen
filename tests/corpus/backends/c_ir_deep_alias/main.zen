@@ -1,6 +1,7 @@
-// A `::` parameter's place is lent to a `:` callee only when no other
-// argument can reach it. An argument derived from the place's pointer through
-// more steps than the renderer follows must count as reaching it.
+// A load through a pointer parameter is never lent to a `:` callee: the
+// renderer cannot prove no other argument reaches that place (a second
+// pointer to it, a cast of one to U64, a round trip through memory), so
+// each case keeps the copy, even with an unrelated second argument.
 { Program, Func, BasicBlock, Instruction, Terminator, Scalar, Layout, Const, Move, Convert, Load, Invocation, Address } = gen.gen_ir
 { emit_c } = gen.gen_c_ir
 { Res, Ok, None, Range } = std.core
@@ -18,8 +19,7 @@ func = (
     slots      : Vec<Scalar>,
     code       : Vec<Instruction>,
     result     : usize,
-    ty         : Scalar,
-    places     : Res<Vec<usize>>
+    ty         : Scalar
 ) Res<Func, AllocError> {
     blocks ::= a.Vec<BasicBlock>();
     blocks.add(BasicBlock(code: code, exit: Terminator.Return(result))).try();
@@ -28,8 +28,7 @@ func = (
         parameters: parameters,
         slots: slots,
         blocks: blocks,
-        result: ty,
-        places: places
+        result: ty
     ))
 }
 
@@ -38,7 +37,7 @@ reader = (a: Alloc) Res<Func, AllocError> {
     slots ::= a.Vec<Scalar>();
     slots.add(big()).try();
     slots.add(Scalar.U64).try();
-    func(a, "reader", 2, slots, a.Vec<Instruction>(), 1, Scalar.U64, None)
+    func(a, "reader", 2, slots, a.Vec<Instruction>(), 1, Scalar.U64)
 }
 
 // forward(x :: Big) u64 { reader(*x, chain(x)) }, where chain is a cast and
@@ -69,9 +68,7 @@ forward = (a: Alloc, derived: bool, steps: usize) Res<Func, AllocError> {
         function: 0,
         args: args
     ))).try();
-    places ::= a.Vec<usize>();
-    places.add(0).try();
-    func(a, "forward", 1, slots, code, result, Scalar.U64, Ok(places))
+    func(a, "forward", 1, slots, code, result, Scalar.U64)
 }
 
 entry = (a: Alloc) Res<Func, AllocError> {
@@ -88,7 +85,7 @@ entry = (a: Alloc) Res<Func, AllocError> {
         function: 1,
         args: args
     ))).try();
-    func(a, "main", 0, slots, code, 2, Scalar.U64, None)
+    func(a, "main", 0, slots, code, 2, Scalar.U64)
 }
 
 lends = (a: Alloc, derived: bool, steps: usize) Res<bool, AllocError> {

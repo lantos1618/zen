@@ -3378,8 +3378,7 @@ Lowerer* = {
         ret_ty = f.ret.match({ Ok(t) => self.callee_type(callee, t), None => Ok(self.unit_ty) }).try();
         params ::= self.alloc.Vec<Param>();
         f.params.loop((p) { params.add(p).try(LowerError.OutOfMemory); });
-        kinds  ::= self.alloc.Vec<LocalKind>();
-        places ::= self.alloc.Vec<usize>();
+        kinds ::= self.alloc.Vec<LocalKind>();
         params.loop((p) {
             ty = p.type.ok_or(unsupported(
                 p.span,
@@ -3405,7 +3404,6 @@ Lowerer* = {
                 false => p.mutable.match({
                     true  => {
                         pointer = self.slot_of(Scalar.Ptr).try();
-                        places.add(pointer).try(LowerError.OutOfMemory);
                         kinds.add(LocalKind.Ref(Place(
                             base: Base.Through(pointer),
                             offset: 0,
@@ -3495,8 +3493,7 @@ Lowerer* = {
                 reads: self.payload_reads
             )),
             symbol: symbol,
-            locals: locals,
-            places: Ok(places)
+            locals: locals
         ))
     }
 

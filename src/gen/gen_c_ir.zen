@@ -466,9 +466,7 @@ C = {
                 Ok(block) => block.code.get(j).match({
                     Ok(instruction) => instruction.match({
                         LoadValue(load) => load.out == slot
-                            && self.lends(f, b, j, k, call, load.base)
-                            && (self.origin.get(load.base).value_or(0) != 0
-                                || plain(f, call, slot)),
+                            && self.lends(f, b, j, k, call, load.base),
                         _               => false,
                     }),
                     None            => false,
@@ -489,75 +487,8 @@ C = {
                     && self.root(call.out) != dest
                     && self.untouched(f, b, j + 1, k, dest)
             },
-            false => (at == 0).match({
-                true  => held(f, base) && self.once(f, base)
-                    && quiet(f, b, j + 1, k)
-                    && !self.reaches(f, call, base),
-                false => false,
-            }),
+            false => false,
         })
-    }
-
-    // Another argument of the call may be an address computed from `base`,
-    // through which the callee could change what it was lent.
-    reaches = (self: @Self, f: Func, call: Invocation, base: usize) bool {
-        derived ::= false;
-        call.args.loop((arg) {
-            (arg == base || self.from(f, arg, base, 0)).then(() {
-                derived = true;
-            });
-        });
-        derived || self.from(f, call.out, base, 0)
-    }
-
-    // `slot` is written from `base` by arithmetic, a copy or a cast.
-    from = (self: @Self, f: Func, slot: usize, base: usize, depth: usize)
-           bool {
-        // Past the depth bound, assume the slot is derived: unknown fails closed.
-        found ::= depth >= 8;
-        (depth < 8).then(() {
-            f.blocks.loop((block) {
-                block.code.loop((instruction) {
-                    instruction.match({
-                        Copy(v)        => (v.out == slot).then(() {
-                            (v.source == base || self.from(
-                                f,
-                                v.source,
-                                base,
-                                depth + 1
-                            ))
-                                .then(() { found = true; });
-                        }),
-                        UnaryValue(v)  => (v.out == slot).then(() {
-                            (v.input == base || self.from(
-                                f,
-                                v.input,
-                                base,
-                                depth + 1
-                            ))
-                                .then(() { found = true; });
-                        }),
-                        Cast(v)        => (v.out == slot).then(() {
-                            (v.input == base || self.from(
-                                f,
-                                v.input,
-                                base,
-                                depth + 1
-                            ))
-                                .then(() { found = true; });
-                        }),
-                        BinaryValue(v) => (v.out == slot).then(() {
-                            (v.left == base || v.right == base
-                                || self.from(f, v.left, base, depth + 1)
-                                || self.from(f, v.right, base, depth + 1))
-                                .then(() { found = true; });
-                        }),
-                        _              => (),
-                    });
-                });
-            });
-        });
-        found
     }
 
     // The place a lent load would have copied from.
@@ -1528,56 +1459,7 @@ slot_ty = (f: Func, slot: usize) Scalar {
     f.slots.get(slot).value_or(Scalar.Unit)
 }
 
-// Nothing between the load and the call writes memory.
-// A `::` parameter's pointer: a place the caller holds for the whole call.
-// Any other pointer is a `Ptr`, whose `read` is a copy.
-held = (f: Func, slot: usize) bool {
-    f.places.match({
-        Ok(places) => {
-            found ::= false;
-            places.loop((p) { (p == slot).then(() { found = true; }); });
-            found
-        },
-        None       => false,
-    })
-}
-
-quiet = (f: Func, b: usize, from: usize, to: usize) bool {
-    clear ::= true;
-    f.blocks.get(b).match({
-        Ok(block) => Range(from, to).loop((k) {
-            block.code.get(k).match({
-                Ok(instruction) => instruction.match({
-                    Constant(_)    => (),
-                    Copy(_)        => (),
-                    UnaryValue(_)  => (),
-                    BinaryValue(_) => (),
-                    Cast(_)        => (),
-                    AddressOf(_)   => (),
-                    LoadValue(_)   => (),
-                    _              => { clear = false; },
-                }),
-                None            => { clear = false; },
-            });
-        }),
-        None      => { clear = false; },
-    });
-    clear
-}
-
 is_block = (ty: Scalar) bool { ty.match({ Block(_) => true, _ => false }) }
-
-// Every other argument is a plain scalar: none is a pointer or a record
-// that may hold one, so the callee cannot write the lent place.
-plain = (f: Func, call: Invocation, slot: usize) bool {
-    clear ::= true;
-    call.args.loop((arg) {
-        ty = slot_ty(f, arg);
-        (arg != slot && (is_block(ty) || ty.match({ Ptr => true, _ => false })))
-            .then(() { clear = false; });
-    });
-    clear
-}
 
 // Larger than the two words a C ABI passes in registers.
 large = (ty: Scalar) bool { ty.match({ Block(l) => l.size > 16, _ => false }) }

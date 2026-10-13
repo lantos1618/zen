@@ -221,9 +221,6 @@ Func* = {
     // tools/ct's manifests match in emitted C; "" and None where it has none.
     symbol* :: str = "",
     locals* :: Res<Vec<str>> = None,
-    // The pointer slots of `::` parameters, which hold the caller's places.
-    // None for hand-built IR.
-    places* :: Res<Vec<usize>> = None,
 }
 
 // A payload is only meaningful for the alternative a tagged value holds, and

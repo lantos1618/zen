@@ -1,0 +1,113 @@
+// A `::` parameter's place is lent to a `:` callee only when no other
+// argument can reach it. An argument derived from the place's pointer through
+// more steps than the renderer follows must count as reaching it.
+{ Program, Func, BasicBlock, Instruction, Terminator, Scalar, Layout, Const, Move, Convert, Load, Invocation, Address } = gen.gen_ir
+{ emit_c } = gen.gen_c_ir
+{ Res, Ok, None, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
+
+big = () Scalar { Scalar.Block(Layout(size: 32, align: 8)) }
+
+func = (
+    a          : Alloc,
+    name       : str,
+    parameters : usize,
+    slots      : Vec<Scalar>,
+    code       : Vec<Instruction>,
+    result     : usize,
+    ty         : Scalar,
+    places     : Res<Vec<usize>>
+) Res<Func, AllocError> {
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(result))).try();
+    Ok(Func(
+        name: name,
+        parameters: parameters,
+        slots: slots,
+        blocks: blocks,
+        result: ty,
+        places: places
+    ))
+}
+
+// reader(x: Big, n: u64) u64 { n }: x travels by pointer.
+reader = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(Scalar.U64).try();
+    func(a, "reader", 2, slots, a.Vec<Instruction>(), 1, Scalar.U64, None)
+}
+
+// forward(x :: Big) u64 { reader(*x, chain(x)) }, where chain is a cast and
+// `steps` copies.
+forward = (a: Alloc, derived: bool, steps: usize) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(Scalar.Ptr).try();
+    slots.add(big()).try();
+    code ::= a.Vec<Instruction>();
+    slots.add(Scalar.U64).try();
+    code.add(derived.match({
+        true  => Instruction.Cast(Convert(out: 2, input: 0)),
+        false => Instruction.Constant(Const(out: 2, value: 5)),
+    })).try();
+    Range(0, steps).loop((i) {
+        slots.add(Scalar.U64).try();
+        code.add(Instruction.Copy(Move(out: 3 + i, source: 2 + i))).try();
+    });
+    last   = 2 + steps;
+    result = last + 1;
+    slots.add(Scalar.U64).try();
+    code.add(Instruction.LoadValue(Load(out: 1, base: 0, offset: 0))).try();
+    args ::= a.Vec<usize>();
+    args.add(1).try();
+    args.add(last).try();
+    code.add(Instruction.Invoke(Invocation(
+        out: result,
+        function: 0,
+        args: args
+    ))).try();
+    places ::= a.Vec<usize>();
+    places.add(0).try();
+    func(a, "forward", 1, slots, code, result, Scalar.U64, Ok(places))
+}
+
+entry = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(Scalar.Ptr).try();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.AddressOf(Address(out: 1, slot: 0))).try();
+    args ::= a.Vec<usize>();
+    args.add(1).try();
+    code.add(Instruction.Invoke(Invocation(
+        out: 2,
+        function: 1,
+        args: args
+    ))).try();
+    func(a, "main", 0, slots, code, 2, Scalar.U64, None)
+}
+
+lends = (a: Alloc, derived: bool, steps: usize) Res<bool, AllocError> {
+    functions ::= a.Vec<Func>();
+    functions.add(reader(a).try()).try();
+    functions.add(forward(a, derived, steps).try()).try();
+    functions.add(entry(a).try()).try();
+    text = emit_c(a, Program(functions: functions, entry: 2)).try();
+    Ok(
+        text.view().find(
+            "zf0((const void *)"
+        ).match({ Ok(_) => true, None => false })
+    )
+}
+
+main = (env: Env) Res<AllocError> {
+    a = env.mem.alloc();
+    println("an unrelated argument lends {}", lends(a, false, 0).try());
+    println("a cast of the pointer lends {}", lends(a, true, 0).try());
+    println("eight copies of it lend {}", lends(a, true, 8).try());
+    println("twenty copies of it lend {}", lends(a, true, 20).try());
+}

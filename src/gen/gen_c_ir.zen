@@ -513,7 +513,8 @@ C = {
     // `slot` is written from `base` by arithmetic, a copy or a cast.
     from = (self: @Self, f: Func, slot: usize, base: usize, depth: usize)
            bool {
-        found ::= false;
+        // Past the depth bound, assume the slot is derived: unknown fails closed.
+        found ::= depth >= 8;
         (depth < 8).then(() {
             f.blocks.loop((block) {
                 block.code.loop((instruction) {

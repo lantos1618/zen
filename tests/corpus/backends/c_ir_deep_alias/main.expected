@@ -1,0 +1,4 @@
+an unrelated argument lends true
+a cast of the pointer lends false
+eight copies of it lend false
+twenty copies of it lend false

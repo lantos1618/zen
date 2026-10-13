@@ -12,7 +12,7 @@
 { Codegen, Target } = std.build
 { String, str } = std.text
 { lower, LowerError } = gen.gen_lower
-{ Program, float } = gen.gen_ir
+{ Program, Scalar, float, same } = gen.gen_ir
 { emit_js, emit_app, emit_runtime, PAGE, supports } = gen.gen_js
 { emit_c, c_supports } = gen.gen_c_ir
 { refused, describe } = gen.gen_ir_feature
@@ -20,6 +20,10 @@
 { Arm64, Arm64Os } = gen.gen_asm_arm64
 { verify, message } = gen.gen_verify
 { Res, Ok, Err, None } = std.core
+{ Vec } = std.collections
+{ execute, refused_by_jit } = gen.gen_jit_interp
+{ prepare, Arenas } = gen.gen_asm_prepare
+{ Platform } = gen.gen_sys
 
 Layout* = { Single | Modules }
 ArtifactKind* = { Source | Symbols }
@@ -66,6 +70,12 @@ Generation* = {
                 report,
                 (artifact) { publish(artifact) }
             ),
+            Jit => {
+                report.add(
+                    "error: the jit backend runs a program and emits no source; give no output file\n"
+                ).try();
+                Ok(1)
+            },
             C   => (self.layout.match({ Single => true, Modules => false }) && !self.symbols && !self.ffi).match({
                 true  => self.c_ir(report, (artifact) { publish(artifact) }),
                 false => self.legacy_c(
@@ -158,24 +168,9 @@ Generation* = {
                      report :: String,
                      publish: (artifact: Artifact) Res<usize, AllocError>)
                     Res<usize, AllocError> {
-        program.verify(self.alloc).match({
-            Err(error) => error.match({
-                OutOfMemory    => Err(AllocError.OutOfMemory),
-                Invalid(fault) => {
-                    name = program.functions.get(
-                        fault.function
-                    ).match({ Ok(f) => f.name, None => "?" });
-                    report.fmt(
-                        "compiler error: invalid IR at function {} ({}), block {}: {}\n",
-                        fault.function,
-                        name,
-                        fault.block,
-                        fault.reason.message()
-                    ).try();
-                    Ok(1)
-                },
-            }),
-            Ok(_)      => backend.match({
+        self.valid(program, report).try().match({
+            false => Ok(1),
+            true  => backend.match({
                 Js  => program.refused((feature) { supports(feature) }).match({
                     Ok(refusal) => {
                         report.fmt(
@@ -247,6 +242,106 @@ Generation* = {
         })
     }
 
+    // False after reporting why `program` is not valid IR.
+    valid = (self: @Self, program: Program, report :: String)
+            Res<bool, AllocError> {
+        program.verify(self.alloc).match({
+            Err(error) => error.match({
+                OutOfMemory    => Err(AllocError.OutOfMemory),
+                Invalid(fault) => {
+                    name = program.functions.get(
+                        fault.function
+                    ).match({ Ok(f) => f.name, None => "?" });
+                    report.fmt(
+                        "compiler error: invalid IR at function {} ({}), block {}: {}\n",
+                        fault.function,
+                        name,
+                        fault.block,
+                        fault.reason.message()
+                    ).try();
+                    Ok(false)
+                },
+            }),
+            Ok(_)      => Ok(true),
+        })
+    }
+
+    // The jit backend runs the one lowering in this process with `argv` as
+    // its command line instead of publishing it. The result is the
+    // program's exit status; None when it was refused or cannot run on
+    // this host, after the report says why.
+    run* = (self: @Self, report :: String, argv: Vec<str>)
+           Res<Res<i32>, AllocError> {
+        lower(self.alloc, self.tree, self.check, self.entry).match({
+            Err(error)  => error.match({
+                OutOfMemory        => Err(AllocError.OutOfMemory),
+                Unsupported(fault) => {
+                    report.fmt(
+                        "{}:{}:{}: error: unsupported by this backend: {}\n",
+                        fault.span.file,
+                        fault.span.start.line,
+                        fault.span.start.col,
+                        fault.what
+                    ).try();
+                    Ok(None)
+                },
+            }),
+            Ok(program) => self.valid(program, report).try().match({
+                false => Ok(None),
+                true  => refused_by_jit(program).match({
+                    Ok(refusal) => {
+                        report.fmt(
+                            "error: unsupported by the jit backend: {} (in `{}`)\n",
+                            refusal.what,
+                            refusal.function
+                        ).try();
+                        Ok(None)
+                    },
+                    None        => self.platform().match({
+                        None         => {
+                            report.add(
+                                "error: the jit backend runs on x86_64-linux, aarch64-linux and arm64-darwin hosts\n"
+                            ).try();
+                            Ok(None)
+                        },
+                        Ok(platform) => execute(
+                            self.alloc,
+                            prepare(
+                                Arenas(alloc: self.alloc, mem: self.mem),
+                                program
+                            ).try(),
+                            platform,
+                            argv
+                        ).try().match({
+                            None       => {
+                                report.add(
+                                    "error: the jit backend could not map its memory\n"
+                                ).try();
+                                Ok(None)
+                            },
+                            Ok(status) => Ok(Ok(status)),
+                        }),
+                    }),
+                }),
+            }),
+        })
+    }
+
+    // The host's system interface, from the resolved target.
+    platform = (self: @Self) Res<Platform> {
+        self.target.match({
+            None        => None,
+            Ok(machine) => machine.os.match({
+                Macos => Ok(Platform.Darwin),
+                Linux => machine.arch.match({
+                    X86_64 => Ok(Platform.LinuxX86_64),
+                    Arm64  => Ok(Platform.LinuxArm64),
+                }),
+                _     => None,
+            }),
+        })
+    }
+
     publish_assembly = (self: @Self, program: Program, report :: String,
                         publish: (artifact: Artifact) Res<usize, AllocError>)
                        Res<usize, AllocError> {
@@ -269,7 +364,12 @@ Generation* = {
                Res<Res<String>, AllocError> {
         self.target.match({
             None        => Ok(None),
-            Ok(machine) => emit_assembly(self.alloc, machine, program),
+            Ok(machine) => emit_assembly(
+                self.alloc,
+                self.mem,
+                machine,
+                program
+            ),
         })
     }
 }
@@ -367,6 +467,7 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
     program.functions.loop((function) {
         function.slots.loop((ty) {
             float(ty).then(() { found = Ok(AsmRefusal(what: "floating-point values", function: function.name)); });
+            same(ty, Scalar.U128).then(() { found = Ok(AsmRefusal(what: "128-bit integers", function: function.name)); });
         });
         function.blocks.loop((block) {
             block.code.loop((instruction) {
@@ -390,18 +491,20 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
 // Target selection happens here, at the generation boundary; the renderer
 // contract does not import its implementations. None: no renderer exists
 // for this machine. The caller verifies the program first.
-emit_assembly* = (alloc: Alloc, machine: Target, program: Program)
+emit_assembly* = (alloc: Alloc, mem: Mem, machine: Target, program: Program)
                  Res<Res<String>, AllocError> {
     machine.os.match({
         Linux   => machine.arch.match({
-            X86_64 => Ok(Ok(X86_64Linux(alloc: alloc).emit(program).try())),
+            X86_64 => Ok(Ok(
+                X86_64Linux(alloc: alloc, mem: mem).emit(program).try()
+            )),
             Arm64  => Ok(Ok(
-                Arm64(alloc: alloc, os: Arm64Os.Linux).emit(program).try()
+                Arm64(alloc: alloc, mem: mem, os: Arm64Os.Linux).emit(program).try()
             )),
         }),
         Macos   => machine.arch.match({
             Arm64  => Ok(Ok(
-                Arm64(alloc: alloc, os: Arm64Os.Darwin).emit(program).try()
+                Arm64(alloc: alloc, mem: mem, os: Arm64Os.Darwin).emit(program).try()
             )),
             X86_64 => Ok(None),
         }),

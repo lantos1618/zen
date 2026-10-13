@@ -22,21 +22,24 @@
 { Printer } = sema.sema_print
 { Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes } = gen.gen_ir
-{ Write, Stream, TrapKind, Marshal, HostCall } = gen.gen_ir
+{ Write, Stream, TrapKind, Marshal, HostCall, Layout, FloatFormat } = gen.gen_ir
 { word, integer, signed, same, float } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
-{ machine_op, machine_refusal } = gen.gen_ir_machine
+{ MachineOp, machine_op, machine_refusal } = gen.gen_ir_machine
 { Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee } = gen.gen_lower_core
 { DeferEntry, Local } = gen.gen_lower_core
 { member_call, mem_call, sys_call, resolve, to_bound, handle_for_place } = gen.gen_lower_member
 { sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
 { spawn_actor, use_actor_mem } = gen.gen_lower_actor
-{ bound_of, dispatch, Bound } = gen.gen_lower_member
+{ bound_of, dispatch, Bound, decode_discriminant, c_namespace, unbound_handle } = gen.gen_lower_member
 { to_i64_bits, slot_place, placed_value } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
-{ variant_index, size_of } = gen.gen_lower_shape
+{ variant_index, size_of, is_scope } = gen.gen_lower_shape
+{ has_record, defer_into } = gen.gen_lower_scope
+{ meta_walk, meta_proj } = gen.gen_lower_meta
 { inst_of_named } = sema.sema_inst
 { json_door, outcome_door } = gen.gen_lower_door
+{ env_args } = gen.gen_lower_env
 
 // One argument position after binding names and the receiver.
 Source* = { Given: ExprId | Absent | Computed: Value | Located: Place }
@@ -54,23 +57,16 @@ call* = (
     callee = lo.stripped(c.callee);
     callee.kind.match({
         Name(n)   => lo.lookup(n.text).match({
-            Ok(Closure(lambda)) => {
-                args ::= lo.alloc.Vec<LocalKind>();
-                c.args.loop((a) {
-                    handle: Res<usize> = lo.tree.expr_at(a.value).kind.match({
-                        Name(n) => lo.lookup(n.text).match({ Ok(Handle(loop_id)) => Ok(loop_id), _ => None }),
-                        _       => None,
-                    });
-                    kind               = handle.match({
-                        Ok(loop_id) => LocalKind.Handle(loop_id),
-                        None        => LocalKind.Direct(
-                            lo.copy_value(lo.expr(a.value).try()).try()
-                        ),
-                    });
-                    args.add(kind).try(LowerError.OutOfMemory);
-                });
-                lo.inline_bound(lambda, args, lo.type_of(id).try())
-            },
+            Ok(Closure(lambda)) => lo.inline_bound(
+                lambda,
+                lo.closure_args(c).try(),
+                lo.type_of(id).try()
+            ),
+            Ok(Local(local))    => lo.inline_local(
+                local,
+                lo.closure_args(c).try(),
+                lo.type_of(id).try()
+            ),
             _                   => lo.named_call(id, c, n.text, span),
         }),
         Access(a) => lo.dot_call(id, c, a, span),
@@ -141,12 +137,14 @@ construction = (
         Ok(into) => {
             s.form.match({
                 Record(_) => lo.construct_at(ty, c, span, into).try(),
+                Handle(_) => lo.write(into, lo.unbound_handle(ty).try()).try(),
                 _         => lo.variant_into(c, name, span, into).try(),
             });
             Ok(placed_value(into))
         },
         None     => s.form.match({
             Record(_) => lo.construct_named(ty, c, span),
+            Handle(_) => lo.unbound_handle(ty),
             _         => lo.variant_call(ty, c, name, span),
         }),
     })
@@ -215,11 +213,36 @@ dot_call = (
     a    : Access,
     span : Span
 ) Res<Value, LowerError> {
+    lo.check.meta_walk_of(id).match({
+        Ok(names) => lo.meta_walk(c, names, span),
+        None      => lo.check.meta_proj(id).match({
+            true  => lo.meta_proj(id, a, span),
+            false => lo.ordinary_dot_call(id, c, a, span),
+        }),
+    })
+}
+
+ordinary_dot_call = (
+    lo   :: Lowerer,
+    id   : ExprId,
+    c    : Call,
+    a    : Access,
+    span : Span
+) Res<Value, LowerError> {
     base     = lo.tree.expr_at(a.base);
     at_scope = base.kind.match({ Scope => true, _ => false });
-    (at_scope && a.name.text.eq("defer")).match({
+    defers   = a.name.text.eq("defer");
+    // `@scope.defer` stays static until the block's Scope is a value;
+    // after that every registration goes through its record.
+    (defers && at_scope && !lo.has_record()).match({
         true  => lo.defer(c, span),
-        false => lo.dot_call_on(id, c, a, base, span),
+        false => (defers && lo.is_scope(lo.type_of(a.base).try())).match({
+            true  => {
+                scope = lo.expr(a.base).try();
+                lo.defer_into(scope.slot, c, span)
+            },
+            false => lo.dot_call_on(id, c, a, base, span),
+        }),
     })
 }
 
@@ -272,15 +295,13 @@ dot_call_on = (
                 Ok(checked) => checked.declaration.match({ Ok(_) => true, None => false }),
                 None        => false,
             });
-            // A function declared inside a struct and called through the
-            // type (`View.create(a, 16)`): sema records the member's body and
-            // the type that provides it, and there is no receiver.
+            // A function called through the type (`View.create(a, 16)`,
+            // `Item.drop(consume item)`): sema records the type that provides
+            // it, and the body when the type declares it rather than an impl.
             member: Res<CheckedCall> = selected.match({
-                Ok(checked) => checked.body.match({
+                Ok(checked) => checked.member_provider.match({
+                    Ok(_) => Ok(checked),
                     None  => None,
-                    Ok(_) => checked.member_provider.match({ Ok(_) => Ok(
-                        checked
-                    ), None => None }),
                 }),
                 None        => None,
             });
@@ -299,10 +320,20 @@ dot_call_on = (
                   ),
                   None        => member.match({
                     Ok(checked) => {
-                        owner   = lo.concrete(checked.member_provider.value_or(
-                            lo.unit_ty
-                        )).try();
-                        callee  = lo.resolve(
+                        // Without a declared body the member is an impl's,
+                        // found from the receiver it is called on.
+                        provider = checked.member_provider.value_or(lo.unit_ty);
+                        has_body = checked.body.match({ Ok(_) => true, None => false });
+                        through  = has_body || c_namespace(lo, provider);
+                        written  = through.match({
+                            true  => provider,
+                            false => c.args.get(0).match({
+                                Ok(arg) => lo.type_of(arg.value).try(),
+                                None    => provider,
+                            }),
+                        });
+                        owner    = lo.concrete(written).try();
+                        callee   = lo.resolve(
                             owner,
                             a.name.text,
                             checked.body,
@@ -311,7 +342,7 @@ dot_call_on = (
                             None,
                             span
                         ).try();
-                        sources = lo.bind_sources(
+                        sources  = lo.bind_sources(
                             callee.f,
                             c,
                             None,
@@ -320,7 +351,15 @@ dot_call_on = (
                         lo.invoke(id, callee, sources, c, span)
                     },
                     // `Type.Variant(payload)` or a construction through a type.
-                    None        => lo.construction(id, c, a.name.text, span),
+                    None        => lo.check.discriminant_call_of(id).match({
+                        Ok(Decode(t)) => lo.decode_discriminant(id, c, t, span),
+                        _             => lo.construction(
+                            id,
+                            c,
+                            a.name.text,
+                            span
+                        ),
+                    }),
                   }),
                 }),
                 false => {
@@ -1170,6 +1209,26 @@ lambda_result = (lo :: Lowerer, e: ExprId) Res<Res<TyId>, LowerError> {
     })
 }
 
+// The arguments a closure call binds: a loop handle passes through, any
+// other value is copied.
+closure_args = (lo :: Lowerer, c: Call) Res<Vec<LocalKind>, LowerError> {
+    args ::= lo.alloc.Vec<LocalKind>();
+    c.args.loop((a) {
+        handle: Res<usize> = lo.tree.expr_at(a.value).kind.match({
+            Name(n) => lo.lookup(n.text).match({ Ok(Handle(loop_id)) => Ok(loop_id), _ => None }),
+            _       => None,
+        });
+        kind               = handle.match({
+            Ok(loop_id) => LocalKind.Handle(loop_id),
+            None        => LocalKind.Direct(
+                lo.copy_value(lo.expr(a.value).try()).try()
+            ),
+        });
+        args.add(kind).try(LowerError.OutOfMemory);
+    });
+    Ok(args)
+}
+
 is_fn_type = (lo :: Lowerer, ty: TyId) bool {
     lo.check.types.at(ty).match({ Fn(_) => true, _ => false })
 }
@@ -1357,18 +1416,144 @@ intrinsic = (
     span    : Span
 )
             Res<Value, LowerError> {
+    machine = lo.check.primitives.get(callee.owner).match({
+        Ok(p) => machine_op(p.name),
+        None  => None,
+    });
+    machine.match({
+        Ok(op) => lo.machine(id, op, sources, span),
+        None   => lo.library_intrinsic(id, callee, sources, c, span),
+    })
+}
+
+// The machine primitives the scalar IR spells with its own operations. The
+// rest (std.simd, volatile access, u128 arithmetic) are refused by name
+// rather than by their operands.
+machine = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    op      : MachineOp,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    op.match({
+        // Keeping the low bits of a wider unsigned word is what `Cast` does.
+        Truncate        => lo.conversion(id, sources, span),
+        MulWide         => lo.wide_product(id, sources, span),
+        AddCarry        => lo.carry(id, sources, false, span),
+        SubBorrow       => lo.carry(id, sources, true, span),
+        CompilerBarrier => {
+            lo.add(Instruction.Barrier).try();
+            lo.unit()
+        },
+        _               => Err(unsupported(span, machine_refusal(op))),
+    })
+}
+
+// `[sum, carry]` of `a + b + (c & 1)`, or `[difference, borrow]` of
+// `a - b - (c & 1)`, on u64 words and without a branch: a wrapped sum is
+// below its left operand exactly when it carried, and a wrapped difference
+// is above it exactly when it borrowed. At most one of the two steps does.
+carry = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    borrow  : bool,
+    span    : Span
+) Res<Value, LowerError> {
+    word      = lo.prim("u64").try();
+    a         = lo.expr_as(sources.source_expr(0, span).try(), word).try();
+    b         = lo.expr_as(sources.source_expr(1, span).try(), word).try();
+    c         = lo.expr_as(sources.source_expr(2, span).try(), word).try();
+    one       = lo.word_const(Scalar.U64, 1).try();
+    bit       = lo.binary_slot(Scalar.U64, Op.And, c.slot, one, span).try();
+    step      = borrow.match({ true => Op.WrapSub, false => Op.WrapAdd });
+    first     = lo.binary_slot(Scalar.U64, step, a.slot, b.slot, span).try();
+    whole     = lo.binary_slot(Scalar.U64, step, first, bit, span).try();
+    left      = borrow.match({
+        true  => lo.binary_slot(Scalar.Bool, Op.Less, a.slot, first, span),
+        false => lo.binary_slot(Scalar.Bool, Op.Less, first, a.slot, span),
+    }).try();
+    right     = borrow.match({
+        true  => lo.binary_slot(Scalar.Bool, Op.Less, first, whole, span),
+        false => lo.binary_slot(Scalar.Bool, Op.Less, whole, first, span),
+    }).try();
+    either    = lo.binary_slot(Scalar.Bool, Op.Or, left, right, span).try();
+    out_carry = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.Cast(Convert(out: out_carry, input: either))).try();
+    out  = lo.temp(lo.type_of(id).try()).try();
+    base = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: base, slot: out.slot))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: base,
+        offset: 0,
+        value: whole
+    ))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: base,
+        offset: 8,
+        value: out_carry
+    ))).try();
+    Ok(out)
+}
+
+// The u128 product of two u64 words, which cannot overflow.
+wide_product = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    word  = lo.prim("u64").try();
+    a     = lo.expr_as(sources.source_expr(0, span).try(), word).try();
+    b     = lo.expr_as(sources.source_expr(1, span).try(), word).try();
+    left  = lo.slot_of(Scalar.U128).try();
+    right = lo.slot_of(Scalar.U128).try();
+    lo.add(Instruction.Cast(Convert(out: left, input: a.slot))).try();
+    lo.add(Instruction.Cast(Convert(out: right, input: b.slot))).try();
+    out = lo.temp(lo.type_of(id).try()).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out.slot,
+        left: left,
+        right: right,
+        op: Op.WrapMul,
+        span: span
+    ))).try();
+    Ok(out)
+}
+
+// A fresh `class` slot holding `left op right`.
+binary_slot = (
+    lo    :: Lowerer,
+    class : Scalar,
+    op    : Op,
+    left  : usize,
+    right : usize,
+    span  : Span
+) Res<usize, LowerError> {
+    out = lo.slot_of(class).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out,
+        left: left,
+        right: right,
+        op: op,
+        span: span
+    ))).try();
+    Ok(out)
+}
+
+library_intrinsic = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    callee  : Callee,
+    sources : Vec<Source>,
+    c       : Call,
+    span    : Span
+)
+            Res<Value, LowerError> {
     decl   = callee.owner;
     module = lo.check.world.module_name(decl);
     name   = callee.f.name.text;
-    // A machine primitive (std.simd, volatile access, u128 arithmetic) has
-    // no native lowering yet; name the operation instead of its operands.
-    lo.check.primitives.get(decl).match({
-        Ok(p) => machine_op(p.name).match({
-            Ok(op) => Err(unsupported(span, machine_refusal(op))),
-            None   => Ok,
-        }),
-        None  => Ok,
-    }).try();
     // Numeric operations are free functions validated by declaration.
     numeric    = callee.member.match({ None => true, Ok(_) => false });
     conversion = numeric.match({ true => lo.check.numeric_conversions.get(
@@ -1566,8 +1751,11 @@ conversion = (
 // above the signed maximum never fits a signed one; comparing the signs of
 // source and result catches both after a round trip.
 sign_agrees = (lo :: Lowerer, from: Value, to: Value) Res<usize, LowerError> {
-    from_signed = signed(lo.class_of(from.ty).try());
-    to_signed   = signed(lo.class_of(to.ty).try());
+    // A float carries its own sign, as a signed integer does.
+    from_class  = lo.class_of(from.ty).try();
+    to_class    = lo.class_of(to.ty).try();
+    from_signed = signed(from_class) || float(from_class);
+    to_signed   = signed(to_class) || float(to_class);
     (from_signed == to_signed).match({
         true  => lo.word_const(Scalar.Bool, 1),
         false => {
@@ -1620,6 +1808,60 @@ bits* = (
 )
         Res<Value, LowerError> {
     ty = lo.type_of(id).try();
+    (name.eq("shift_right") && lo.prim_name(ty).is_in(["i8", "i16", "i32", "i64"])).match({
+        true  => lo.arithmetic_shift(ty, lhs, rhs, span),
+        false => lo.logical_bits(ty, name, lhs, rhs, span),
+    })
+}
+
+// `shift_right` of a signed word copies the sign into the vacated bits.
+// With `m` all ones for a negative value and zero otherwise it is
+// `((x ^ m) >> n) ^ m` over the logical shift, whose operand never has its
+// sign bit set; a count at or past the width gives `m`, the limit of
+// shifting one bit at a time. The receiver is evaluated before the count.
+arithmetic_shift = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    lhs  : ExprId,
+    rhs  : ExprId,
+    span : Span
+) Res<Value, LowerError> {
+    class    = lo.class_of(ty).try();
+    value    = lo.expr_as(lhs, ty).try();
+    count    = lo.expr_as(rhs, lo.prim("usize").try()).try();
+    zero     = lo.word_const(class, 0).try();
+    negative = lo.binary_slot(
+        Scalar.Bool,
+        Op.Less,
+        value.slot,
+        zero,
+        span
+    ).try();
+    sign     = lo.slot_of(class).try();
+    lo.add(Instruction.Cast(Convert(out: sign, input: negative))).try();
+    mask    = lo.binary_slot(class, Op.WrapSub, zero, sign, span).try();
+    flipped = lo.binary_slot(class, Op.Xor, value.slot, mask, span).try();
+    shifted = lo.binary_slot(class, Op.Shr, flipped, count.slot, span).try();
+    out     = lo.temp(ty).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out.slot,
+        left: shifted,
+        right: mask,
+        op: Op.Xor,
+        span: span
+    ))).try();
+    Ok(out)
+}
+
+logical_bits = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    name : str,
+    lhs  : ExprId,
+    rhs  : ExprId,
+    span : Span
+)
+        Res<Value, LowerError> {
     lo.bit_word(ty, name, span).try();
     op       = bit_op(name).ok_or(unsupported(span, bit_refusal(lo.alloc, name))).try();
     left     = lo.expr_as(lhs, ty).try();
@@ -1664,11 +1906,25 @@ bit_not* = (
     lo.bit_word(ty, "bit_not", span).try();
     value = lo.expr_as(operand, ty).try();
     ones  = lo.class_of(ty).try().match({
-        U8  => lo.constant(ty, 255),
-        U16 => lo.constant(ty, 65535),
-        U32 => lo.constant(ty, 4294967295),
-        U64 => lo.constant(ty, -1),
-        _   => Err(unsupported(span, bit_refusal(lo.alloc, "bit_not"))),
+        U8   => lo.constant(ty, 255),
+        U16  => lo.constant(ty, 65535),
+        U32  => lo.constant(ty, 4294967295),
+        U64  => lo.constant(ty, -1),
+        // A u128 constant is zero-extended from 64 bits: all ones is 0 - 1.
+        U128 => {
+            zero = lo.constant(ty, 0).try();
+            one  = lo.constant(ty, 1).try();
+            ones = lo.temp(ty).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: ones.slot,
+                left: zero.slot,
+                right: one.slot,
+                op: Op.WrapSub,
+                span: span
+            ))).try();
+            Ok(ones)
+        },
+        _    => Err(unsupported(span, bit_refusal(lo.alloc, "bit_not"))),
     }).try();
     out   = lo.temp(ty).try();
     lo.add(Instruction.BinaryValue(Binary(
@@ -1694,9 +1950,9 @@ bit_op = (name: str) Res<Op> {
     })
 }
 
-// The IR's bit operations act on unsigned words of at most 64 bits: `Shr`
-// is the logical shift, so a signed `shift_right` (arithmetic) has no
-// lowering yet, and u128 has no scalar class.
+// The IR's bit operations act on unsigned words of at most 64 bits (a
+// signed `shift_right` is lowered by `arithmetic_shift`), and u128 has no
+// scalar class.
 bit_word = (
     lo   :: Lowerer,
     ty   : TyId,
@@ -1704,19 +1960,16 @@ bit_word = (
     span : Span
 ) Res<LowerError> {
     word = lo.prim_name(ty);
-    word.is_in(["u8", "u16", "u32", "u64", "usize"]).match({
+    word.is_in(["u8", "u16", "u32", "u64", "u128", "usize"]).match({
         true  => Ok,
-        false => Err(unsupported(span, (name.eq("shift_right") && word.is_in(["i8", "i16", "i32", "i64"])).match({
-            true  => "an arithmetic shift of a signed word",
-            false => lo.alloc.String(
-                "the bit operation `{}` on `{}`",
-                name,
-                word
-            ).match({
+        false => Err(unsupported(span, lo.alloc.String(
+            "the bit operation `{}` on `{}`",
+            name,
+            word
+        ).match({
                 Ok(t)  => t.view(),
                 Err(_) => "a bit operation on this word",
-            }),
-        }))),
+            }))),
     })
 }
 
@@ -1749,17 +2002,17 @@ pointer_call = (
             (!(copies && lo.check.contains_drop(elem).try(LowerError.OutOfMemory))).ensure(unsupported(span, "copying a Drop owner through Ptr")).try();
             stride = lo.element_size(elem).try();
             name.match({
-                "read"      => {
+                "read"           => {
                     at = lo.element_at(receiver, sources, stride, span).try();
                     lo.read(Place(base: Base.Through(at), offset: 0, ty: elem))
                 },
                 // A take is a read whose source slot the caller retires;
                 // the bytes move exactly as a read copies them.
-                "take"      => {
+                "take"           => {
                     at = lo.element_at(receiver, sources, stride, span).try();
                     lo.read(Place(base: Base.Through(at), offset: 0, ty: elem))
                 },
-                "write"     => {
+                "write"          => {
                     at    = lo.element_at(
                         receiver,
                         sources,
@@ -1776,11 +2029,11 @@ pointer_call = (
                     ).try();
                     lo.unit()
                 },
-                "offset"    => {
+                "offset"         => {
                     at = lo.element_at(receiver, sources, stride, span).try();
                     Ok(Value(slot: at, ty: ty))
                 },
-                "back"      => {
+                "back"           => {
                     count = lo.expr_as(
                         sources.source_expr(1, span).try(),
                         lo.prim("usize").try()
@@ -1796,7 +2049,7 @@ pointer_call = (
                     ))).try();
                     Ok(out)
                 },
-                "bytes"     => {
+                "bytes"          => {
                     count = lo.expr_as(
                         sources.source_expr(1, span).try(),
                         lo.prim("usize").try()
@@ -1804,7 +2057,7 @@ pointer_call = (
                     bytes = lo.scaled(count.slot, stride).try();
                     Ok(Value(slot: bytes, ty: ty))
                 },
-                "copy_from" => {
+                "copy_from"      => {
                     source = lo.expr(sources.source_expr(1, span).try()).try();
                     count  = lo.expr_as(
                         sources.source_expr(2, span).try(),
@@ -1818,8 +2071,38 @@ pointer_call = (
                     ))).try();
                     lo.unit()
                 },
-                "to"        => Ok(Value(slot: receiver.slot, ty: ty)),
-                "is_null"   => {
+                "read_volatile"  => {
+                    lo.volatile_word(elem, span).try();
+                    at  = lo.element_at(receiver, sources, stride, span).try();
+                    out = lo.temp(elem).try();
+                    lo.add(Instruction.VolatileLoad(Load(
+                        out: out.slot,
+                        base: at,
+                        offset: 0
+                    ))).try();
+                    Ok(out)
+                },
+                "write_volatile" => {
+                    lo.volatile_word(elem, span).try();
+                    at    = lo.element_at(
+                        receiver,
+                        sources,
+                        stride,
+                        span
+                    ).try();
+                    value = lo.expr_as(
+                        sources.source_expr(2, span).try(),
+                        elem
+                    ).try();
+                    lo.add(Instruction.VolatileStore(Store(
+                        base: at,
+                        offset: 0,
+                        value: value.slot
+                    ))).try();
+                    lo.unit()
+                },
+                "to"             => Ok(Value(slot: receiver.slot, ty: ty)),
+                "is_null"        => {
                     zero = lo.word_const(Scalar.Ptr, 0).try();
                     out  = lo.temp(ty).try();
                     lo.add(Instruction.BinaryValue(Binary(
@@ -1831,7 +2114,7 @@ pointer_call = (
                     ))).try();
                     Ok(out)
                 },
-                "same"      => {
+                "same"           => {
                     other = lo.expr(sources.source_expr(1, span).try()).try();
                     out   = lo.temp(ty).try();
                     lo.add(Instruction.BinaryValue(Binary(
@@ -1843,12 +2126,23 @@ pointer_call = (
                     ))).try();
                     Ok(out)
                 },
-                _           => Err(unsupported(span, "this pointer operation")),
+                _                => lo.byte_order(
+                    name,
+                    receiver,
+                    sources,
+                    ty,
+                    span
+                ),
             })
         },
     })
 }
 
+// A volatile access moves one scalar word; a record has no single access.
+volatile_word = (lo :: Lowerer, elem: TyId, span: Span) Res<LowerError> {
+    lo.class_of(elem).try().match({ Block(_) => false, _ => true })
+        .ensure(unsupported(span, "a volatile access to an aggregate"))
+}
 pointee = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
     lo.check.types.at(ty).match({
         Named(n) => n.args.get(0).ok_or(unsupported(nowhere(), "a Ptr without an element type")),
@@ -1880,6 +2174,111 @@ scaled = (lo :: Lowerer, count: usize, stride: usize) Res<usize, LowerError> {
             Ok(out)
         },
     })
+}
+
+// A fixed-width integer at a byte offset of a `Ptr<u8>`. Every target is
+// little-endian and its loads tolerate any alignment, so the little-endian
+// forms are one load or store; the big-endian forms reverse the bytes.
+ByteOrder = { word: str, big: bool, store: bool }
+
+byte_order_of = (name: str) Res<ByteOrder> {
+    name.match({
+        "read_le32"  => Ok(ByteOrder(word: "u32", big: false, store: false)),
+        "read_be32"  => Ok(ByteOrder(word: "u32", big: true, store: false)),
+        "read_le64"  => Ok(ByteOrder(word: "u64", big: false, store: false)),
+        "read_be64"  => Ok(ByteOrder(word: "u64", big: true, store: false)),
+        "write_le32" => Ok(ByteOrder(word: "u32", big: false, store: true)),
+        "write_be32" => Ok(ByteOrder(word: "u32", big: true, store: true)),
+        "write_le64" => Ok(ByteOrder(word: "u64", big: false, store: true)),
+        "write_be64" => Ok(ByteOrder(word: "u64", big: true, store: true)),
+        _            => None,
+    })
+}
+
+byte_order = (
+    lo      :: Lowerer,
+    name    : str,
+    pointer : Value,
+    sources : Vec<Source>,
+    ty      : TyId,
+    span    : Span
+)
+             Res<Value, LowerError> {
+    access = byte_order_of(name).ok_or(unsupported(span, "this pointer operation")).try();
+    word   = lo.prim(access.word).try();
+    class  = lo.class_of(word).try();
+    at     = lo.element_at(pointer, sources, 1, span).try();
+    access.store.match({
+        true  => {
+            value = lo.expr_as(sources.source_expr(2, span).try(), word).try();
+            bytes = access.big.match({
+                true  => lo.byte_swapped(value.slot, class).try(),
+                false => value.slot,
+            });
+            lo.add(Instruction.StoreValue(Store(
+                base: at,
+                offset: 0,
+                value: bytes
+            ))).try();
+            lo.unit()
+        },
+        false => {
+            loaded = lo.slot_of(class).try();
+            lo.add(Instruction.LoadValue(Load(
+                out: loaded,
+                base: at,
+                offset: 0
+            ))).try();
+            Ok(Value(
+                slot: access.big.match({
+                    true  => lo.byte_swapped(loaded, class).try(),
+                    false => loaded,
+                }),
+                ty: ty
+            ))
+        },
+    })
+}
+
+// The bytes of an unsigned word in reverse order.
+byte_swapped = (
+    lo    :: Lowerer,
+    value : usize,
+    class : Scalar
+) Res<usize, LowerError> {
+    count = size_of(class);
+    mask  = lo.word_const(class, 255).try();
+    result :: usize = lo.word_const(class, 0).try();
+    Range(0, count).loop((k) {
+        down    = lo.word_const(Scalar.U64, (k * 8).to_i64_bits()).try();
+        up      = lo.word_const(
+            Scalar.U64,
+            ((count - 1 - k) * 8).to_i64_bits()
+        ).try();
+        shifted = lo.bits(Op.Shr, value, down, class).try();
+        byte    = lo.bits(Op.And, shifted, mask, class).try();
+        placed  = lo.bits(Op.Shl, byte, up, class).try();
+        result  = lo.bits(Op.Or, result, placed, class).try();
+    });
+    Ok(result)
+}
+
+bits = (
+    lo    :: Lowerer,
+    op    : Op,
+    left  : usize,
+    right : usize,
+    class : Scalar
+) Res<usize, LowerError> {
+    out = lo.slot_of(class).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out,
+        left: left,
+        right: right,
+        op: op,
+        span: nowhere()
+    ))).try();
+    Ok(out)
 }
 
 element_at = (
@@ -1930,6 +2329,7 @@ env_call = (
             lo.console_answer(id, span)
         },
         "flush"     => lo.console_answer(id, span),
+        "args"      => lo.env_args(id, sources, span),
         // Threads and actors (gen_lower_thread, gen_lower_actor).
         "sleep"     => lo.sleep_thread(id, c, sources, span),
         "spawn"     => lo.receiver_kind(sources).eq("Threads").match({
@@ -3231,11 +3631,25 @@ print_member = (
 
 print_one = (
     lo    :: Lowerer,
-    value : Value,
+    given : Value,
     to    : FmtTo,
     span  : Span
 ) Res<LowerError> {
-    class     = lo.class_of(value.ty).try();
+    // Both float widths print through f64; widening an f32 is exact.
+    value = same(lo.class_of(given.ty).try(), Scalar.F32).match({
+        true  => {
+            wide = lo.temp(lo.prim("f64").try()).try();
+            lo.add(Instruction.Cast(Convert(
+                out: wide.slot,
+                input: given.slot
+            ))).try();
+            wide
+        },
+        false => given,
+    });
+    class = lo.class_of(value.ty).try();
+    // No writer formats a u128 (the C path reports it too).
+    (!same(class, Scalar.U128)).ensure(unsupported(span, "printing a u128")).try();
     is_str    = lo.prim_name(value.ty).eq("str");
     primitive = word(class) && lo.plain_word(value.ty);
     to.match({
@@ -3278,9 +3692,14 @@ print_one = (
         Into(place)     => is_str.match({
             true  => lo.write_str(place, value),
             false => primitive.match({
-                true  => {
-                    // `add_f64` has no Zen body yet (C formats with %g).
-                    (!float(class)).ensure(unsupported(span, "formatting an f64 into text")).try();
+                true  => float(class).match({
+                    // An unsettled float has no width to format at; the C
+                    // path reports it.
+                    true  => {
+                        (!lo.prim_name(value.ty).eq("float")).ensure(unsupported(span, "formatting an unsettled float")).try();
+                        lo.float_into(place, value)
+                    },
+                    false => {
                     sink   = lo.sink_for_place(place, span).try();
                     helper = class.match({
                         Bool => "add_bool",
@@ -3289,7 +3708,8 @@ print_one = (
                         ).match({ true => "add_i64", false => "add_u64" }),
                     });
                     lo.fmt_helper(helper, sink, value, span)
-                },
+                    },
+                }),
                 false => lo.is_unit(value.ty).match({
                     true  => lo.text("()", to),
                     false => {
@@ -3363,6 +3783,33 @@ sink_for_place = (
         true  => lo.read(place),
         false => lo.handle_for_place(place, sink_ty).try().ok_or(unsupported(span, "a String that is not a Sink")),
     })
+}
+
+// Append C's `%g` text of an f64 to the text at `place`.
+float_into = (lo :: Lowerer, place: Place, value: Value) Res<LowerError> {
+    buffer = lo.slot_of(Scalar.Block(Layout(size: 32, align: 8))).try();
+    dest   = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: dest, slot: buffer))).try();
+    len = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.FormatFloat(FloatFormat(
+        out: len,
+        dest: dest,
+        value: value.slot
+    ))).try();
+    text = lo.temp(lo.prim("str").try()).try();
+    at   = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: at, slot: text.slot))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: at,
+        offset: 0,
+        value: dest
+    ))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: at,
+        offset: 8,
+        value: len
+    ))).try();
+    lo.write_str(place, text)
 }
 
 // Append a str to the text at `place`: String.add, or Sink.write through a

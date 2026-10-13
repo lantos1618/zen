@@ -406,8 +406,36 @@ renderer with no semantic work:
   embedding. It has the lowest priority.
 
 **JIT**
-- **Tier 0:** an IR interpreter (§8 Q5). It is also the differential oracle,
-  and potentially the comptime engine.
+- **Tier 0:** an IR interpreter (§8 Q5), `src/gen/gen_jit_interp.zen`. It is
+  also the differential oracle, and potentially the comptime engine.
+  `zen build --backend jit <root> [--entry FILE] [-- args]` lowers and verifies
+  the program, then runs it in the compiler: every slot is a cell in a mapped
+  frame stack, memory is real host memory, and system calls go through
+  `std.sys` with the IR's -errno convention. Output buffering, trap reports,
+  exit 134 and the exit hook follow the C runtime. `refused_by_jit` refuses
+  threads, JavaScript host calls, machine instructions, printing f64 and f64
+  `%` before anything runs. On x86_64-linux the native corpus runner's `jit`
+  target passes 870 of 1136 programs; 265 are refused and 1 needs a fixture
+  that only tests/run.py stages. Before running, the interpreter applies the
+  asm backend's `prepare` (with `simplify`), then `gen_jit_decode` encodes each
+  function once into 64-byte word steps: frame offsets, block targets, call
+  argument tables and parameter sizes are resolved, comparisons are fused with
+  the branch that reads them, a jump to the next block falls through, slots
+  only ever set to one constant are filled once per call from a per-function
+  image instead of by a step, and rare instructions keep a slow path through
+  the original IR. A few peepholes remove steps: an add of a small constant
+  that only feeds the next load or store becomes that step's offset (an
+  add of two words becomes an indexed load or store, scaled when the
+  index is a constant multiple read only there), a
+  branch on `flag == 0` tests the comparison that set `flag`, arithmetic
+  read only by the next copy writes the copy's target, a copy read only by
+  the return is returned directly, and jumps and branches are threaded to
+  where they end up. `tests/bench/jit/run.py` measures it against C
+  -O0/-O2, asm, Zen's JS backend on node and CPython on crypto, call-heavy
+  and hash-map workloads, round robin over backends, with a least-squares
+  slope and its 95% interval. The JS row is Zen's generated JS, which
+  emulates 64-bit integers, not hand-written JS; the CPython map row mostly
+  measures Python's C dict.
 - **Tier 1:** an in-memory encoder that reuses the asm backend's instruction
   selection and register allocation, and writes machine code bytes instead of
   text into `mmap`ed pages (W^X, with `MAP_JIT` plus

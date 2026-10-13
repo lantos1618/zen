@@ -1,0 +1,50 @@
+{ Res, Ok, None, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+{ Eq, Hash, Hasher } = std.core.core
+
+Key = { bits: u64 }
+
+Key.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool { self.bits == other.bits }
+})
+
+Key.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 {
+        hasher.write_u64(self.bits);
+        hasher.finish()
+    }
+})
+
+// Hashing and probing, not crypto: `rounds` times (argument, default 16),
+// 4096 pseudo-random keys go into a fresh Map, then every key and a
+// neighbour of each is looked up. The printed sum lets the harness check
+// that every backend did the same work.
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    rounds = env.argv.get(1).match({ Ok(s) => s.parse_usize().value_or(16), None => 16 });
+    total :: u64 = 0;
+    Range(0, rounds).loop((r) {
+        m ::= a.Map<Key, u64>();
+        x :: u64 = r.to_u64() +% 1;
+        n :: u64 = 0;
+        Range(0, 4096).loop((_) {
+            x = x *% 6364136223846793005 +% 1442695040888963407;
+            m.set(Key(bits: x.shift_right(16)), n).try();
+            n = n +% 1;
+        });
+        y :: u64 = r.to_u64() +% 1;
+        Range(0, 4096).loop((_) {
+            y = y *% 6364136223846793005 +% 1442695040888963407;
+            m.get(Key(bits: y.shift_right(
+                16
+            ))).match({ Ok(v) => { total = total +% v; }, None => () });
+            m.get(Key(
+                bits: y.shift_right(16) +% 1
+            )).match({ Ok(v) => { total = total +% 3 *% v; }, None => () });
+        });
+    });
+    println("{} rounds map {}", rounds, total);
+    Ok(0)
+}

@@ -18,7 +18,7 @@
 { Ast, ExprId, BlockId, TypeId, Function, Literal, Bind, Deferred, Stmt } = std.ast
 { Span } = std.source
 { BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index } = std.ast
-{ TParam, Arg } = std.ast
+{ TParam, Arg, Member, Decl } = std.ast
 { PatternId } = std.ast
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at } = sema.sema
@@ -33,17 +33,21 @@
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, SysValue } = gen.gen_ir
 { SysConstant } = gen.gen_sys
-{ word, integer, same, width } = gen.gen_ir
+{ word, integer, float, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
 { to_bound, bound_of, handle_for_place, resolve } = gen.gen_lower_member
+{ Supplied, supplied_field, supplied_read } = gen.gen_lower_member
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { real_call } = gen.gen_lower_call
 { capability } = gen.gen_lower_shape
 { variant_index, size_of, TAG_BYTES } = gen.gen_lower_shape
 { call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
 { SynthAt, TurnName, lower_pending } = gen.gen_lower_thread
+{ scope_value, run_record } = gen.gen_lower_scope
+{ meta_access } = gen.gen_lower_meta
 { owner_of } = sema.sema_inst
+{ alias_module } = sema.sema_module
 
 // A value computed into a slot, with its concrete (substituted) type.
 Value* = { slot*: usize, ty*: TyId }
@@ -57,9 +61,13 @@ Place* = { base*: Base, offset*: usize, ty*: TyId }
 // in the frame that wrote it.
 LambdaRef* = { expr*: ExprId, frame*: usize }
 
+// A local function's declaration and the frame it was written in.
+LocalFunction* = { f*: Function, frame*: usize }
+
 LocalKind* = { Direct: Value
     | Ref: Place
     | Closure: LambdaRef
+    | Local: LocalFunction
     | Handle: usize
     | Capability: TyId }
 
@@ -149,8 +157,10 @@ Callee* = {
 LoopTarget* = { brk*: usize, next*: usize, result*: Res<Value>, depth* :: usize = 0 }
 
 // One open block's cleanup: its Drop bindings from `drops`, its defers from
-// `defers`, both in registration order.
-Cleanup* = { drops*: usize, defers*: usize }
+// `defers`, both in registration order. `record` is the block's runtime
+// defer record, made when `@scope` is first used as a value
+// (gen_lower_scope).
+Cleanup* = { drops*: usize, defers*: usize, record* :: Res<usize> = None }
 
 // A binding whose type implements Drop; `live` is a Bool slot cleared when
 // the value is consumed.
@@ -741,7 +751,7 @@ Lowerer* = {
                 Ok(Ref(p))    => Ok(p),
                 _             => None,
             })),
-            Access(a) => self.is_value_access(a).match({
+            Access(a) => (self.is_value_access(a) && !self.computed(id, a)).match({
                 false => Ok(None),
                 true  => self.place_of(a.base).try().match({
                     Ok(base) => Ok(Ok(
@@ -823,6 +833,7 @@ Lowerer* = {
             FixedArray(f) => self.array(id, f.elems, e.span),
             Array(a)      => self.array(id, a.elems, e.span),
             SelfType      => self.name(id, "self", e.span),
+            Scope         => self.scope_value(id),
             // `consume x` moves the value out: this frame no longer drops it.
             Consume(c)    => {
                 value = self.expr(c.operand).try();
@@ -852,6 +863,10 @@ Lowerer* = {
             Ok(Closure(_))    => Err(unsupported(
                 span,
                 "a closure used as a value"
+            )),
+            Ok(Local(_))      => Err(unsupported(
+                span,
+                "a local function used as a value"
             )),
             Ok(Handle(_))     => Err(unsupported(
                 span,
@@ -1014,7 +1029,9 @@ Lowerer* = {
             false => Ok(None),
             true  => self.check.const_int(id).match({
                 None     => Ok(None),
-                Ok(bits) => fits(bits, name).value_or(false).match({
+                // An unsigned literal past i64.MAX folds as its 64 bits, which
+                // a u128 constant zero-extends; sema refuses negative ones.
+                Ok(bits) => (fits(bits, name).value_or(false) || (name.eq("u128") && bits < 0)).match({
                     true  => Ok(Ok(self.constant(want, bits).try())),
                     false => Ok(None),
                 }),
@@ -1080,12 +1097,26 @@ Lowerer* = {
             false => {
                 from = self.class_of(value.ty).try();
                 to   = self.class_of(ty).try();
-                (integer(from) && integer(to)).match({
+                ((integer(from) && integer(to)) || (float(to) && !same(from, to) && (float(from) || integer(from)))).match({
                     true  => {
-                        out = self.temp(ty).try();
+                        // An unsettled integer is an i64 holding a literal's
+                        // bits; one past i64.MAX is unsigned (sema refuses a
+                        // negative one here), so a u128 zero-extends it.
+                        input = (same(to, Scalar.U128) && self.prim_name(value.ty).eq("int")).match({
+                            true  => {
+                                bits = self.slot_of(Scalar.U64).try();
+                                self.add(Instruction.Cast(Convert(
+                                    out: bits,
+                                    input: value.slot
+                                ))).try();
+                                bits
+                            },
+                            false => value.slot,
+                        });
+                        out   = self.temp(ty).try();
                         self.add(Instruction.Cast(Convert(
                             out: out.slot,
-                            input: value.slot
+                            input: input
                         ))).try();
                         Ok(out)
                     },
@@ -1204,13 +1235,17 @@ Lowerer* = {
                 self.string(text, ty)
             },
             Float => {
-                bits = float_bits(
+                single = self.class_of(
+                    ty
+                ).try().match({ F32 => true, _ => false });
+                bits   = float_bits(
                     self.alloc,
-                    l.text
+                    l.text,
+                    single
                 ).try(LowerError.OutOfMemory)
                     .ok_or(unsupported(
                         span,
-                        "a float literal with more than 15 significant digits or a decimal exponent beyond 22"
+                        "a float literal with more than 800 digits or a decimal exponent beyond 400"
                     )).try();
                 self.constant(ty, bits)
             },
@@ -1752,7 +1787,7 @@ Lowerer* = {
                     tail.match({ true => want, false => None }),
                     None
                 ),
-                Decl(_)     => Err(unsupported(s.span, "nested declarations")),
+                Decl(d)     => self.local_decl(d, s.span),
             }).try();
         });
         value = into.match({
@@ -1793,6 +1828,21 @@ Lowerer* = {
                 None  => false,
             }),
             _       => false,
+        })
+    }
+
+    // A local function binds its name to its declaration, inlined where it
+    // is called (`sema_local.local_function`).
+    local_decl = (self :: @Self, d: Decl, span: Span) Res<Value, LowerError> {
+        d.kind.match({
+            Function(f) => {
+                self.bind_local(
+                    f.name.text,
+                    LocalKind.Local(LocalFunction(f: f, frame: self.frame))
+                ).try();
+                self.unit()
+            },
+            _           => Err(unsupported(span, "nested declarations")),
         })
     }
 
@@ -1842,6 +1892,11 @@ Lowerer* = {
         defers_end = self.scopes.get(
             index + 1
         ).match({ Ok(next) => next.defers, None => self.defers.len });
+        // Record entries were all registered after the static defers
+        // before them, so they run first.
+        scope.record.when_ok(
+            (record) { self.run_record(record).try(); }
+        ).ignore_absent();
         Range(scope.defers, defers_end).loop((k) {
             entry = self.defers.get(defers_end - 1 - (k - scope.defers)).ok_or(unsupported(nowhere(), "a missing defer")).try();
             self.run_defer(entry).try();
@@ -2099,11 +2154,19 @@ Lowerer* = {
             }),
             _       => None,
         });
-        type_name.match({
-            Ok(name) => self.type_member(id, name, a.name.text, span),
-            None     => self.member_const(a.base, a.name.text, id).try().match({
-                Ok(v) => Ok(v),
-                None  => self.value_access(id, a, span),
+        folded              = self.meta_access(id, a).try();
+        folded.match({
+            Ok(v) => Ok(v),
+            None  => type_name.match({
+                Ok(name) => self.type_member(id, name, a.name.text, span),
+                None     => self.member_const(
+                    a.base,
+                    a.name.text,
+                    id
+                ).try().match({
+                    Ok(v) => Ok(v),
+                    None  => self.value_access(id, a, span),
+                }),
             }),
         })
     }
@@ -2149,7 +2212,7 @@ Lowerer* = {
         })
     }
 
-    value_access = (self :: @Self, id: ExprId, a: Access, span: Span) Res<Value, LowerError> {
+    value_access* = (self :: @Self, id: ExprId, a: Access, span: Span) Res<Value, LowerError> {
         capability = self.capability_of(a.base).try();
         capability.match({
             Ok(_) => {
@@ -2181,20 +2244,47 @@ Lowerer* = {
                     }),
                 })
             },
-            None  => self.place_of(a.base).try().match({
-                Ok(place) => self.read(
-                    self.field_place(place, a.name.text, span).try()
+            None  => self.supplied(id, a).try().match({
+                Ok(s) => supplied_read(
+                    self,
+                    s,
+                    self.expr(a.base).try(),
+                    self.type_of(id).try()
                 ),
-                None      => {
-                    base  = self.expr(a.base).try();
-                    field = self.field_place(
-                        self.spill(base),
-                        a.name.text,
-                        span
-                    ).try();
-                    self.read(field)
-                },
+                None  => self.stored_field(a, span),
             }),
+        })
+    }
+
+    // An impl-supplied field has no place: it is computed on every read.
+    computed = (self :: @Self, id: ExprId, a: Access) bool {
+        self.supplied(
+            id,
+            a
+        ).match({ Ok(found) => found.match({ Ok(_) => true, None => false }), Err(_) => false })
+    }
+
+    supplied = (self :: @Self, id: ExprId, a: Access) Res<Res<Supplied>, LowerError> {
+        self.type_of(a.base).match({
+            Ok(rty) => supplied_field(self, id, rty, a.name.text),
+            Err(_)  => Ok(None),
+        })
+    }
+
+    stored_field = (self :: @Self, a: Access, span: Span) Res<Value, LowerError> {
+        self.place_of(a.base).try().match({
+            Ok(place) => self.read(
+                self.field_place(place, a.name.text, span).try()
+            ),
+            None      => {
+                base  = self.expr(a.base).try();
+                field = self.field_place(
+                    self.spill(base),
+                    a.name.text,
+                    span
+                ).try();
+                self.read(field)
+            },
         })
     }
 
@@ -2206,7 +2296,83 @@ Lowerer* = {
             true  => self.prim_constant(ty, type_name, member, span),
             false => self.c_bound(type_name).match({
                 true  => self.predefined(ty, member, span),
-                false => self.variant_for(id, ty, member, span),
+                false => self.type_const(
+                    type_name,
+                    member,
+                    ty,
+                    span
+                ).try().match({
+                    Ok(value) => Ok(value),
+                    None      => self.variant_for(id, ty, member, span),
+                }),
+            }),
+        })
+    }
+
+    // `Type.NAME` for a constant or defaulted field of the type's body, and
+    // `alias.NAME` for a constant of the module an import alias binds.
+    type_const = (self :: @Self, type_name: str, member: str, ty: TyId, span: Span)
+                 Res<Res<Value>, LowerError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(
+            self.here().module,
+            type_name,
+            defs
+        ).try(LowerError.OutOfMemory);
+        owner = defs.find((d) {
+            d.kind.match({ StructDef => true, EnumDef => true, AliasDef => true, _ => false })
+        });
+        owner.match({
+            None    => Ok(None),
+            Ok(def) => self.check.alias_module(def.id).match({
+                Ok(module) => self.module_const(module, member, ty, span),
+                None       => self.body_const(def.id, member, ty),
+            }),
+        })
+    }
+
+    module_const = (self :: @Self, module: usize, name: str, ty: TyId, span: Span)
+                   Res<Res<Value>, LowerError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(
+            module,
+            name,
+            defs
+        ).try(LowerError.OutOfMemory);
+        defs.find(
+            (d) { d.kind.match({ ConstDef => true, _ => false }) }
+        ).match({
+            Ok(d) => Ok(Ok(self.global_const(d, ty, span).try())),
+            None  => Ok(None),
+        })
+    }
+
+    body_const = (self :: @Self, decl: DeclId, name: str, ty: TyId)
+                 Res<Res<Value>, LowerError> {
+        members: Res<Vec<Member>> = decl_at(self.tree, decl).match({
+            Ok(d) => d.kind.match({
+                Struct(s) => Ok(s.members),
+                Enum(e)   => Ok(e.members),
+                _         => None,
+            }),
+            None  => None,
+        });
+        member                    = members.match({
+            Ok(ms) => ms.find((m) { m.name().text.eq(name) }),
+            None   => None,
+        });
+        module                    = decl.module.to_usize();
+        member.match({
+            None  => Ok(None),
+            Ok(m) => m.kind.match({
+                Const(k) => Ok(Ok(
+                    self.const_in(k.value, k.type, module, ty).try()
+                )),
+                Field(f) => f.value.match({
+                    Ok(v) => Ok(Ok(self.const_in(v, f.type, module, ty).try())),
+                    None  => Ok(None),
+                }),
+                _        => Ok(None),
             }),
         })
     }
@@ -2277,23 +2443,23 @@ Lowerer* = {
                 // constants are held: +-0x1.fffffffffffffp+1023.
                 "MAX"  => prim.eq("f64").match({
                     true  => Ok(9218868437227405311),
-                    false => integer.match({
+                    false => prim.eq("f32").match({ true => Ok(2139095039), false => integer.match({
                         false => None,
                         true  => is_signed.match({
                             true  => Ok(width.signed_max()),
                             false => Ok(width.unsigned_max_bits()),
                         }),
-                    }),
+                    }) }),
                 }),
                 "MIN"  => prim.eq("f64").match({
                     true  => Ok(-4503599627370497),
-                    false => integer.match({
+                    false => prim.eq("f32").match({ true => Ok(4286578687), false => (integer || prim.eq("u128")).match({
                         false => None,
                         true  => is_signed.match({
                             true  => Ok(-width.signed_max() - 1),
                             false => Ok(0),
                         }),
-                    }),
+                    }) }),
                 }),
                 _      => None,
             }),
@@ -3295,20 +3461,42 @@ Lowerer* = {
     // caller's `h` on, and `h.break()` in the body leaves that loop).
     inline_bound* = (self :: @Self, lambda: LambdaRef, args: Vec<LocalKind>, want: TyId)
                     Res<Value, LowerError> {
-        l          = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+        l = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
             .ok_or(unsupported(
                 nowhere(),
                 "a closure that is not a lambda"
             )).try();
+        self.inline_body(l.params, l.body, lambda.frame, args, want)
+    }
+
+    // Inline a local function where it is called, as a closure written in
+    // the frame that declared it.
+    inline_local* = (self :: @Self, local: LocalFunction, args: Vec<LocalKind>, want: TyId)
+                    Res<Value, LowerError> {
+        body = local.f.body.ok_or(unsupported(
+            local.f.name.span,
+            "a local function without a body"
+        )).try();
+        self.inline_body(local.f.params, body, local.frame, args, want)
+    }
+
+    inline_body = (
+        self   :: @Self,
+        params : Vec<Param>,
+        body   : BlockId,
+        frame  : usize,
+        args   : Vec<LocalKind>,
+        want   : TyId
+    ) Res<Value, LowerError> {
         saved      = self.frame;
-        self.frame = lambda.frame;
+        self.frame = frame;
         mark       = self.locals.len;
-        l.params.loop((h, i, p) {
+        params.loop((h, i, p) {
             args.get(i).when_ok((arg) { self.bind_local(p.name.text, arg).try(); });
         });
         value = self.settled(want).match({
-            true  => self.block_want(l.body, want),
-            false => self.block(l.body),
+            true  => self.block_want(body, want),
+            false => self.block(body),
         }).try();
         self.release_locals(mark);
         self.frame = saved;
@@ -3757,15 +3945,14 @@ to_i64_bits* = (value: usize) i64 {
     value.to_u64().to_i64_bits()
 }
 
-// The IEEE-754 binary64 bits of a decimal float literal (`12.5`, `1e-3`,
-// `1_000.0`). Exact under Clinger's fast path: at most 15 significant
-// digits (an integer below 2^53, so an exact double) and a decimal exponent
-// within 22 (10^22 is the largest exact power of ten), so the one multiply
-// or divide rounds correctly. None outside that range: such a literal is
-// refused rather than rounded twice.
-float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
-    mantissa          :: u64 = 0;
-    digits            ::= 0;
+// The IEEE-754 bits of a decimal float literal (`12.5`, `1e-3`, `1_000.0`),
+// binary32 when `single`, else binary64, rounded to nearest with ties to
+// even from the exact decimal value, as a C compiler reads it. None for a
+// malformed literal, one with more than 800 digits, or a decimal exponent
+// beyond 400.
+float_bits* = (a: Alloc, text: str, single: bool) Res<Res<i64>, AllocError> {
+    digits            ::= Big(limbs: a.Vec<u64>());
+    count             ::= 0;
     scale             :: i64 = 0;
     exponent          :: i64 = 0;
     negative_exponent ::= false;
@@ -3780,11 +3967,9 @@ float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
                     () { valid = false; }
                 ); },
                 false => {
-                    // Leading zeros are not significant digits.
-                    (mantissa > 0 || c != 48).then(() {
-                        digits = digits + 1;
-                        (digits <= 15).match({ true => { mantissa = mantissa * 10 + (c - 48); }, false => { valid = false; } });
-                    });
+                    count = count + 1;
+                    (count > 800).then(() { valid = false; });
+                    valid.then(() { digits.times_add(10, c - 48).try(); });
                     fraction.then(() { scale = scale - 1; });
                 },
             }),
@@ -3800,22 +3985,173 @@ float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
         });
     });
     power = scale + negative_exponent.match({ true => 0 - exponent, false => exponent });
-    (valid && power >= -22 && power <= 22).match({
+    valid.match({
         false => Ok(None),
-        true  => {
-            // Split below 2^30 per part: only i32 converts to f64.
-            high  = (mantissa / 1073741824).to_i32().value_or(0).to_f64();
-            low   = (mantissa % 1073741824).to_i32().value_or(0).to_f64();
-            value = high * 1073741824.0 + low;
-            ten ::= 1.0;
-            steps = (power < 0).match({ true => 0 - power, false => power });
-            Range(0, steps.to_usize().value_or(0)).loop((_) { ten = ten * 10.0; });
-            exact = (power < 0).match({ true => value / ten, false => value * ten });
-            cell  = a.realloc<f64>(null_ptr<f64>(), 1).try();
-            cell.write(0, exact);
-            Ok(Ok(cell.to<u64>().read(0).to_i64_bits()))
+        true  => Ok(Ok(nearest(a, digits, power, single).try())),
+    })
+}
+
+// The float nearest `digits * 10^power` (ties to even). With `V` that
+// value, `e` is the binary exponent (2^e <= V < 2^(e+1), or the least
+// normal exponent for a subnormal) and `q` the integer part of
+// `V * 2^(precision - 1 - e)`, whose remainder decides the rounding.
+nearest = (
+    a      : Alloc,
+    digits : Big,
+    power  : i64,
+    single : bool
+) Res<i64, AllocError> {
+    precision: usize = single.match({ true => 24, false => 53 });
+    bias: i64        = single.match({ true => 127, false => 1023 });
+    infinite: u64    = single.match({ true => 255, false => 2047 });
+    num ::= digits;
+    den ::= Big(limbs: a.Vec<u64>());
+    den.limbs.add(1).try();
+    steps = (power < 0).match({ true => 0 - power, false => power });
+    Range(0, steps.to_usize().value_or(0)).loop((_) {
+        (power > 0).match({
+            true  => num.times_add(10, 0).try(),
+            false => den.times_add(10, 0).try(),
+        });
+    });
+    (num.bits() == 0).match({
+        true  => Ok(0),
+        false => {
+            e ::= num.bits().to_i64_bits() - den.bits().to_i64_bits();
+            above = (e >= 0).match({
+                true  => compare(
+                    num,
+                    den.shifted(a, e.to_usize().value_or(0)).try()
+                ) >= 0,
+                false => compare(
+                    num.shifted(a, (0 - e).to_usize().value_or(0)).try(),
+                    den
+                ) >= 0,
+            });
+            (!above).then(() { e = e - 1; });
+            (e < 1 - bias).then(() { e = 1 - bias; });
+            s = (precision.to_i64_bits() - 1) - e;
+            n ::= (s >= 0).match({
+                true  => num.shifted(a, s.to_usize().value_or(0)).try(),
+                false => num,
+            });
+            d = (s >= 0).match({
+                true  => den,
+                false => den.shifted(a, (0 - s).to_usize().value_or(0)).try(),
+            });
+            q :: u64 = 0;
+            Range(0, precision + 1).loop((k) {
+                bit  = precision - k;
+                part = d.shifted(a, bit).try();
+                (compare(n, part) >= 0).then(() {
+                    n.take(part);
+                    q = q + ONE.shift_left(bit);
+                });
+            });
+            half = compare(n.shifted(a, 1).try(), d);
+            (half > 0 || (half == 0 && q % 2 == 1)).then(() { q = q + 1; });
+            (q == ONE.shift_left(precision)).then(() {
+                q = q.shift_right(1);
+                e = e + 1;
+            });
+            normal      = q >= ONE.shift_left(precision - 1);
+            biased: i64 = normal.match({ true => e + bias, false => 0 });
+            unit        = ONE.shift_left(precision - 1);
+            (biased >= infinite.to_i64_bits()).match({
+                true  => Ok(infinite.to_i64_bits() * unit.to_i64_bits()),
+                false => Ok(
+                    biased * unit.to_i64_bits() + q.bit_and(
+                        unit - 1
+                    ).to_i64_bits()
+                ),
+            })
         },
     })
+}
+
+ONE: u64 = 1
+
+// A non-negative integer in 32-bit limbs, least significant first: just
+// enough arithmetic to round a decimal literal exactly.
+Big = {
+    limbs :: Vec<u64>,
+
+    // self * by + add, for `by` and `add` below 2^32.
+    times_add = (self :: @Self, by: u64, add: u64) Res<AllocError> {
+        carry :: u64 = add;
+        Range(0, self.limbs.len).loop((i) {
+            v = self.limbs.get(i).value_or(0) * by + carry;
+            self.limbs.set(i, v % 4294967296);
+            carry = v / 4294967296;
+        });
+        (carry > 0).match({ true => self.limbs.add(carry), false => Ok })
+    }
+
+    // The number of significant bits.
+    bits = (self: @Self) usize {
+        n :: usize = 0;
+        Range(0, self.limbs.len).loop((h, k) {
+            i = self.limbs.len - 1 - k;
+            v = self.limbs.get(i).value_or(0);
+            (v != 0).then(() {
+                width :: usize = 0;
+                rest  ::= v;
+                going ::= true;
+                going.loop((g) {
+                    width = width + 1;
+                    rest  = rest.shift_right(1);
+                    going = rest != 0;
+                });
+                n = i * 32 + width;
+                h.break();
+            });
+        });
+        n
+    }
+
+    // self * 2^by.
+    shifted = (self: @Self, a: Alloc, by: usize) Res<Big, AllocError> {
+        out ::= Big(limbs: a.Vec<u64>());
+        Range(0, by / 32).loop((_) { out.limbs.add(0).try(); });
+        r = by % 32;
+        carry :: u64 = 0;
+        self.limbs.loop((v) {
+            w = v.shift_left(r).bit_or(carry);
+            out.limbs.add(w.bit_and(4294967295)).try();
+            carry = w.shift_right(32);
+        });
+        (carry > 0).match({ true => out.limbs.add(carry).try(), false => () });
+        Ok(out)
+    }
+
+    // self - other, for other <= self.
+    take = (self :: @Self, other: Big) {
+        borrow :: u64 = 0;
+        Range(0, self.limbs.len).loop((i) {
+            x = self.limbs.get(i).value_or(0);
+            y = other.limbs.get(i).value_or(0) + borrow;
+            (x >= y).match({
+                true  => { self.limbs.set(i, x - y); borrow = 0; },
+                false => { self.limbs.set(i, x + 4294967296 - y); borrow = 1; },
+            });
+        });
+    }
+}
+
+// The sign of x - y.
+compare = (x: Big, y: Big) i64 {
+    n = (x.limbs.len > y.limbs.len).match({ true => x.limbs.len, false => y.limbs.len });
+    result :: i64 = 0;
+    Range(0, n).loop((h, k) {
+        i = n - 1 - k;
+        p = x.limbs.get(i).value_or(0);
+        q = y.limbs.get(i).value_or(0);
+        (p != q).then(() {
+            result = (p > q).match({ true => 1, false => -1 });
+            h.break();
+        });
+    });
+    result
 }
 
 signed_max = (bits: i64) i64 {

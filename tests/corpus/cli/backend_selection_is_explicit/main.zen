@@ -41,6 +41,9 @@ main = (env: Env) Res<i32, AllocError> {
     show(env, args(alloc, "c", "--emit-c-dir", "gen").try()).try();
     show(env, args(alloc, "js", "", "").try()).try();
     show(env, args(alloc, "asm", "", "").try()).try();
+    show(env, args(alloc, "jit", "", "").try()).try();
+    show(env, args(alloc, "jit", "-o", "out").try()).try();
+    show(env, args(alloc, "jit", "--emit-c-dir", "gen").try()).try();
     show(env, args(alloc, "unknown", "-o", "out.c").try()).try();
     show(env, args(alloc, "--emit-c", "", "").try()).try();
     Ok(0)

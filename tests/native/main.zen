@@ -9,6 +9,16 @@
 //
 //   native-corpus <zen> <target> [filter] [shard] [shards] [runs]
 //
+// The target `jit` runs each program through the IR interpreter
+// (`zen build --backend jit`) instead. Only its documented refusals
+// (`refused_by_jit`) are UNSUPPORTED; a compile failure is output that must
+// match, and any FAIL, FLAKY or BROKEN test makes the runner exit 1.
+// tests/native/jit-known-failures.txt lists the IR lowering gaps the jit
+// still fails on, each with the first error line it fails with. A listed
+// test failing with exactly that line is KNOWN and does not fail the
+// target; one that passes, is refused, fails with any other line, or is no
+// longer in the corpus is a FAIL.
+//
 // [filter] keeps the tests whose path contains any of its comma-separated
 // parts. With [runs] above one, each program is built once and run that
 // many times, for concurrent programs: a test is PASS only if every run
@@ -41,16 +51,36 @@ target_of = (name: str, host_arch: str) Res<Target> {
         "x86_64-linux"  => Ok(Target(
             arch: "x86_64",
             os: "linux",
-            cross: host_arch.eq("x86_64").match({ true => "", false => "x86_64-linux-gnu-" }),
-            runner: host_arch.eq("x86_64").match({ true => "", false => "qemu-x86_64" })
+            cross: host_arch.eq(
+                "x86_64"
+            ).match({ true => "", false => "x86_64-linux-gnu-" }),
+            runner: host_arch.eq(
+                "x86_64"
+            ).match({ true => "", false => "qemu-x86_64" })
         )),
         "aarch64-linux" => Ok(Target(
             arch: "aarch64",
             os: "linux",
-            cross: host_arch.eq("x86_64").match({ true => "aarch64-linux-gnu-", false => "" }),
-            runner: host_arch.eq("x86_64").match({ true => "qemu-aarch64", false => "" })
+            cross: host_arch.eq(
+                "x86_64"
+            ).match({ true => "aarch64-linux-gnu-", false => "" }),
+            runner: host_arch.eq(
+                "x86_64"
+            ).match({ true => "qemu-aarch64", false => "" })
         )),
-        "arm64-darwin"  => Ok(Target(arch: "arm64", os: "darwin", cross: "", runner: "")),
+        "arm64-darwin"  => Ok(Target(
+            arch: "arm64",
+            os: "darwin",
+            cross: "",
+            runner: ""
+        )),
+        // The IR interpreter: `prog` is a script that runs the source.
+        "jit"           => Ok(Target(
+            arch: host_arch,
+            os: "jit",
+            cross: "",
+            runner: ""
+        )),
         _               => None,
     })
 }
@@ -61,6 +91,7 @@ Tally = {
     flaky :: usize = 0,
     unsupported :: usize = 0,
     broken :: usize = 0,
+    known :: usize = 0,
 }
 
 Case = { root: str, entry: str, base: str }
@@ -75,11 +106,16 @@ Runner = {
     sdk: str,
     keep_all: bool,
     runs: usize,
+    known: Vec<str>,
 
     run = (self: @Self, argv: Vec<str>) Res<ProcOutput, AllocError> {
         self.env.proc.run_argv(self.a, "", argv).match({
             Ok(out) => Ok(out),
-            Err(_)  => Ok(ProcOutput(code: 127, out: self.a.String().try(), err: self.a.String().try())),
+            Err(_)  => Ok(ProcOutput(
+                code: 127,
+                out: self.a.String().try(),
+                err: self.a.String().try()
+            )),
         })
     }
 
@@ -87,8 +123,15 @@ Runner = {
         self.env.fs.read(self.a, path).match({ Ok(s) => Ok(s.view()), Err(_) => None })
     }
 
-    // Compile with the native backend; None when the compiler refused.
+    jit = (self: @Self) bool { self.target.os.eq("jit") }
+
+    // Compile with the native backend; None when the compiler refused. The
+    // jit backend compiles as it runs, so its refusals are found then.
     compile = (self: @Self, c: Case, source: str) Res<Res<str>, AllocError> {
+        self.jit().match({ true => Ok(None), false => self.assembly(c, source) })
+    }
+
+    assembly = (self: @Self, c: Case, source: str) Res<Res<str>, AllocError> {
         argv ::= self.a.Vec<str>();
         [self.zen, "build", c.root, "--entry", c.entry, "--std", "src", "--backend", "asm", "--target", self.target_name, "-o", source].loop((w) {
             argv.add(w).try();
@@ -129,6 +172,10 @@ Runner = {
     }
 
     link = (self: @Self, source: str, object: str, binary: str) Res<Res<str>, AllocError> {
+        self.jit().match({ true => Ok(None), false => self.native_link(source, object, binary) })
+    }
+
+    native_link = (self: @Self, source: str, object: str, binary: str) Res<Res<str>, AllocError> {
         first = self.run(self.assemble_argv(source, object).try()).try();
         (first.code == 0).match({
             false => Ok(Ok(first.err.view())),
@@ -139,43 +186,147 @@ Runner = {
         })
     }
 
-    // Launch under a 10 s alarm, with the test's arguments, environment
+    // The jit backend's stand-in for a binary: a script that runs the
+    // program's source through the interpreter, named as the binary is.
+    wrap = (self: @Self, c: Case, binary: str) Res<AllocError> {
+        here = self.env.fs.cwd(
+            self.a
+        ).match({ Ok(s) => s.view(), Err(_) => "." });
+        zen  = self.zen.starts_with("/").match({ true => self.a.String("{}", self.zen).try(), false => self.a.String("{}/{}", here, self.zen).try() });
+        // tests/run.py's own staging: the test's files, std and the
+        // compiler modules it imports; then this case's entry, which the
+        // harness may have patched.
+        root  = self.a.String("{}.stage/src", binary).try();
+        stage = self.a.String(
+            "rm -rf '{}.stage' && python3 tests/native/stage.py '{}' '{}' '{}.stage' && cp -f '{}/{}' '{}/{}'",
+            binary,
+            zen.view(),
+            c.base,
+            binary,
+            c.root,
+            c.entry,
+            root.view(),
+            c.entry
+        ).try();
+        link ::= self.a.Vec<str>();
+        ["/bin/sh", "-c", stage.view()].loop((w) { link.add(w).try(); });
+        staged = self.run(link).try();
+        // A root that did not stage is reported by the run, not run half
+        // staged.
+        failure = self.a.String("{}.stage.err", binary).try();
+        script  = (staged.code == 0).match({
+            true  => self.a.String(
+                "#!/bin/sh\nexec '{}' build '{}/{}' --entry '{}' --std '{}/{}' --backend jit --argv0 \"$0\" -- \"$@\"\n",
+                zen.view(),
+                here,
+                root.view(),
+                c.entry,
+                here,
+                root.view()
+            ).try(),
+            false => self.a.String(
+                "#!/bin/sh\necho 'native-corpus: staging failed:' >&2\ncat '{}/{}' >&2\nexit 1\n",
+                here,
+                failure.view()
+            ).try(),
+        });
+        (staged.code != 0).then(
+            () { self.env.fs.write(
+                failure.view(),
+                staged.err.view()
+            ).ignore(); }
+        );
+        self.env.fs.write(binary, script.view()).ignore();
+        chmod ::= self.a.Vec<str>();
+        ["chmod", "+x", binary].loop((w) { chmod.add(w).try(); });
+        self.run(chmod).try();
+        Ok
+    }
+
+    // Launch under an alarm (10 s; 600 s for the jit), with the test's arguments, environment
     // and stdin; a POSIX shell only performs the redirection.
     // Stages the run directory and returns the shell command that runs it.
     launch = (self: @Self, c: Case, binary: str, dir: str) Res<String, AllocError> {
         // As tests/run.py stages it: the program runs in a scratch
         // directory where its root is visible as `src`.
-        here = self.env.fs.cwd(self.a).match({ Ok(s) => s.view(), Err(_) => "." });
+        here    = self.env.fs.cwd(
+            self.a
+        ).match({ Ok(s) => s.view(), Err(_) => "." });
         run_dir = self.a.String("{}/{}/run", here, dir).try();
         setup ::= self.a.Vec<str>();
         // The program is invoked as `<run dir>/prog`, the name argv[0] tests
         // pin, and the symlink-loop test finds its loop staged beside it.
-        script ::= self.a.String("rm -rf '{}' && mkdir -p '{}' && ln -sfn '{}/{}' '{}/src' && ln -sfn '{}/{}' '{}/prog'", run_dir.view(), run_dir.view(), here, c.root, run_dir.view(), here, binary, run_dir.view()).try();
+        // The jit's `src` is its staged root, std and compiler modules
+        // included, as tests/run.py stages it.
+        root = self.jit().match({
+            true  => self.a.String("{}.stage/src", binary).try(),
+            false => self.a.String("{}", c.root).try(),
+        });
+        script ::= self.a.String(
+            "rm -rf '{}' && mkdir -p '{}' && ln -sfn '{}/{}' '{}/src' && ln -sfn '{}/{}' '{}/prog'",
+            run_dir.view(),
+            run_dir.view(),
+            here,
+            root.view(),
+            run_dir.view(),
+            here,
+            binary,
+            run_dir.view()
+        ).try();
         c.base.ends_with("symlink_loop_is_failed/main").then(() {
             script.fmt(" && ln -sfn loop '{}/loop'", run_dir.view()).try();
+        });
+        // As tests/run.py's ZeroSizeFilePeer: a nonempty FIFO whose stat
+        // size is zero.
+        c.base.ends_with("fs_read_special_file_with_zero_stat_size/main").then(() {
+            script.fmt(
+                " && mkfifo '{}/zero-size-input' && (timeout 130 sh -c \"printf 'zero-sized files still contain bytes\\n' > '{}/zero-size-input'\" > /dev/null 2>&1 &)",
+                run_dir.view(),
+                run_dir.view()
+            ).try();
         });
         ["/bin/sh", "-c", script.view()].loop((w) { setup.add(w).try(); });
         self.run(setup).try();
         command ::= self.a.String().try();
         command.fmt("cd '{}' && ", run_dir.view()).try();
-        command.add("exec perl -e 'alarm 10; exec @ARGV' ").try();
+        // The jit compiles inside the run and interprets it: a test that
+        // imports the lsp takes 165 s on an 8-core VM and over 180 s on a CI
+        // runner, so the jit's alarm only catches hangs.
+        alarm: str = self.jit().match({ true => "600", false => "10" });
+        command.fmt("exec perl -e 'alarm {}; exec @ARGV' ", alarm).try();
         // The harness exports two over-long names for this test alone.
         c.base.ends_with("env_var_resolves_a_name_of_any_length").then(() {
             command.add("env ").try();
-            command.add(self.a.String("{}=hello ", repeat(self.a, 'V', 5039).try().view()).try().view()).try();
-            command.add(self.a.String("{}=hello ", repeat(self.a, 'B', 4096).try().view()).try().view()).try();
+            command.add(
+                self.a.String(
+                    "{}=hello ",
+                    repeat(self.a, 'V', 5039).try().view()
+                ).try().view()
+            ).try();
+            command.add(
+                self.a.String(
+                    "{}=hello ",
+                    repeat(self.a, 'B', 4096).try().view()
+                ).try().view()
+            ).try();
         });
         self.read_sidecar(c, "env").when_ok((text) {
             command.add("env ").try();
             text.split('\n').loop((line) {
-                (!line.is_empty()).then(() { command.fmt("'{}' ", line).try(); });
+                (!line.is_empty()).then(
+                    () { command.fmt("'{}' ", line).try(); }
+                );
             });
         });
-        (!self.target.runner.is_empty()).then(() { command.fmt("{} ", self.target.runner).try(); });
+        (!self.target.runner.is_empty()).then(
+            () { command.fmt("{} ", self.target.runner).try(); }
+        );
         command.fmt("'{}/prog'", run_dir.view()).try();
         self.read_sidecar(c, "args").when_ok((text) {
             text.split('\n').loop((line) {
-                (!line.is_empty()).then(() { command.fmt(" '{}'", line).try(); });
+                (!line.is_empty()).then(
+                    () { command.fmt(" '{}'", line).try(); }
+                );
             });
         });
         stdin = self.a.String("{}.stdin", c.base).try();
@@ -206,18 +357,21 @@ Runner = {
             false => Ok(c),
             true  => {
                 source = self.a.String("{}/{}", c.root, c.entry).try();
-                text = self.read(source.view()).value_or("");
-                dir = self.a.String("{}/stage", work).try();
+                text   = self.read(source.view()).value_or("");
+                dir    = self.a.String("{}/stage", work).try();
                 mkdir ::= self.a.Vec<str>();
                 ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
                 self.run(mkdir).try();
                 line = "HARNESS_EPOCH* : u64 = 0";
                 patched ::= self.a.String().try();
                 text.find(line).match({
-                    None     => patched.add(text).try(),
-                    Ok(at)   => {
+                    None   => patched.add(text).try(),
+                    Ok(at) => {
                         patched.add(text.slice(0, at)).try();
-                        patched.fmt("HARNESS_EPOCH* : u64 = {}", self.env.clock.unix().seconds_of()).try();
+                        patched.fmt(
+                            "HARNESS_EPOCH* : u64 = {}",
+                            self.env.clock.unix().seconds_of()
+                        ).try();
                         patched.add(text.slice(at + line.len, text.len)).try();
                     },
                 });
@@ -234,66 +388,234 @@ Runner = {
     // `command.sh` (the exact compile, assemble, link and run commands),
     // `stdout`, `stderr` and `verdict.txt`, so everything left under the work
     // root after a run is a test that did not pass.
+    // The first error line tests/native/jit-known-failures.txt says the jit
+    // run of `base` fails with, if it lists `base`.
+    listed = (self: @Self, base: str) Res<str> {
+        self.jit().match({
+            true  => known_reason(self.known, base),
+            false => None,
+        })
+    }
+
+    // A FAIL with exactly its listed error line is KNOWN; any other FAIL,
+    // listed or not, fails the target.
+    failed = (self: @Self, base: str, verdict: str, said: str, tally :: Tally) {
+        self.listed(base).match({
+            Ok(reason) => reason.eq(said).match({
+                true  => {
+                    tally.known = tally.known + 1;
+                    println("KNOWN {} :: {}", base, said);
+                },
+                false => {
+                    tally.fail = tally.fail + 1;
+                    println(
+                        "FAIL {} :: {} (tests/native/jit-known-failures.txt lists: {})",
+                        base,
+                        said,
+                        reason
+                    );
+                },
+            }),
+            None       => {
+                tally.fail = tally.fail + 1;
+                println("FAIL {} :: {}", base, verdict);
+            },
+        })
+    }
+
     case = (self: @Self, original: Case, tally :: Tally) Res<bool, AllocError> {
-        dir = self.a.String("{}/{}", self.work, slug(self.a, original.base).try().view()).try();
+        dir = self.a.String(
+            "{}/{}",
+            self.work,
+            slug(self.a, original.base).try().view()
+        ).try();
         mkdir ::= self.a.Vec<str>();
         ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
         self.run(mkdir).try();
-        c = self.staged(original, dir.view()).try();
+        c      = self.staged(original, dir.view()).try();
         source = self.a.String("{}/prog.s", dir.view()).try();
         object = self.a.String("{}/prog.o", dir.view()).try();
         binary = self.a.String("{}/prog", dir.view()).try();
-        commands ::= self.a.String("'{}' build '{}' --entry '{}' --std src --backend asm --target '{}' -o '{}'\n", self.zen, c.root, c.entry, self.target_name, source.view()).try();
-        passed ::= false;
+        commands ::= self.jit().match({
+            true  => self.a.String(
+                "# {} stages the root (tests/native/stage.py) and runs it with --backend jit\n",
+                binary.view()
+            ).try(),
+            false => self.a.String(
+                "'{}' build '{}' --entry '{}' --std src --backend asm --target '{}' -o '{}'\n",
+                self.zen,
+                c.root,
+                c.entry,
+                self.target_name,
+                source.view()
+            ).try(),
+        });
+        passed   ::= false;
         self.compile(c, source.view()).try().match({
             Ok(reason) => {
                 tally.unsupported = tally.unsupported + 1;
                 println("UNSUPPORTED {} :: {}", c.base, first_line(reason));
-                self.keep(dir.view(), c.base, "UNSUPPORTED", commands.view(), "", reason, first_line(reason));
+                self.keep(
+                    dir.view(),
+                    c.base,
+                    "UNSUPPORTED",
+                    commands.view(),
+                    "",
+                    reason,
+                    first_line(reason)
+                );
             },
             None       => {
-                commands.add(quoted(self.a, self.assemble_argv(source.view(), object.view()).try()).try().view()).try();
-                commands.add(quoted(self.a, self.link_argv(object.view(), binary.view()).try()).try().view()).try();
-                self.link(source.view(), object.view(), binary.view()).try().match({
+                (!self.jit()).then(() {
+                    commands.add(
+                        quoted(
+                            self.a,
+                            self.assemble_argv(
+                                source.view(),
+                                object.view()
+                            ).try()
+                        ).try().view()
+                    ).try();
+                    commands.add(
+                        quoted(
+                            self.a,
+                            self.link_argv(object.view(), binary.view()).try()
+                        ).try().view()
+                    ).try();
+                });
+                self.link(
+                    source.view(),
+                    object.view(),
+                    binary.view()
+                ).try().match({
                     Ok(reason) => {
                         tally.broken = tally.broken + 1;
                         println("BROKEN {} :: {}", c.base, first_line(reason));
-                        self.keep(dir.view(), c.base, "BROKEN", commands.view(), "", reason, first_line(reason));
+                        self.keep(
+                            dir.view(),
+                            c.base,
+                            "BROKEN",
+                            commands.view(),
+                            "",
+                            reason,
+                            first_line(reason)
+                        );
                     },
                     None       => {
-                        command = self.launch(c, binary.view(), dir.view()).try();
+                        self.jit().then(
+                            () { self.wrap(c, binary.view()).try(); }
+                        );
+                        command = self.launch(
+                            c,
+                            binary.view(),
+                            dir.view()
+                        ).try();
                         commands.fmt("{}\n", command.view()).try();
                         // The first differing run is the one kept.
-                        failed :: usize = 0;
-                        first ::= "";
-                        Range(0, self.runs).loop((_) {
+                        failed  :: usize = 0;
+                        first   ::= "";
+                        refusal ::= "";
+                        said    ::= "";
+                        Range(0, self.runs).loop((h, run) {
                             result = self.shell(command.view()).try();
+                            self.jit().then(() {
+                                refused(result.out.view()).when_ok((reason) { refusal = reason; h.break(); });
+                            });
                             verdict = self.compare(c, result).try();
                             (!verdict.is_empty()).then(() {
                                 (failed == 0).then(() {
                                     first = verdict;
-                                    self.keep(dir.view(), c.base, "FAIL", commands.view(), result.out.view(), result.err.view(), verdict);
+                                    said  = error_line(result.out.view()).value_or(verdict);
+                                    self.keep(
+                                        dir.view(),
+                                        c.base,
+                                        "FAIL",
+                                        commands.view(),
+                                        result.out.view(),
+                                        result.err.view(),
+                                        verdict
+                                    );
                                 });
                                 failed = failed + 1;
                             });
                         });
-                        (failed == 0).match({
-                            true  => {
-                                tally.pass = tally.pass + 1;
-                                passed = true;
-                                println("PASS {}", c.base);
-                                (!self.keep_all).then(() {
-                                    remove ::= self.a.Vec<str>();
-                                    ["rm", "-rf", dir.view()].loop((w) { remove.add(w).try(); });
-                                    self.run(remove).try();
-                                });
-                            },
-                            false => (failed == self.runs).match({
-                                true  => { tally.fail = tally.fail + 1; println("FAIL {} :: {}", c.base, first); },
+                        (!refusal.is_empty()).then(() {
+                            self.listed(c.base).match({
+                                Ok(_) => {
+                                    tally.fail = tally.fail + 1;
+                                    println(
+                                        "FAIL {} :: refused ({}), but tests/native/jit-known-failures.txt lists it as failing",
+                                        c.base,
+                                        refusal
+                                    );
+                                },
+                                None  => {
+                                    tally.unsupported = tally.unsupported + 1;
+                                    println(
+                                        "UNSUPPORTED {} :: {}",
+                                        c.base,
+                                        refusal
+                                    );
+                                },
+                            });
+                            self.keep(
+                                dir.view(),
+                                c.base,
+                                "UNSUPPORTED",
+                                commands.view(),
+                                "",
+                                refusal,
+                                refusal
+                            );
+                        });
+                        (refusal.is_empty() && failed == 0).match({
+                            true  => self.listed(c.base).match({
+                                Ok(_) => {
+                                    tally.fail = tally.fail + 1;
+                                    println(
+                                        "FAIL {} :: passes, so remove it from tests/native/jit-known-failures.txt",
+                                        c.base
+                                    );
+                                },
+                                None  => {
+                                    tally.pass = tally.pass + 1;
+                                    passed     = true;
+                                    println("PASS {}", c.base);
+                                    (!self.keep_all).then(() {
+                                        remove ::= self.a.Vec<str>();
+                                        ["rm", "-rf", dir.view()].loop((w) { remove.add(w).try(); });
+                                        self.run(remove).try();
+                                    });
+                                },
+                            }),
+                            false => (!refusal.is_empty() || failed == self.runs).match({
+                                true  => refusal.is_empty().then(
+                                    () { self.failed(
+                                        c.base,
+                                        first,
+                                        said,
+                                        tally
+                                    ); }
+                                ),
                                 false => {
                                     tally.flaky = tally.flaky + 1;
-                                    println("FLAKY {} :: {} of {} runs differ; first: {}", c.base, failed, self.runs, first);
-                                    self.write(dir.view(), "verdict.txt", self.a.String("FLAKY {} of {} runs differ; first: {}\n", failed, self.runs, first).match({ Ok(t) => t.view(), Err(_) => "" }));
+                                    println(
+                                        "FLAKY {} :: {} of {} runs differ; first: {}",
+                                        c.base,
+                                        failed,
+                                        self.runs,
+                                        first
+                                    );
+                                    self.write(
+                                        dir.view(),
+                                        "verdict.txt",
+                                        self.a.String(
+                                            "FLAKY {} of {} runs differ; first: {}\n",
+                                            failed,
+                                            self.runs,
+                                            first
+                                        ).match({ Ok(t) => t.view(), Err(_) => "" })
+                                    );
                                 },
                             }),
                         });
@@ -305,10 +627,27 @@ Runner = {
     }
 
     keep = (self: @Self, dir: str, base: str, verdict: str, commands: str, out: str, err: str, reason: str) {
-        self.write(dir, "command.sh", self.a.String("#!/bin/sh\n# {}: {}\n# from the repository root\n{}", base, verdict, commands).match({ Ok(t) => t.view(), Err(_) => "" }));
+        self.write(
+            dir,
+            "command.sh",
+            self.a.String(
+                "#!/bin/sh\n# {}: {}\n# from the repository root\n{}",
+                base,
+                verdict,
+                commands
+            ).match({ Ok(t) => t.view(), Err(_) => "" })
+        );
         self.write(dir, "stdout", out);
         self.write(dir, "stderr", err);
-        self.write(dir, "verdict.txt", self.a.String("{} {}\n", verdict, reason).match({ Ok(t) => t.view(), Err(_) => "" }));
+        self.write(
+            dir,
+            "verdict.txt",
+            self.a.String(
+                "{} {}\n",
+                verdict,
+                reason
+            ).match({ Ok(t) => t.view(), Err(_) => "" })
+        );
     }
 
     write = (self: @Self, dir: str, name: str, text: str) {
@@ -319,18 +658,26 @@ Runner = {
     }
 
     compare = (self: @Self, c: Case, result: ProcOutput) Res<str, AllocError> {
-        expected_out = self.read_sidecar(c, "expected").value_or("");
+        expected_out  = self.read_sidecar(c, "expected").value_or("");
         expected_code = self.read_sidecar(c, "exit").match({
             Ok(text) => text.trim().value_or("0").parse_i32().value_or(0),
             None     => 0,
         });
-        stderr_parts = self.read_sidecar(c, "stderr");
+        stderr_parts  = self.read_sidecar(c, "stderr");
         problem ::= self.a.String().try();
         (result.code != expected_code).then(() {
-            problem.fmt("exit {} (expected {}) ", result.code, expected_code).try();
+            problem.fmt(
+                "exit {} (expected {}) ",
+                result.code,
+                expected_code
+            ).try();
         });
         (!result.out.view().eq(expected_out)).then(() {
-            problem.fmt("stdout differs ({} bytes, expected {}) ", result.out.view().len, expected_out.len).try();
+            problem.fmt(
+                "stdout differs ({} bytes, expected {}) ",
+                result.out.view().len,
+                expected_out.len
+            ).try();
         });
         stderr_parts.when_ok((parts) {
             parts.split('\n').loop((line) {
@@ -370,16 +717,40 @@ quoted = (a: Alloc, argv: Vec<str>) Res<String, AllocError> {
     Ok(line)
 }
 
+// The jit backend's documented refusal (`refused_by_jit`), or None. Any
+// other compile failure is the program's output and must match like a run.
+refused = (out: str) Res<str> {
+    out.find("error: unsupported by the jit backend").match({
+        Ok(at) => Ok(first_line(out.slice(at, out.len))),
+        None   => None,
+    })
+}
+
 max_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }
 
 first_line = (text: str) str {
     text.split_once('\n').match({ Ok(pair) => pair.before, None => text })
 }
 
+// A directory's `main.expected` that tests/run.py ignores because the
+// directory also has `.expected` or `<dir>.expected` (DIR_EXPECTED_NAMES).
+shadowed = (env: Env, a: Alloc, expected: str) bool {
+    expected.ends_with("/main.expected").match({
+        false => false,
+        true  => {
+            dir    = expected.slice(0, expected.len - "/main.expected".len);
+            name   = dir.rfind('/').match({ Ok(at) => dir.slice(at + 1, dir.len), None => dir });
+            dotted = a.String("{}/.expected", dir).match({ Ok(p) => env.fs.exists(p.view()), Err(_) => false });
+            named  = a.String("{}/{}.expected", dir, name).match({ Ok(p) => env.fs.exists(p.view()), Err(_) => false });
+            dotted || named
+        },
+    })
+}
+
 // `name.expected` beside `name.zen` is a single-file test; a directory
 // holding `main.zen` and `.expected` (or `main.expected`) is a program root.
 case_of = (a: Alloc, expected: str) Res<Res<Case>, AllocError> {
-    base = expected.slice(0, expected.len - ".expected".len);
+    base   = expected.slice(0, expected.len - ".expected".len);
     single = a.String("{}.zen", base).try();
     Ok(base.rfind('/').match({
         None      => None,
@@ -390,7 +761,11 @@ case_of = (a: Alloc, expected: str) Res<Res<Case>, AllocError> {
                 true  => Ok(Case(root: dir, entry: "main.zen", base: base)),
                 false => name.eq("main").match({
                     true  => Ok(Case(root: dir, entry: "main.zen", base: base)),
-                    false => Ok(Case(root: dir, entry: a.String("{}.zen", name).try().view(), base: base)),
+                    false => Ok(Case(
+                        root: dir,
+                        entry: a.String("{}.zen", name).try().view(),
+                        base: base
+                    )),
                 }),
             })
         },
@@ -400,14 +775,16 @@ case_of = (a: Alloc, expected: str) Res<Res<Case>, AllocError> {
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();
     (env.argv.len < 3).then(() {
-        println("usage: native-corpus <zen> <target> [filter] [shard] [shards] [runs]");
+        println(
+            "usage: native-corpus <zen> <target> [filter] [shard] [shards] [runs]"
+        );
     });
-    zen = env.argv.get(1).value_or("./zen");
+    zen         = env.argv.get(1).value_or("./zen");
     target_name = env.argv.get(2).value_or("x86_64-linux");
-    filter = env.argv.get(3).value_or("");
-    shard = env.argv.get(4).value_or("0").parse_usize().value_or(0);
-    shards = env.argv.get(5).value_or("1").parse_usize().value_or(1);
-    runs = env.argv.get(6).value_or("1").parse_usize().value_or(1);
+    filter      = env.argv.get(3).value_or("");
+    shard       = env.argv.get(4).value_or("0").parse_usize().value_or(0);
+    shards      = env.argv.get(5).value_or("1").parse_usize().value_or(1);
+    runs        = env.argv.get(6).value_or("1").parse_usize().value_or(1);
     uname ::= a.Vec<str>();
     uname.add("uname").try();
     uname.add("-m").try();
@@ -415,12 +792,14 @@ main = (env: Env) Res<i32, AllocError> {
         Ok(out) => out.out.view().trim().value_or(""),
         Err(_)  => "",
     });
-    arch = host_arch.eq("arm64").match({ true => "aarch64", false => host_arch });
-    target = target_of(target_name, arch).match({
+    arch      = host_arch.eq(
+        "arm64"
+    ).match({ true => "aarch64", false => host_arch });
+    target    = target_of(target_name, arch).match({
         Ok(t) => t,
         None  => Target(arch: "", os: "", cross: "", runner: ""),
     });
-    work = a.String("build/native-corpus/{}-{}", target_name, shard).try();
+    work      = a.String("build/native-corpus/{}-{}", target_name, shard).try();
     mkdir ::= a.Vec<str>();
     // What an earlier run of this target and shard left is stale.
     ["/bin/sh", "-c", a.String("rm -rf '{}' && mkdir -p '{}'", work.view(), work.view()).try().view()].loop((w) { mkdir.add(w).try(); });
@@ -435,17 +814,44 @@ main = (env: Env) Res<i32, AllocError> {
     });
     find ::= a.Vec<str>();
     ["find", "tests/corpus", "-name", "*.expected"].loop((w) { find.add(w).try(); });
-    listed = env.proc.run_argv(a, "", find).match({ Ok(out) => out.out.view(), Err(_) => "" });
+    listed = env.proc.run_argv(
+        a,
+        "",
+        find
+    ).match({ Ok(out) => out.out.view(), Err(_) => "" });
     paths ::= a.Vec<str>();
     listed.split('\n').loop((line) {
         wanted = filter.split(',').find((part) { line.contains(part) }).match({ Ok(_) => true, None => false });
-        (!line.is_empty() && wanted).then(() { paths.add(line).try(); });
+        (!line.is_empty() && wanted && !shadowed(env, a, line)).then(() { paths.add(line).try(); });
     });
     keep_flag = env.var("KEEP_ARTIFACTS").value_or("");
-    required = listed_tests(a, env.fs.read(a, "tests/native/required.txt").match({ Ok(s) => s.view(), Err(_) => "" })).try();
-    runner = Runner(env: env, a: a, zen: zen, target_name: target_name, target: target, work: work.view(), sdk: sdk,
-                    keep_all: !keep_flag.eq("") && !keep_flag.eq("0"), runs: runs.max_one());
-    tally ::= Tally();
+    required  = listed_tests(
+        a,
+        env.fs.read(
+            a,
+            "tests/native/required.txt"
+        ).match({ Ok(s) => s.view(), Err(_) => "" })
+    ).try();
+    known     = known_failures(
+        a,
+        env.fs.read(
+            a,
+            "tests/native/jit-known-failures.txt"
+        ).match({ Ok(s) => s.view(), Err(_) => "" })
+    ).try();
+    runner    = Runner(
+        env: env,
+        a: a,
+        zen: zen,
+        target_name: target_name,
+        target: target,
+        work: work.view(),
+        sdk: sdk,
+        keep_all: !keep_flag.eq("") && !keep_flag.eq("0"),
+        runs: runs.max_one(),
+        known: known
+    );
+    tally  ::= Tally();
     missed ::= a.Vec<str>();
     paths.loop((h, i, path) {
         (i % shards == shard).then(() {
@@ -455,12 +861,32 @@ main = (env: Env) Res<i32, AllocError> {
             });
         });
     });
-    total = tally.pass + tally.fail + tally.flaky + tally.unsupported + tally.broken;
+    // An entry for a test the corpus no longer has is stale.
+    stale ::= a.Vec<str>();
+    (runner.jit() && shard == 0 && filter.is_empty()).then(() {
+        bases ::= a.Vec<str>();
+        paths.loop(
+            (path) { case_of(a, path).try().when_ok((c) { bases.add(c.base).try(); }); }
+        );
+        known.loop((entry) {
+            entry.split_once('\t').when_ok((pair) {
+                (!named(bases, pair.before)).then(() { stale.add(pair.before).try(); });
+            });
+        });
+    });
+    stale.loop((base) {
+        println(
+            "FAIL {} :: listed in tests/native/jit-known-failures.txt but not in the corpus",
+            base
+        );
+    });
+    total = tally.pass + tally.fail + tally.known + tally.flaky + tally.unsupported + tally.broken;
     println(
-        "native-corpus {}: {} pass, {} fail, {} flaky, {} unsupported, {} broken of {} ({} runs each)",
+        "native-corpus {}: {} pass, {} fail, {} known, {} flaky, {} unsupported, {} broken of {} ({} runs each)",
         target_name,
         tally.pass,
         tally.fail,
+        tally.known,
         tally.flaky,
         tally.unsupported,
         tally.broken,
@@ -472,24 +898,48 @@ main = (env: Env) Res<i32, AllocError> {
     ["rmdir", work.view()].loop((w) { tidy.add(w).try(); });
     env.proc.run_argv(a, "", tidy).match({
         Ok(out) => (out.code != 0).then(() {
-            println("native-corpus: each test that did not pass is kept under {}/<test>/ (command.sh, stdout, stderr)", work.view());
+            println(
+                "native-corpus: each test that did not pass is kept under {}/<test>/ (command.sh, stdout, stderr)",
+                work.view()
+            );
         }),
         Err(_)  => (),
     });
     missed.loop((base) {
-        println("REQUIRED {} did not pass on {} (tests/native/required.txt)", base, target_name);
+        println(
+            "REQUIRED {} did not pass on {} (tests/native/required.txt)",
+            base,
+            target_name
+        );
     });
     (missed.len > 0).then(() {
-        println("native-corpus {}: {} required test(s) did not pass", target_name, missed.len);
+        println(
+            "native-corpus {}: {} required test(s) did not pass",
+            target_name,
+            missed.len
+        );
     });
-    Ok((missed.len > 0).match({ true => 1, false => 0 }))
+    // The jit refuses only what `refused_by_jit` documents, so on it every
+    // other verdict than PASS or UNSUPPORTED fails the target.
+    unpassed = tally.fail + tally.flaky + tally.broken + stale.len;
+    strict   = runner.jit() && unpassed > 0;
+    strict.then(() {
+        println(
+            "native-corpus {}: {} test(s) failed, were flaky or broke",
+            target_name,
+            unpassed
+        );
+    });
+    Ok((missed.len > 0 || strict).match({ true => 1, false => 0 }))
 }
 
 // Test bases listed one per line, ignoring `#` comments and blank lines.
 listed_tests = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
     names ::= a.Vec<str>();
     text.split('\n').loop((line) {
-        entry = line.split_once('#').match({ Ok(pair) => pair.before, None => line });
+        entry = line.split_once(
+            '#'
+        ).match({ Ok(pair) => pair.before, None => line });
         entry.trim().when_ok((word) { names.add(word).try(); });
     });
     Ok(names)
@@ -499,4 +949,29 @@ named = (names: Vec<str>, base: str) bool {
     found ::= false;
     names.loop((h, i, n) { n.eq(base).then(() { found = true; h.break(); }); });
     found
+}
+
+// tests/native/jit-known-failures.txt: `base<TAB>first error line` per
+// line; a line starting with `#` is a comment.
+known_failures = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
+    entries ::= a.Vec<str>();
+    text.split('\n').loop((line) {
+        (!line.is_empty() && !line.starts_with("#")).then(() { entries.add(line).try(); });
+    });
+    Ok(entries)
+}
+
+known_reason = (entries: Vec<str>, base: str) Res<str> {
+    found :: Res<str> = None;
+    entries.loop((h, i, entry) {
+        entry.split_once('\t').when_ok((pair) {
+            pair.before.eq(base).then(() { found = Ok(pair.after); h.break(); });
+        });
+    });
+    found
+}
+
+// The first line of a run's output that reports an error.
+error_line = (out: str) Res<str> {
+    out.split('\n').find((line) { line.contains("error: ") })
 }

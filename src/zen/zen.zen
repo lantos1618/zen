@@ -111,7 +111,8 @@ build_cli = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
                 ffi: job.ffi,
                 repeat: job.repeat,
                 permute: job.permute,
-                target: job.target
+                target: job.target,
+                run_args: job.run_args
             )
         ),
     })

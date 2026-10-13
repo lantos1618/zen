@@ -11,13 +11,13 @@
 //
 // Tables are written little-endian, the byte order of every target this
 // layer renders.
-{ Alloc, AllocError } = std.mem
+{ Alloc, AllocError, Mem } = std.mem
 { Vec } = std.collections
 { String, str } = std.text
 { Res, Ok, None, loop, Range } = std.core
-{ Program, Func, BasicBlock, Instruction, Terminator, Scalar, Op } = gen.gen_ir
+{ Program, Func, BasicBlock, Instruction, Terminator, Scalar, Op, Guards } = gen.gen_ir
 { Const, Move, Unary, Binary, Invocation, Print, Convert, Address, Load, Store } = gen.gen_ir
-{ same } = gen.gen_ir
+{ same, FloatFormat } = gen.gen_ir
 { CopyMem, StaticBytes, Write, SysCall, Start, Pages, SysValue, Branch } = gen.gen_ir
 { width, word } = gen.gen_ir
 { Update, Compare, CodeRef, IndirectCall, HostCall } = gen.gen_ir
@@ -29,25 +29,86 @@
 // Callees with at most this many instructions are inlined.
 INLINE_LIMIT: usize = 48
 
-prepare* = (alloc: Alloc, program: Program) Res<Program, AllocError> {
+// Where prepared functions live, and where each one's scratch arena comes
+// from.
+Arenas* = { alloc*: Alloc, mem*: Mem }
+
+prepare* = (arenas: Arenas, program: Program) Res<Program, AllocError> {
+    // Each function's passes run in an arena of their own: only the result
+    // is kept, so preparing never holds more than one function's
+    // intermediate copies.
+    alloc = arenas.alloc;
     tabled ::= alloc.Vec<Func>();
     program.functions.loop((function) {
-        simple = simplify(alloc, reachable_only(alloc, function).try()).try();
-        tabled.add(tables(alloc, simple).try()).try();
+        scratch ::= arenas.mem.alloc();
+        simple = simplify(
+            scratch,
+            reachable_only(scratch, function).try()
+        ).try();
+        tabled.add(kept(alloc, tables(scratch, simple).try()).try()).try();
     });
     inlined ::= alloc.Vec<Func>();
     tabled.loop((h, i, _) {
+        scratch ::= arenas.mem.alloc();
+        inline = inline_calls(scratch, tabled, i, program.entry).try();
         inlined.add(
-            ordered(
+            kept(
                 alloc,
-                scalars(
-                    alloc,
-                    inline_calls(alloc, tabled, i, program.entry).try()
-                ).try()
+                ordered(scratch, scalars(scratch, inline).try()).try()
             ).try()
         ).try();
     });
     Ok(Program(functions: inlined, entry: program.entry))
+}
+
+// `function` with everything it refers to copied into `alloc`, so the arena
+// its passes ran in can be released.
+kept = (alloc: Alloc, function: Func) Res<Func, AllocError> {
+    blocks ::= alloc.Vec<BasicBlock>();
+    function.blocks.loop((block) {
+        code ::= alloc.Vec<Instruction>();
+        block.code.loop((instruction) {
+            code.add(instruction.match({
+                Bytes(v) => {
+                    bytes ::= alloc.String().try();
+                    bytes.add(v.bytes).try();
+                    Instruction.Bytes(StaticBytes(
+                        out: v.out,
+                        bytes: bytes.view()
+                    ))
+                },
+                _        => shift(alloc, instruction, 0).try(),
+            })).try();
+        });
+        blocks.add(BasicBlock(code: code, exit: block.exit)).try();
+    });
+    guards ::= function.guards;
+    function.guards.when_ok((g) {
+        guards = Ok(Guards(
+            tests: copied(alloc, g.tests).try(),
+            reads: copied(alloc, g.reads).try()
+        ));
+    });
+    locals ::= function.locals;
+    function.locals.when_ok(
+        (names) { locals = Ok(copied(alloc, names).try()); }
+    );
+    Ok(Func(
+        name: function.name,
+        parameters: function.parameters,
+        slots: copied(alloc, function.slots).try(),
+        blocks: blocks,
+        result: function.result,
+        guards: guards,
+        symbol: function.symbol,
+        locals: locals
+    ))
+}
+
+copied = <T>(alloc: Alloc, items: Vec<T>) Res<Vec<T>, AllocError> {
+    out ::= alloc.Vec<T>();
+    out.add_all(items.ptr(), items.len).try();
+    Ok(out)
 }
 
 // Aggregates that never escape become one word slot per field. A frame
@@ -1070,128 +1131,144 @@ shift = (
     base        : usize
 ) Res<Instruction, AllocError> {
     Ok(instruction.match({
-        Constant(v)     => Instruction.Constant(Const(
+        Constant(v)      => Instruction.Constant(Const(
             out: base + v.out,
             value: v.value
         )),
-        Copy(v)         => Instruction.Copy(Move(
+        Copy(v)          => Instruction.Copy(Move(
             out: base + v.out,
             source: base + v.source
         )),
-        UnaryValue(v)   => Instruction.UnaryValue(Unary(
+        UnaryValue(v)    => Instruction.UnaryValue(Unary(
             out: base + v.out,
             input: base + v.input,
             op: v.op,
             span: v.span
         )),
-        BinaryValue(v)  => Instruction.BinaryValue(Binary(
+        BinaryValue(v)   => Instruction.BinaryValue(Binary(
             out: base + v.out,
             left: base + v.left,
             right: base + v.right,
             op: v.op,
             span: v.span
         )),
-        Invoke(call)    => Instruction.Invoke(Invocation(
+        Invoke(call)     => Instruction.Invoke(Invocation(
             out: base + call.out,
             function: call.function,
             args: moved(alloc, call.args, base).try()
         )),
-        PrintValue(v)   => Instruction.PrintValue(Print(
+        PrintValue(v)    => Instruction.PrintValue(Print(
             value: base + v.value,
             ty: v.ty,
             stream: v.stream
         )),
-        Text(t)         => Instruction.Text(t),
-        Cast(v)         => Instruction.Cast(Convert(
+        Text(t)          => Instruction.Text(t),
+        Cast(v)          => Instruction.Cast(Convert(
             out: base + v.out,
             input: base + v.input
         )),
-        AddressOf(v)    => Instruction.AddressOf(Address(
+        AddressOf(v)     => Instruction.AddressOf(Address(
             out: base + v.out,
             slot: base + v.slot
         )),
-        LoadValue(v)    => Instruction.LoadValue(Load(
+        LoadValue(v)     => Instruction.LoadValue(Load(
             out: base + v.out,
             base: base + v.base,
             offset: v.offset
         )),
-        StoreValue(v)   => Instruction.StoreValue(Store(
+        StoreValue(v)    => Instruction.StoreValue(Store(
             base: base + v.base,
             offset: v.offset,
             value: base + v.value
         )),
-        CopyBytes(v)    => Instruction.CopyBytes(CopyMem(
+        CopyBytes(v)     => Instruction.CopyBytes(CopyMem(
             dest: base + v.dest,
             source: base + v.source,
             bytes: base + v.bytes
         )),
-        Bytes(v)        => Instruction.Bytes(StaticBytes(
+        Bytes(v)         => Instruction.Bytes(StaticBytes(
             out: base + v.out,
             bytes: v.bytes
         )),
-        WriteOut(v)     => Instruction.WriteOut(Write(
+        WriteOut(v)      => Instruction.WriteOut(Write(
             data: base + v.data,
             len: base + v.len,
             stream: v.stream
         )),
-        System(call)    => Instruction.System(SysCall(
+        System(call)     => Instruction.System(SysCall(
             out: base + call.out,
             call: call.call,
             args: moved(alloc, call.args, base).try()
         )),
-        Startup(v)      => Instruction.Startup(Start(
+        Startup(v)       => Instruction.Startup(Start(
             out: base + v.out,
             value: v.value
         )),
-        MapPages(v)     => Instruction.MapPages(Pages(
+        MapPages(v)      => Instruction.MapPages(Pages(
             out: base + v.out,
             bytes: base + v.bytes
         )),
-        UnmapPages(v)   => Instruction.UnmapPages(base + v),
-        SysConst(v)     => Instruction.SysConst(SysValue(
+        UnmapPages(v)    => Instruction.UnmapPages(base + v),
+        SysConst(v)      => Instruction.SysConst(SysValue(
             out: base + v.out,
             name: v.name
         )),
-        Flush           => Instruction.Flush,
-        AtomicLoad(v)   => Instruction.AtomicLoad(Load(
+        Flush            => Instruction.Flush,
+        FormatFloat(v)   => Instruction.FormatFloat(FloatFormat(
+            out: base + v.out,
+            dest: base + v.dest,
+            value: base + v.value
+        )),
+        VolatileLoad(v)  => Instruction.VolatileLoad(Load(
             out: base + v.out,
             base: base + v.base,
             offset: v.offset
         )),
-        AtomicStore(v)  => Instruction.AtomicStore(Store(
+        VolatileStore(v) => Instruction.VolatileStore(Store(
             base: base + v.base,
             offset: v.offset,
             value: base + v.value
         )),
-        AtomicUpdate(v) => Instruction.AtomicUpdate(Update(
+        Barrier          => Instruction.Barrier,
+        AtomicLoad(v)    => Instruction.AtomicLoad(Load(
+            out: base + v.out,
+            base: base + v.base,
+            offset: v.offset
+        )),
+        AtomicStore(v)   => Instruction.AtomicStore(Store(
+            base: base + v.base,
+            offset: v.offset,
+            value: base + v.value
+        )),
+        AtomicUpdate(v)  => Instruction.AtomicUpdate(Update(
             out: base + v.out,
             base: base + v.base,
             value: base + v.value,
             op: v.op
         )),
-        CompareSwap(v)  => Instruction.CompareSwap(Compare(
+        CompareSwap(v)   => Instruction.CompareSwap(Compare(
             out: base + v.out,
             base: base + v.base,
             expected: base + v.expected,
             desired: base + v.desired
         )),
-        CodeAddress(v)  => Instruction.CodeAddress(CodeRef(
+        CodeAddress(v)   => Instruction.CodeAddress(CodeRef(
             out: base + v.out,
             function: v.function
         )),
-        InvokeAt(c)     => Instruction.InvokeAt(IndirectCall(
+        InvokeAt(c)      => Instruction.InvokeAt(IndirectCall(
             out: base + c.out,
             target: base + c.target,
             args: moved(alloc, c.args, base).try()
         )),
-        Machine(c)      => Instruction.Machine(MachineCall(
+        Machine(c)       => Instruction.Machine(MachineCall(
             op: c.op,
             word: c.word,
             outs: moved(alloc, c.outs, base).try(),
             args: moved(alloc, c.args, base).try(),
             span: c.span
         )),
-        Host(c)         => Instruction.Host(HostCall(
+        Host(c)          => Instruction.Host(HostCall(
             out: base + c.out,
             object: c.object,
             member: c.member,
@@ -1201,7 +1278,7 @@ shift = (
             marshal: c.marshal,
             result: c.result
         )),
-        Wait(v)         => Instruction.Wait(base + v),
+        Wait(v)          => Instruction.Wait(base + v),
     }))
 }
 

@@ -1,0 +1,1051 @@
+// The interpreter's form of a function: the IR decoded once into one flat
+// run of operations whose operands are byte offsets into the frame, whose
+// jumps are operation indices, and whose kind already says the width and
+// signedness, so running one does no lookup, copy or type dispatch. What
+// is rare or carries a payload (system calls, printing, startup values,
+// atomics) stays an IR instruction behind `Slow`.
+
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, None, Range } = std.core
+{ reads, written, exit_read, NONE } = gen.gen_asm_flow
+{ pointer_at } = std.sys
+{ Func, Scalar, Instruction, Terminator, Op, Fault, Binary, width, signed, integer, float, same } = gen.gen_ir
+
+Kind* = { ConstWord
+    | CopyWord
+    | CopyBlock
+    | AddressOf
+    | Load
+    | Store
+    | AddSigned
+    | SubSigned
+    | MulSigned
+    | AddUnsigned
+    | SubUnsigned
+    | MulUnsigned
+    | DivUnsigned
+    | RemUnsigned
+    | Cast
+    | CompareSigned
+    | CompareUnsigned
+    | Bits
+    | Call
+    | Jump
+    | Branch
+    | Return
+    | Trap
+    | Slow }
+
+// `a`, `b` and `c` are cell offsets (or operation indices for jumps); `n`
+// is a constant, a size, a function number or a side-table index; `w` is
+// a width in bytes or an operator code; `ty` is the result's class.
+// `slow` indexes the instruction itself in `Code.slow`, which a fast step
+// falls back to when its fast path cannot finish (an overflow trap).
+Step* = { kind*: Kind, a*: usize, b*: usize, c*: usize, n*: u64, w*: usize, ty*: Scalar, slow* :: usize = 0, index* :: usize = 0 }
+
+Code* = {
+    steps* :: Vec<Step>,
+    // Argument cell offsets of every `Call`, `n` of them from `b`.
+    args* :: Vec<usize>,
+    // The instructions `Slow` steps run, and the faults `Trap` reports.
+    slow* :: Vec<Instruction>,
+    faults* :: Vec<Fault>,
+    // Parameter cell offsets and sizes, for the caller's argument copies.
+    params* :: Vec<usize>,
+    sizes* :: Vec<usize>,
+    // (offset, bits) pairs of the slots `decode` fills once per call.
+    consts* :: Vec<u64>,
+}
+
+// Comparison operators as `w` codes.
+operator* = (op: Op) usize {
+    op.match({
+        Equal => 0, NotEqual => 1, Less => 2, LessEqual => 3, Greater => 4,
+        GreaterEqual => 5, WrapAdd => 6, WrapSub => 7, WrapMul => 8, And => 9,
+        Or => 10, Xor => 11, Shl => 12, Shr => 13, Rotr => 14, _ => 15,
+    })
+}
+
+decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
+           scratch : usize)
+          Res<Code, AllocError> {
+    code ::= Code(
+        steps: a.Vec<Step>(),
+        args: a.Vec<usize>(),
+        slow: a.Vec<Instruction>(),
+        faults: a.Vec<Fault>(),
+        params: a.Vec<usize>(),
+        sizes: a.Vec<usize>(),
+        consts: a.Vec<u64>()
+    );
+    Range(0, f.parameters).loop((i) {
+        code.params.add(cell_of(offsets, base, i)).try();
+        code.sizes.add(
+            class_of(f, i).match({ Unit => 0, Block(l) => l.size, _ => 8 })
+        ).try();
+    });
+    // Slots only ever set to one constant are filled once per call, from
+    // the image after the parameter pairs, instead of by a step each time.
+    sets  ::= a.Vec<usize>();
+    value ::= a.Vec<i64>();
+    fixed ::= a.Vec<bool>();
+    Range(0, f.slots.len).loop((i) {
+        sets.add(0).try();
+        value.add(0).try();
+        fixed.add(i >= f.parameters && !same(
+            class_of(f, i),
+            Scalar.U128
+        )).try();
+    });
+    f.blocks.loop((block) {
+        block.code.loop((instruction) {
+            instruction.match({
+                Constant(v)  => {
+                    (sets.get(v.out).value_or(0) > 0 && value.get(v.out).value_or(0) != v.value).then(() { fixed.set(v.out, false); });
+                    sets.set(v.out, sets.get(v.out).value_or(0) + 1);
+                    value.set(v.out, v.value);
+                },
+                AddressOf(v) => { fixed.set(v.slot, false); fixed.set(v.out, false); },
+                _            => written(instruction).match({
+                    Ok(slot) => { fixed.set(slot, false); },
+                    None     => (),
+                }),
+            });
+        });
+    });
+    Range(0, f.slots.len).loop((i) {
+        (fixed.get(i).value_or(false) && sets.get(i).value_or(0) > 0
+            && !same(class_of(f, i), Scalar.U128)).match({
+            true  => {
+                code.consts.add(cell_of(offsets, base, i).to_u64()).try();
+                code.consts.add(bits_of(
+                    scratch,
+                    value.get(i).value_or(0)
+                )).try();
+            },
+            false => (),
+        });
+    });
+    // Per slot: its reads, whether its address is taken, and whether every
+    // write is a comparison, so it holds 0 or 1.
+    seen   ::= a.Vec<usize>();
+    uses   ::= a.Vec<usize>();
+    taken  ::= a.Vec<bool>();
+    truthy ::= a.Vec<bool>();
+    Range(0, f.slots.len).loop((i) {
+        uses.add(0).try();
+        taken.add(false).try();
+        truthy.add(i >= f.parameters).try();
+    });
+    f.blocks.loop((block) {
+        block.code.loop((instruction) {
+            reads(instruction, seen).try();
+            instruction.match({
+                AddressOf(v)   => { taken.set(v.slot, true); truthy.set(v.slot, false); },
+                BinaryValue(v) => { truthy.set(
+                    v.out,
+                    truthy.get(v.out).value_or(false) && comparison(v.op)
+                ); },
+                _              => written(instruction).match({
+                    Ok(slot) => { truthy.set(slot, false); },
+                    None     => (),
+                }),
+            });
+        });
+        exit_read(block.exit).match({ Ok(slot) => { seen.add(slot).try(); }, None => () });
+    });
+    seen.loop((slot) { uses.set(slot, uses.get(slot).value_or(0) + 1); });
+    facts = Facts(
+        fixed: fixed,
+        sets: sets,
+        value: value,
+        uses: uses,
+        taken: taken,
+        truthy: truthy
+    );
+    // Each block's first step, then jumps patched from block numbers.
+    starts ::= a.Vec<usize>();
+    f.blocks.loop((h, number, block) {
+        starts.add(code.steps.len).try();
+        ending = landed(f, block.exit);
+        fold   :: Res<Fold> = None;
+        scale  :: Res<Scale> = None;
+        skip   :: bool = false;
+        test   :: Res<Test> = None;
+        result :: Res<usize> = None;
+        block.code.loop((h2, k, instruction) {
+            next = block.code.get(k + 1);
+            last = !skip && k + 1 == block.code.len;
+            scaling   :: Res<Scale> = skip.match({ true => None, false => scaled(
+                f,
+                facts,
+                instruction,
+                next,
+                block.code.get(k + 2)
+            ) });
+            folding   :: Res<Fold> = skip.match({ true => None, false => fold_add(
+                f,
+                facts,
+                instruction,
+                next,
+                scale
+            ) });
+            target    :: Res<usize> = skip.match({ true => None, false => forwarded(
+                f,
+                facts,
+                instruction,
+                next
+            ) });
+            testing   :: Res<Test> = last.match({ true => bool_test(
+                facts,
+                instruction,
+                ending
+            ), false => None });
+            returning :: Res<usize> = last.match({ true => returned_copy(
+                f,
+                facts,
+                instruction,
+                ending
+            ), false => None });
+            pinned     = skip || instruction.match({
+                Constant(v) => fixed.get(v.out).value_or(false),
+                _           => false,
+            }) || folding.match({ Ok(_) => true, None => false })
+               || scaling.match({ Ok(_) => true, None => false })
+               || testing.match({ Ok(_) => true, None => false })
+               || returning.match({ Ok(_) => true, None => false });
+            shift      = fold.match({ Ok(d) => d.by, None => 0 });
+            step: Step = instruction.match({
+                Constant(v)    => same(class_of(f, v.out), Scalar.U128).match({
+                    true => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                    false => float(class_of(f, v.out)).match({
+                    true  => Step(
+                        kind: Kind.ConstWord,
+                        a: cell_of(offsets, base, v.out),
+                        b: 0,
+                        c: 0,
+                        n: bits_of(scratch, v.value),
+                        w: 8,
+                        ty: class_of(f, v.out)
+                    ),
+                    false => Step(
+                        kind: Kind.ConstWord,
+                        a: cell_of(offsets, base, v.out),
+                        b: 0,
+                        c: 0,
+                        n: bits_of(scratch, v.value),
+                        w: 8,
+                        ty: class_of(f, v.out)
+                    ),
+                }) }),
+                Copy(v)        => class_of(f, v.out).match({
+                    U128     => Step(
+                        kind: Kind.CopyBlock,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.source),
+                        c: 0,
+                        n: 16,
+                        w: 0,
+                        ty: Scalar.U128
+                    ),
+                    Block(l) => Step(
+                        kind: Kind.CopyBlock,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.source),
+                        c: 0,
+                        n: l.size.to_u64(),
+                        w: 0,
+                        ty: class_of(f, v.out)
+                    ),
+                    Unit     => Step(
+                        kind: Kind.CopyBlock,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.source),
+                        c: 0,
+                        n: 0,
+                        w: 0,
+                        ty: Scalar.Unit
+                    ),
+                    _        => Step(
+                        kind: Kind.CopyWord,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.source),
+                        c: 0,
+                        n: 0,
+                        w: 8,
+                        ty: class_of(f, v.out)
+                    ),
+                }),
+                LoadValue(v)   => same(class_of(f, v.out), Scalar.U128).match({
+                    true => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                    false => Step(
+                        kind: Kind.Load,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(
+                            offsets,
+                            base,
+                            fold.match({ Ok(d) => d.base, None => v.base })
+                        ),
+                        c: v.offset + shift,
+                        n: fold.match({ Ok(d) => d.scale.to_u64(), None => 0 }),
+                        w: moved(class_of(f, v.out)),
+                        ty: class_of(f, v.out),
+                        index: indexed_cell(offsets, base, fold)
+                    ) }),
+                StoreValue(v)  => same(
+                    class_of(f, v.value),
+                    Scalar.U128
+                ).match({
+                    true => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                    false => Step(
+                        kind: Kind.Store,
+                        a: cell_of(
+                            offsets,
+                            base,
+                            fold.match({ Ok(d) => d.base, None => v.base })
+                        ),
+                        b: cell_of(offsets, base, v.value),
+                        c: v.offset + shift,
+                        n: fold.match({ Ok(d) => d.scale.to_u64(), None => 0 }),
+                        w: moved(class_of(f, v.value)),
+                        ty: class_of(f, v.value),
+                        index: indexed_cell(offsets, base, fold)
+                    ) }),
+                AddressOf(v)   => Step(
+                    kind: Kind.AddressOf,
+                    a: cell_of(offsets, base, v.out),
+                    b: cell_of(offsets, base, v.slot),
+                    c: 0,
+                    n: 0,
+                    w: 8,
+                    ty: Scalar.Ptr
+                ),
+                BinaryValue(v) => arithmetic(v.op, class_of(f, v.left)).match({
+                    Ok(kind) => { code.slow.add(retold(instruction, target)).try(); Step(kind: kind, a: cell_of(offsets, base, target.value_or(v.out)), b: cell_of(offsets, base, v.left), c: cell_of(offsets, base, v.right), n: 0, slow: code.slow.len - 1, w: kind.match({
+                        CompareSigned => operator(v.op), CompareUnsigned => operator(v.op), Bits => operator(v.op), _ => width(class_of(f, v.left)),
+                    }), ty: class_of(f, v.out)) },
+                    None     => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                }),
+                Invoke(v)      => {
+                    first = code.args.len;
+                    v.args.loop(
+                        (slot) { code.args.add(cell_of(
+                            offsets,
+                            base,
+                            slot
+                        )).try(); }
+                    );
+                    Step(
+                        kind: Kind.Call,
+                        a: cell_of(offsets, base, v.out),
+                        b: first,
+                        c: v.args.len,
+                        n: v.function.to_u64(),
+                        w: 0,
+                        ty: class_of(f, v.out)
+                    )
+                },
+                Cast(v)        => (wordish(class_of(f, v.input)) && wordish(class_of(f, v.out))).match({
+                    true  => Step(
+                        kind: Kind.Cast,
+                        a: cell_of(offsets, base, v.out),
+                        b: cell_of(offsets, base, v.input),
+                        c: 0,
+                        n: 0,
+                        w: 8,
+                        ty: class_of(f, v.out)
+                    ),
+                    false => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+                }),
+                _              => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+            });
+            pinned.match({ true => (), false => { code.steps.add(
+                step
+            ).try(); } });
+            fold  = folding;
+            scale = scaling;
+            skip  = target.match({ Ok(_) => true, None => false });
+            testing.match({ Ok(t) => { test = Ok(t); }, None => () });
+            returning.match({ Ok(r) => { result = Ok(r); }, None => () });
+        });
+        swap       = test.match({ Ok(t) => t.swap, None => false });
+        exit: Step = ending.match({
+            Return(slot)   => Step(
+                kind: Kind.Return,
+                a: cell_of(offsets, base, result.value_or(slot)),
+                b: 0,
+                c: 0,
+                n: 0,
+                w: 0,
+                ty: f.result
+            ),
+            Jump(to)       => Step(
+                kind: Kind.Jump,
+                a: to,
+                b: 0,
+                c: 0,
+                n: 0,
+                w: 0,
+                ty: Scalar.Unit
+            ),
+            Branch(branch) => Step(
+                kind: Kind.Branch,
+                a: cell_of(
+                    offsets,
+                    base,
+                    test.match({ Ok(t) => t.flag, None => branch.value })
+                ),
+                b: swap.match({ true => branch.no, false => branch.yes }),
+                c: swap.match({ true => branch.yes, false => branch.no }),
+                n: 0,
+                w: 0,
+                ty: Scalar.Unit
+            ),
+            Trap(fault)    => { code.faults.add(fault).try(); Step(kind: Kind.Trap, a: 0, b: 0, c: 0, n: (code.faults.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
+        });
+        // A jump to the next block falls through instead.
+        ending.match({ Jump(to) => to == number + 1, _ => false }).match({
+            true  => (),
+            false => { code.steps.add(exit).try(); },
+        });
+    });
+    // Block numbers become step indices.
+    Range(0, code.steps.len).loop((i) {
+        s = code.steps.get(i).value_or(Step(kind: Kind.Jump, a: 0, b: 0, c: 0, n: 0, w: 0, ty: Scalar.Unit));
+        s.kind.match({
+            Jump   => code.steps.set(
+                i,
+                Step(
+                    kind: s.kind,
+                    a: starts.get(s.a).value_or(0),
+                    b: 0,
+                    c: 0,
+                    n: 0,
+                    w: 0,
+                    ty: s.ty
+                )
+            ),
+            Branch => code.steps.set(
+                i,
+                Step(
+                    kind: s.kind,
+                    a: s.a,
+                    b: starts.get(s.b).value_or(0),
+                    c: starts.get(s.c).value_or(0),
+                    n: 0,
+                    w: 0,
+                    ty: s.ty
+                )
+            ),
+            _      => (),
+        });
+    });
+    // Jumps and branches go straight to where they end up: through jumps,
+    // and through a branch on the same cell, which goes the same way; a
+    // jump to a return returns.
+    Range(0, code.steps.len).loop((i) {
+        s = step_at(code, i);
+        s.kind.match({
+            Jump   => {
+                to     = through(code, s.a, NONE, true);
+                landed = step_at(code, to);
+                code.steps.set(i, landed.kind.match({
+                    Return => landed,
+                    _      => Step(
+                        kind: Kind.Jump,
+                        a: to,
+                        b: 0,
+                        c: 0,
+                        n: 0,
+                        w: 0,
+                        ty: s.ty
+                    ),
+                }));
+            },
+            Branch => code.steps.set(
+                i,
+                Step(
+                    kind: Kind.Branch,
+                    a: s.a,
+                    b: through(code, s.b, s.a, true),
+                    c: through(code, s.c, s.a, false),
+                    n: 0,
+                    w: 0,
+                    ty: s.ty
+                )
+            ),
+            _      => (),
+        });
+    });
+    Ok(code)
+}
+
+// A jump to an empty block that returns, returns.
+landed = (f: Func, exit: Terminator) Terminator {
+    exit.match({
+        Jump(to) => f.blocks.get(to).match({
+            Ok(b) => (b.code.len == 0 && b.exit.match({ Return(_) => true, _ => false })).match({
+                true  => b.exit,
+                false => exit,
+            }),
+            None  => exit,
+        }),
+        _        => exit,
+    })
+}
+
+// What `decode` knows of each slot: the constant image (`fixed`, `sets`,
+// `value`), reads, address taking, and whether it only holds a comparison.
+Facts = { fixed: Vec<bool>, sets: Vec<usize>, value: Vec<i64>, uses: Vec<usize>, taken: Vec<bool>, truthy: Vec<bool> }
+
+// A load or store's base and offset after folding the add before it.
+// `index` is a slot plus one whose value is added too, or 0.
+// `scale` multiplies the index.
+Fold = { base: usize, by: usize, index: usize, scale: usize }
+
+// `out = index * by` read only by the add folded into the next step.
+Scale = { out: usize, index: usize, by: usize }
+
+// A branch on a comparison's 0 or 1 instead of on `flag == constant`.
+Test = { flag: usize, swap: bool }
+
+comparison = (op: Op) bool {
+    op.match({ Equal => true, NotEqual => true, Less => true, LessEqual => true, Greater => true, GreaterEqual => true, _ => false })
+}
+
+// The value of a slot the constant image fills.
+pinned_value = (facts: Facts, slot: usize) Res<i64> {
+    (facts.fixed.get(slot).value_or(false) && facts.sets.get(slot).value_or(0) > 0).match({
+        true  => Ok(facts.value.get(slot).value_or(0)),
+        false => None,
+    })
+}
+
+// Read exactly once, and never through its address.
+single = (facts: Facts, slot: usize) bool {
+    facts.uses.get(slot).value_or(0) == 1 && !facts.taken.get(slot).value_or(true)
+}
+
+// `out = base + constant` (a word) read only as the base of the load or
+// store right after it: that step adds the constant to its offset instead.
+fold_add = (
+    f           : Func,
+    facts       : Facts,
+    instruction : Instruction,
+    next        : Res<Instruction>,
+    scale       : Res<Scale>
+) Res<Fold> {
+    instruction.match({
+        BinaryValue(v) => (v.op.match({ WrapAdd => true, _ => false }) && width(class_of(
+            f,
+            v.out
+        )) == 8
+                           && single(facts, v.out) && based_on(next, v.out)).match({
+            false => None,
+            true  => scale.match({
+                Ok(m) => (v.right == m.out).match({
+                    true  => Ok(Fold(
+                        base: v.left,
+                        by: 0,
+                        index: m.index + 1,
+                        scale: m.by
+                    )),
+                    false => Ok(Fold(
+                        base: v.right,
+                        by: 0,
+                        index: m.index + 1,
+                        scale: m.by
+                    )),
+                }),
+                None  => unscaled(f, facts, v, next),
+            }),
+        }),
+        _              => None,
+    })
+}
+
+// `out = index * constant` read only by the add after it, which folds
+// into the indexed load or store after that.
+scaled = (
+    f           : Func,
+    facts       : Facts,
+    instruction : Instruction,
+    next        : Res<Instruction>,
+    after       : Res<Instruction>
+) Res<Scale> {
+    instruction.match({
+        BinaryValue(m) => (m.op.match({ WrapMul => true, _ => false })
+                           && width(class_of(f, m.out)) == 8
+                           && single(facts, m.out)).match({
+            false => None,
+            true  => next.match({
+                Ok(i) => i.match({
+                    BinaryValue(v) => (v.op.match({ WrapAdd => true, _ => false })
+                                       && width(class_of(f, v.out)) == 8
+                                       && single(facts, v.out)
+                                       && (v.left == m.out) != (v.right == m.out)
+                                       && based_on(after, v.out)
+                                       && indexable(f, after)).match({
+                        false => None,
+                        true  => small(pinned_value(facts, m.right)).match({
+                            Ok(by) => Ok(Scale(
+                                out: m.out,
+                                index: m.left,
+                                by: by
+                            )),
+                            None   => small(pinned_value(facts, m.left)).match({
+                                Ok(by) => Ok(Scale(
+                                    out: m.out,
+                                    index: m.right,
+                                    by: by
+                                )),
+                                None   => None,
+                            }),
+                        }),
+                    }),
+                    _              => None,
+                }),
+                None  => None,
+            }),
+        }),
+        _              => None,
+    })
+}
+
+unscaled = (
+    f     : Func,
+    facts : Facts,
+    v     : Binary,
+    next  : Res<Instruction>
+) Res<Fold> {
+            small(pinned_value(facts, v.right)).match({
+                Ok(by) => Ok(Fold(base: v.left, by: by, index: 0, scale: 1)),
+                None   => small(pinned_value(facts, v.left)).match({
+                    Ok(by) => Ok(Fold(
+                        base: v.right,
+                        by: by,
+                        index: 0,
+                        scale: 1
+                    )),
+                    None   => indexable(f, next).match({
+                        true  => Ok(Fold(
+                            base: v.left,
+                            by: 0,
+                            index: v.right + 1,
+                            scale: 1
+                        )),
+                        false => None,
+                    }),
+                }),
+            })
+}
+
+// Whether `next` is a load or store whose width has an indexed step.
+indexable = (f: Func, next: Res<Instruction>) bool {
+    next.match({
+        Ok(i) => i.match({
+            LoadValue(l)  => fast_load(class_of(f, l.out)),
+            StoreValue(s) => moved(class_of(
+                f,
+                s.value
+            )).match({ 8 => true, 1 => true, 4 => true, _ => false }),
+            _             => false,
+        }),
+        None  => false,
+    })
+}
+
+fast_load = (ty: Scalar) bool {
+    moved(ty) == 8 || (moved(ty) == 1 && widening(ty) == 2) || (moved(ty) == 4 && widening(ty) == 6)
+}
+
+// A step's index cell plus one, or 0.
+indexed_cell = (offsets: Vec<usize>, base: usize, fold: Res<Fold>) usize {
+    fold.match({
+        Ok(d) => (d.index == 0).match({ true => 0, false => cell_of(
+            offsets,
+            base,
+            d.index - 1
+        ) + 1 }),
+        None  => 0,
+    })
+}
+
+// The indexed form of a load or store step, its index cell in word 7.
+indexed = (out: usize, index: usize, op: usize) usize {
+    (index == 0).match({
+        true  => op,
+        false => {
+            put(out, 7, index - 1);
+            op.match({ 4 => 53, 47 => 54, 48 => 55, 6 => 56, 49 => 57, _ => 58 })
+        },
+    })
+}
+
+// Whether `next` loads from or stores through `slot` and reads it nowhere else.
+based_on = (next: Res<Instruction>, slot: usize) bool {
+    next.match({
+        Ok(i) => i.match({
+            LoadValue(l)  => l.base == slot,
+            StoreValue(s) => s.base == slot && s.value != slot,
+            _             => false,
+        }),
+        None  => false,
+    })
+}
+
+small = (n: Res<i64>) Res<usize> {
+    n.match({
+        Ok(v) => (v >= 0 && v < 2147483648).match({ true => v.to_usize(), false => None }),
+        None  => None,
+    })
+}
+
+// A block's last instruction `out = flag == k` (or `!=`), with k 0 or 1,
+// read only by the block's branch: the branch tests `flag`, swapped when
+// the test holds for 0.
+bool_test = (
+    facts       : Facts,
+    instruction : Instruction,
+    exit        : Terminator
+) Res<Test> {
+    instruction.match({
+        BinaryValue(v) => (exit.match({ Branch(b) => b.value == v.out, _ => false }) && single(
+            facts,
+            v.out
+        )
+                           && v.op.match({ Equal => true, NotEqual => true, _ => false })).match({
+            false => None,
+            true  => test_of(facts, v.left, v.right, v.op).match({
+                Ok(t) => Ok(t),
+                None  => test_of(facts, v.right, v.left, v.op),
+            }),
+        }),
+        _              => None,
+    })
+}
+
+test_of = (facts: Facts, flag: usize, k: usize, op: Op) Res<Test> {
+    is_equal = op.match({ Equal => true, _ => false });
+    facts.truthy.get(flag).value_or(false).match({
+        false => None,
+        true  => pinned_value(facts, k).match({
+            Ok(n) => (n == 0 || n == 1).match({
+                true  => Ok(Test(
+                    flag: flag,
+                    swap: (n == 0).match({ true => is_equal, false => !is_equal })
+                )),
+                false => None,
+            }),
+            None  => None,
+        }),
+    })
+}
+
+// A block's last instruction `out = source` (a word) read only by the
+// block's return: the return reads `source`.
+returned_copy = (
+    f           : Func,
+    facts       : Facts,
+    instruction : Instruction,
+    exit        : Terminator
+) Res<usize> {
+    instruction.match({
+        Copy(v) => (exit.match({ Return(slot) => slot == v.out, _ => false }) && single(
+            facts,
+            v.out
+        )
+                    && word_class(class_of(f, v.out))).match({ true => Ok(v.source), false => None }),
+        _       => None,
+    })
+}
+
+// A fast arithmetic result read only by the word copy right after it: the
+// step writes the copy's target, and the copy goes.
+forwarded = (
+    f           : Func,
+    facts       : Facts,
+    instruction : Instruction,
+    next        : Res<Instruction>
+) Res<usize> {
+    instruction.match({
+        BinaryValue(v) => (single(facts, v.out) && arithmetic(v.op, class_of(f, v.left)).match({ Ok(_) => true, None => false })).match({
+            false => None,
+            true  => next.match({
+                Ok(i) => i.match({
+                    Copy(c) => (c.source == v.out && c.out != v.left && c.out != v.right
+                                && word_class(class_of(f, c.out))).match({ true => Ok(c.out), false => None }),
+                    _       => None,
+                }),
+                None  => None,
+            }),
+        }),
+        _              => None,
+    })
+}
+
+// `instruction` writing `target` instead, for its slow path.
+retold = (instruction: Instruction, target: Res<usize>) Instruction {
+    target.match({
+        None     => instruction,
+        Ok(slot) => instruction.match({
+            BinaryValue(v) => Instruction.BinaryValue(Binary(
+                out: slot,
+                left: v.left,
+                right: v.right,
+                op: v.op,
+                span: v.span
+            )),
+            _              => instruction,
+        }),
+    })
+}
+
+word_class = (
+    ty : Scalar
+) bool { ty.match({ Block(_) => false, Unit => false, _ => true }) }
+
+step_at = (code: Code, i: usize) Step {
+    code.steps.get(i).value_or(Step(kind: Kind.Trap, a: 0, b: 0, c: 0, n: 0, w: 0, ty: Scalar.Unit))
+}
+
+// Where a jump to `start` ends up, following jumps and branches on `cell`
+// (which hold `truth` on this edge), at most 16 deep.
+through = (code: Code, start: usize, cell: usize, truth: bool) usize {
+    at :: usize = start;
+    Range(0, 16).loop((_) {
+        s  = step_at(code, at);
+        at = s.kind.match({
+            Jump   => s.a,
+            Branch => (s.a == cell).match({ true => truth.match({ true => s.b, false => s.c }), false => at }),
+            _      => at,
+        });
+    });
+    at
+}
+
+// The fast kind of an integer binary operation; None for what stays slow
+// (floats, signed division, Unit comparisons).
+arithmetic = (op: Op, ty: Scalar) Res<Kind> {
+    wordish(ty).match({
+        false => None,
+        true  => op.match({
+            Add          => Ok(
+                signed(
+                    ty
+                ).match({ true => Kind.AddSigned, false => Kind.AddUnsigned })
+            ),
+            Sub          => Ok(
+                signed(
+                    ty
+                ).match({ true => Kind.SubSigned, false => Kind.SubUnsigned })
+            ),
+            Mul          => Ok(
+                signed(
+                    ty
+                ).match({ true => Kind.MulSigned, false => Kind.MulUnsigned })
+            ),
+            Div          => unsigned_integer(ty).match({ true => Ok(Kind.DivUnsigned), false => None }),
+            Rem          => unsigned_integer(ty).match({ true => Ok(Kind.RemUnsigned), false => None }),
+            Equal        => Ok(compare(ty)),
+            NotEqual     => Ok(compare(ty)),
+            Less         => Ok(compare(ty)),
+            LessEqual    => Ok(compare(ty)),
+            Greater      => Ok(compare(ty)),
+            GreaterEqual => Ok(compare(ty)),
+            _            => Ok(Kind.Bits),
+        }),
+    })
+}
+
+// A scalar that lives in one word without float bits.
+wordish = (ty: Scalar) bool { (integer(ty) && !same(ty, Scalar.U128))
+    || ty.match({ Bool => true, Ptr => true, _ => false }) }
+
+unsigned_integer = (ty: Scalar) bool { integer(ty) && !signed(ty) }
+
+compare = (ty: Scalar) Kind { signed(
+    ty
+).match({ true => Kind.CompareSigned, false => Kind.CompareUnsigned }) }
+
+cell_of = (offsets: Vec<usize>, base: usize, slot: usize) usize {
+    offsets.get(base + slot).value_or(0)
+}
+
+class_of = (f: Func, slot: usize) Scalar { f.slots.get(slot).value_or(Scalar.Unit) }
+
+// An i64's bit pattern, through the eight-byte cell at `scratch`.
+bits_of = (scratch: usize, value: i64) u64 {
+    pointer_at(scratch).to<i64>().write(0, value);
+    pointer_at(scratch).to<u64>().read(0)
+}
+
+// Bytes a load or store moves: a word's width, or a block's size.
+moved = (ty: Scalar) usize { ty.match({ Unit => 0, Block(l) => l.size, _ => width(
+    ty
+) }) }
+
+// Extremes of a signed class and the ceiling of an unsigned one.
+minimum* = (ty: Scalar) i64 {
+    ty.match({ I8 => -128, I16 => -32768, I32 => -2147483648, _ => i64.MIN })
+}
+
+maximum* = (ty: Scalar) i64 {
+    ty.match({ I8 => 127, I16 => 32767, I32 => 2147483647, _ => i64.MAX })
+}
+
+ceiling* = (ty: Scalar) u64 {
+    ty.match({ U8 => 255, Bool => 255, U16 => 65535, U32 => 4294967295, _ => u64.MAX })
+}
+
+// The encoded form the interpreter runs: each step is eight words (op, a,
+// b, c, n, w, slow, x) at a fixed stride, so fetching one is a load, not a
+// checked lookup and a copy. `op` is a small integer that also fixes the
+// width or the fused branch; `x` is the extension code of a narrow result,
+// a narrow maximum, or a fused branch's false target. Call arguments and
+// the parameter pairs (offset, size) follow the steps, then the constant
+// image: a count and that many (offset, bits) pairs.
+STEP: usize = 64
+
+size_of* = (code: Code) usize {
+    code.steps.len * STEP + code.args.len * 8 + code.params.len * 16 + 8 + code.consts.len * 8
+}
+
+// Writes `code` at `at` (`size_of` bytes); returns its parameter pairs.
+encode* = (code: Code, at: usize) usize {
+    args   = at + code.steps.len * STEP;
+    params = args + code.args.len * 8;
+    code.steps.loop((h, i, s) {
+        out = at + i * STEP;
+        put(out, 1, s.a);
+        put(out, 2, s.b);
+        put(out, 3, s.c);
+        pointer_at(out).to<u64>().write(4, s.n);
+        put(out, 5, s.w);
+        put(out, 6, s.slow);
+        put(out, 7, 0);
+        op: usize = s.kind.match({
+            ConstWord       => 0,
+            CopyWord        => 1,
+            CopyBlock       => 2,
+            AddressOf       => 3,
+            Load            => indexed(out, s.index, (s.w == 8).match({
+                true  => 4,
+                false => (s.w == 1 && widening(s.ty) == 2).match({
+                    true  => 47,
+                    false => (s.w == 4 && widening(s.ty) == 6).match({
+                        true  => 48,
+                        false => { put(out, 7, widening(s.ty)); 5 },
+                    }),
+                }),
+            })),
+            Store           => indexed(
+                out,
+                s.index,
+                s.w.match({ 8 => 6, 1 => 49, 4 => 50, _ => 7 })
+            ),
+            AddSigned       => narrow(out, s, 8),
+            SubSigned       => narrow(out, s, 9),
+            MulSigned       => narrow(out, s, 10),
+            AddUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 14 },
+            SubUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 15 },
+            MulUnsigned     => { pointer_at(out).to<u64>().write(4, ceiling(s.ty)); 16 },
+            Cast            => s.ty.match({
+                Bool => 46,
+                _    => widening(s.ty).match({
+                    6 => 51,
+                    2 => 52,
+                    _ => { put(out, 7, widening(s.ty)); 45 },
+                }),
+            }),
+            DivUnsigned     => 43,
+            RemUnsigned     => 44,
+            CompareSigned   => fused(out, s, code, i, 17),
+            CompareUnsigned => fused(out, s, code, i, 18),
+            Bits            => bit_step(out, s),
+            Call            => { put(out, 2, args + s.b * 8); 20 },
+            Jump            => 21,
+            Branch          => 22,
+            Return          => {
+                put(
+                    out,
+                    4,
+                    s.ty.match({ Unit => 0, Block(l) => l.size, _ => 8 })
+                );
+                23
+            },
+            Trap            => 24,
+            Slow            => 25,
+        });
+        put(out, 0, op);
+    });
+    code.args.loop((h, i, v) { put(args, i, v); });
+    Range(0, code.params.len).loop((i) {
+        put(params, 2 * i, code.params.get(i).value_or(0));
+        put(params, 2 * i + 1, code.sizes.get(i).value_or(0));
+    });
+    image = params + code.params.len * 16;
+    put(image, 0, code.consts.len / 2);
+    code.consts.loop(
+        (h, i, v) { pointer_at(image).to<u64>().write(i + 1, v); }
+    );
+    params
+}
+
+// A bit step: and/or/xor read whole words; 64-bit and u32 wrapping
+// arithmetic, shifts and rotates get their own opcodes; the rest take the
+// general path with its width in n and extension code in x.
+bit_step = (out: usize, s: Step) usize {
+    plain = s.w == 6 || s.w == 7 || s.w == 8 || s.w >= 12 && s.w <= 14;
+    lane  = s.w.match({ 6 => 0, 7 => 1, 8 => 2, 12 => 3, 13 => 4, _ => 5 });
+    (s.w >= 9 && s.w <= 11).match({
+        true  => s.w + 19,
+        false => (plain && width(s.ty) == 8).match({
+            true  => 31 + lane,
+            false => (plain && s.ty.match({ U32 => true, _ => false })).match({
+                true  => 37 + lane,
+                false => {
+                    put(out, 4, width(s.ty));
+                    put(out, 7, widening(s.ty));
+                    19
+                },
+            }),
+        }),
+    })
+}
+
+// A checked signed step: 64-bit, or narrow with its bounds in n and x.
+narrow = (out: usize, s: Step, op: usize) usize {
+    (s.w == 8).match({
+        true  => op,
+        false => {
+            pointer_at(out).to<i64>().write(4, minimum(s.ty));
+            pointer_at(out).to<i64>().write(7, maximum(s.ty));
+            op + 3
+        },
+    })
+}
+
+// A comparison whose result the next step branches on is fused with it:
+// it still writes its cell, then goes to n (true) or x (false).
+fused = (out: usize, s: Step, code: Code, i: usize, op: usize) usize {
+    code.steps.get(i + 1).match({
+        None       => op,
+        Ok(branch) => branch.kind.match({
+            Branch => (branch.a == s.a).match({
+                false => op,
+                true  => { put(out, 4, branch.b); put(out, 7, branch.c); op + 9 },
+            }),
+            _      => op,
+        }),
+    })
+}
+
+// How a narrow result is re-extended to its word (gen_jit_interp
+// `extend_code`): 0 none, then i8, u8 or bool, i16, u16, i32, u32.
+widening = (ty: Scalar) usize {
+    ty.match({ I8 => 1, U8 => 2, Bool => 2, I16 => 3, U16 => 4, I32 => 5, U32 => 6, _ => 0 })
+}
+
+put = (at: usize, k: usize, value: usize) { pointer_at(at).to<usize>().write(k, value); }

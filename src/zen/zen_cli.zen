@@ -404,6 +404,16 @@ source_job = (
                         profiled
                     ).try()
                 ),
+                true  => (jit_output(b) == "").match({
+                false => refused(
+                    env,
+                    a,
+                    "build",
+                    a.String(
+                        "`{}` writes output, but `--backend jit` runs the program and emits nothing",
+                        jit_output(b)
+                    ).try()
+                ),
                 true  => Ok(Job.Build(BuildArgs(
                     root: root,
                     emission: emission,
@@ -421,7 +431,26 @@ source_job = (
                     })
                 ))),
             }),
+            }),
         }),
+    })
+}
+
+// The output option a jit build was given, or "" when none: the jit
+// backend runs the program, so there is nothing to write.
+jit_output = (b: BuildLine) str {
+    b.backend.match({
+        Ok(Jit) => b.output.match({
+            Ok(_) => "-o",
+            None  => b.emit_c_dir.match({
+                Ok(_) => "--emit-c-dir",
+                None  => b.emit_c.match({
+                    true  => "--emit-c",
+                    false => b.symbol_map.match({ Ok(_) => "--symbol-map", None => "" }),
+                }),
+            }),
+        }),
+        _       => "",
     })
 }
 

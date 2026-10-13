@@ -488,6 +488,7 @@ write = (flags :: Init, instruction: Instruction) {
         CompareSwap(value)  => { flags.note(value.out); },
         CodeAddress(value)  => { flags.note(value.out); },
         InvokeAt(value)     => { flags.note(value.out); },
+        FormatFloat(value)  => { flags.note(value.out); },
         _                   => (),
     });
 }

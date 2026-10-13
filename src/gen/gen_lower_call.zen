@@ -3486,7 +3486,12 @@ print_one = (
             true  => lo.write_str(place, value),
             false => primitive.match({
                 true  => float(class).match({
-                    true  => lo.float_into(place, value),
+                    // An unsettled float has no width to format at; the C
+                    // path reports it.
+                    true  => {
+                        (!lo.prim_name(value.ty).eq("float")).ensure(unsupported(span, "formatting an unsettled float")).try();
+                        lo.float_into(place, value)
+                    },
                     false => {
                     sink   = lo.sink_for_place(place, span).try();
                     helper = class.match({

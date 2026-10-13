@@ -8,9 +8,9 @@
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
 { Res, Ok, None, Range } = std.core
-{ written } = gen.gen_asm_flow
+{ reads, written, exit_read, NONE } = gen.gen_asm_flow
 { pointer_at } = std.sys
-{ Func, Scalar, Instruction, Terminator, Op, Fault, width, signed, integer, float } = gen.gen_ir
+{ Func, Scalar, Instruction, Terminator, Op, Fault, Binary, width, signed, integer, float } = gen.gen_ir
 
 Kind* = { ConstWord
     | CopyWord
@@ -123,15 +123,85 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
             false => (),
         });
     });
+    // Per slot: its reads, whether its address is taken, and whether every
+    // write is a comparison, so it holds 0 or 1.
+    seen   ::= a.Vec<usize>();
+    uses   ::= a.Vec<usize>();
+    taken  ::= a.Vec<bool>();
+    truthy ::= a.Vec<bool>();
+    Range(0, f.slots.len).loop((i) {
+        uses.add(0).try();
+        taken.add(false).try();
+        truthy.add(i >= f.parameters).try();
+    });
+    f.blocks.loop((block) {
+        block.code.loop((instruction) {
+            reads(instruction, seen).try();
+            instruction.match({
+                AddressOf(v)   => { taken.set(v.slot, true); truthy.set(v.slot, false); },
+                BinaryValue(v) => { truthy.set(
+                    v.out,
+                    truthy.get(v.out).value_or(false) && comparison(v.op)
+                ); },
+                _              => written(instruction).match({
+                    Ok(slot) => { truthy.set(slot, false); },
+                    None     => (),
+                }),
+            });
+        });
+        exit_read(block.exit).match({ Ok(slot) => { seen.add(slot).try(); }, None => () });
+    });
+    seen.loop((slot) { uses.set(slot, uses.get(slot).value_or(0) + 1); });
+    facts = Facts(
+        fixed: fixed,
+        sets: sets,
+        value: value,
+        uses: uses,
+        taken: taken,
+        truthy: truthy
+    );
     // Each block's first step, then jumps patched from block numbers.
     starts ::= a.Vec<usize>();
     f.blocks.loop((h, number, block) {
         starts.add(code.steps.len).try();
-        block.code.loop((instruction) {
-            pinned     = instruction.match({
+        ending = landed(f, block.exit);
+        fold   :: Res<Fold> = None;
+        skip   :: bool = false;
+        test   :: Res<Test> = None;
+        result :: Res<usize> = None;
+        block.code.loop((h2, k, instruction) {
+            next = block.code.get(k + 1);
+            last = !skip && k + 1 == block.code.len;
+            folding   :: Res<Fold> = skip.match({ true => None, false => fold_add(
+                f,
+                facts,
+                instruction,
+                next
+            ) });
+            target    :: Res<usize> = skip.match({ true => None, false => forwarded(
+                f,
+                facts,
+                instruction,
+                next
+            ) });
+            testing   :: Res<Test> = last.match({ true => bool_test(
+                facts,
+                instruction,
+                ending
+            ), false => None });
+            returning :: Res<usize> = last.match({ true => returned_copy(
+                f,
+                facts,
+                instruction,
+                ending
+            ), false => None });
+            pinned     = skip || instruction.match({
                 Constant(v) => fixed.get(v.out).value_or(false),
                 _           => false,
-            });
+            }) || folding.match({ Ok(_) => true, None => false })
+               || testing.match({ Ok(_) => true, None => false })
+               || returning.match({ Ok(_) => true, None => false });
+            shift      = fold.match({ Ok(d) => d.by, None => 0 });
             step: Step = instruction.match({
                 Constant(v)    => float(class_of(f, v.out)).match({
                     true  => Step(
@@ -185,17 +255,25 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                 LoadValue(v)   => Step(
                     kind: Kind.Load,
                     a: cell_of(offsets, base, v.out),
-                    b: cell_of(offsets, base, v.base),
-                    c: v.offset,
+                    b: cell_of(
+                        offsets,
+                        base,
+                        fold.match({ Ok(d) => d.base, None => v.base })
+                    ),
+                    c: v.offset + shift,
                     n: 0,
                     w: moved(class_of(f, v.out)),
                     ty: class_of(f, v.out)
                 ),
                 StoreValue(v)  => Step(
                     kind: Kind.Store,
-                    a: cell_of(offsets, base, v.base),
+                    a: cell_of(
+                        offsets,
+                        base,
+                        fold.match({ Ok(d) => d.base, None => v.base })
+                    ),
                     b: cell_of(offsets, base, v.value),
-                    c: v.offset,
+                    c: v.offset + shift,
                     n: 0,
                     w: moved(class_of(f, v.value)),
                     ty: class_of(f, v.value)
@@ -210,7 +288,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                     ty: Scalar.Ptr
                 ),
                 BinaryValue(v) => arithmetic(v.op, class_of(f, v.left)).match({
-                    Ok(kind) => { code.slow.add(instruction).try(); Step(kind: kind, a: cell_of(offsets, base, v.out), b: cell_of(offsets, base, v.left), c: cell_of(offsets, base, v.right), n: 0, slow: code.slow.len - 1, w: kind.match({
+                    Ok(kind) => { code.slow.add(retold(instruction, target)).try(); Step(kind: kind, a: cell_of(offsets, base, target.value_or(v.out)), b: cell_of(offsets, base, v.left), c: cell_of(offsets, base, v.right), n: 0, slow: code.slow.len - 1, w: kind.match({
                         CompareSigned => operator(v.op), CompareUnsigned => operator(v.op), Bits => operator(v.op), _ => width(class_of(f, v.left)),
                     }), ty: class_of(f, v.out)) },
                     None     => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
@@ -251,11 +329,16 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
             pinned.match({ true => (), false => { code.steps.add(
                 step
             ).try(); } });
+            fold = folding;
+            skip = target.match({ Ok(_) => true, None => false });
+            testing.match({ Ok(t) => { test = Ok(t); }, None => () });
+            returning.match({ Ok(r) => { result = Ok(r); }, None => () });
         });
-        exit: Step = block.exit.match({
+        swap       = test.match({ Ok(t) => t.swap, None => false });
+        exit: Step = ending.match({
             Return(slot)   => Step(
                 kind: Kind.Return,
-                a: cell_of(offsets, base, slot),
+                a: cell_of(offsets, base, result.value_or(slot)),
                 b: 0,
                 c: 0,
                 n: 0,
@@ -273,9 +356,13 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
             ),
             Branch(branch) => Step(
                 kind: Kind.Branch,
-                a: cell_of(offsets, base, branch.value),
-                b: branch.yes,
-                c: branch.no,
+                a: cell_of(
+                    offsets,
+                    base,
+                    test.match({ Ok(t) => t.flag, None => branch.value })
+                ),
+                b: swap.match({ true => branch.no, false => branch.yes }),
+                c: swap.match({ true => branch.yes, false => branch.no }),
                 n: 0,
                 w: 0,
                 ty: Scalar.Unit
@@ -283,7 +370,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
             Trap(fault)    => { code.faults.add(fault).try(); Step(kind: Kind.Trap, a: 0, b: 0, c: 0, n: (code.faults.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
         });
         // A jump to the next block falls through instead.
-        block.exit.match({ Jump(to) => to == number + 1, _ => false }).match({
+        ending.match({ Jump(to) => to == number + 1, _ => false }).match({
             true  => (),
             false => { code.steps.add(exit).try(); },
         });
@@ -319,7 +406,254 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
             _      => (),
         });
     });
+    // Jumps and branches go straight to where they end up: through jumps,
+    // and through a branch on the same cell, which goes the same way; a
+    // jump to a return returns.
+    Range(0, code.steps.len).loop((i) {
+        s = step_at(code, i);
+        s.kind.match({
+            Jump   => {
+                to     = through(code, s.a, NONE, true);
+                landed = step_at(code, to);
+                code.steps.set(i, landed.kind.match({
+                    Return => landed,
+                    _      => Step(
+                        kind: Kind.Jump,
+                        a: to,
+                        b: 0,
+                        c: 0,
+                        n: 0,
+                        w: 0,
+                        ty: s.ty
+                    ),
+                }));
+            },
+            Branch => code.steps.set(
+                i,
+                Step(
+                    kind: Kind.Branch,
+                    a: s.a,
+                    b: through(code, s.b, s.a, true),
+                    c: through(code, s.c, s.a, false),
+                    n: 0,
+                    w: 0,
+                    ty: s.ty
+                )
+            ),
+            _      => (),
+        });
+    });
     Ok(code)
+}
+
+// A jump to an empty block that returns, returns.
+landed = (f: Func, exit: Terminator) Terminator {
+    exit.match({
+        Jump(to) => f.blocks.get(to).match({
+            Ok(b) => (b.code.len == 0 && b.exit.match({ Return(_) => true, _ => false })).match({
+                true  => b.exit,
+                false => exit,
+            }),
+            None  => exit,
+        }),
+        _        => exit,
+    })
+}
+
+// What `decode` knows of each slot: the constant image (`fixed`, `sets`,
+// `value`), reads, address taking, and whether it only holds a comparison.
+Facts = { fixed: Vec<bool>, sets: Vec<usize>, value: Vec<i64>, uses: Vec<usize>, taken: Vec<bool>, truthy: Vec<bool> }
+
+// A load or store's base and offset after folding the add before it.
+Fold = { base: usize, by: usize }
+
+// A branch on a comparison's 0 or 1 instead of on `flag == constant`.
+Test = { flag: usize, swap: bool }
+
+comparison = (op: Op) bool {
+    op.match({ Equal => true, NotEqual => true, Less => true, LessEqual => true, Greater => true, GreaterEqual => true, _ => false })
+}
+
+// The value of a slot the constant image fills.
+pinned_value = (facts: Facts, slot: usize) Res<i64> {
+    (facts.fixed.get(slot).value_or(false) && facts.sets.get(slot).value_or(0) > 0).match({
+        true  => Ok(facts.value.get(slot).value_or(0)),
+        false => None,
+    })
+}
+
+// Read exactly once, and never through its address.
+single = (facts: Facts, slot: usize) bool {
+    facts.uses.get(slot).value_or(0) == 1 && !facts.taken.get(slot).value_or(true)
+}
+
+// `out = base + constant` (a word) read only as the base of the load or
+// store right after it: that step adds the constant to its offset instead.
+fold_add = (
+    f           : Func,
+    facts       : Facts,
+    instruction : Instruction,
+    next        : Res<Instruction>
+) Res<Fold> {
+    instruction.match({
+        BinaryValue(v) => (v.op.match({ WrapAdd => true, _ => false }) && width(class_of(
+            f,
+            v.out
+        )) == 8
+                           && single(facts, v.out) && based_on(next, v.out)).match({
+            false => None,
+            true  => small(pinned_value(facts, v.right)).match({
+                Ok(by) => Ok(Fold(base: v.left, by: by)),
+                None   => small(pinned_value(facts, v.left)).match({
+                    Ok(by) => Ok(Fold(base: v.right, by: by)),
+                    None   => None,
+                }),
+            }),
+        }),
+        _              => None,
+    })
+}
+
+// Whether `next` loads from or stores through `slot` and reads it nowhere else.
+based_on = (next: Res<Instruction>, slot: usize) bool {
+    next.match({
+        Ok(i) => i.match({
+            LoadValue(l)  => l.base == slot,
+            StoreValue(s) => s.base == slot && s.value != slot,
+            _             => false,
+        }),
+        None  => false,
+    })
+}
+
+small = (n: Res<i64>) Res<usize> {
+    n.match({
+        Ok(v) => (v >= 0 && v < 2147483648).match({ true => v.to_usize(), false => None }),
+        None  => None,
+    })
+}
+
+// A block's last instruction `out = flag == k` (or `!=`), with k 0 or 1,
+// read only by the block's branch: the branch tests `flag`, swapped when
+// the test holds for 0.
+bool_test = (
+    facts       : Facts,
+    instruction : Instruction,
+    exit        : Terminator
+) Res<Test> {
+    instruction.match({
+        BinaryValue(v) => (exit.match({ Branch(b) => b.value == v.out, _ => false }) && single(
+            facts,
+            v.out
+        )
+                           && v.op.match({ Equal => true, NotEqual => true, _ => false })).match({
+            false => None,
+            true  => test_of(facts, v.left, v.right, v.op).match({
+                Ok(t) => Ok(t),
+                None  => test_of(facts, v.right, v.left, v.op),
+            }),
+        }),
+        _              => None,
+    })
+}
+
+test_of = (facts: Facts, flag: usize, k: usize, op: Op) Res<Test> {
+    is_equal = op.match({ Equal => true, _ => false });
+    facts.truthy.get(flag).value_or(false).match({
+        false => None,
+        true  => pinned_value(facts, k).match({
+            Ok(n) => (n == 0 || n == 1).match({
+                true  => Ok(Test(
+                    flag: flag,
+                    swap: (n == 0).match({ true => is_equal, false => !is_equal })
+                )),
+                false => None,
+            }),
+            None  => None,
+        }),
+    })
+}
+
+// A block's last instruction `out = source` (a word) read only by the
+// block's return: the return reads `source`.
+returned_copy = (
+    f           : Func,
+    facts       : Facts,
+    instruction : Instruction,
+    exit        : Terminator
+) Res<usize> {
+    instruction.match({
+        Copy(v) => (exit.match({ Return(slot) => slot == v.out, _ => false }) && single(
+            facts,
+            v.out
+        )
+                    && word_class(class_of(f, v.out))).match({ true => Ok(v.source), false => None }),
+        _       => None,
+    })
+}
+
+// A fast arithmetic result read only by the word copy right after it: the
+// step writes the copy's target, and the copy goes.
+forwarded = (
+    f           : Func,
+    facts       : Facts,
+    instruction : Instruction,
+    next        : Res<Instruction>
+) Res<usize> {
+    instruction.match({
+        BinaryValue(v) => (single(facts, v.out) && arithmetic(v.op, class_of(f, v.left)).match({ Ok(_) => true, None => false })).match({
+            false => None,
+            true  => next.match({
+                Ok(i) => i.match({
+                    Copy(c) => (c.source == v.out && c.out != v.left && c.out != v.right
+                                && word_class(class_of(f, c.out))).match({ true => Ok(c.out), false => None }),
+                    _       => None,
+                }),
+                None  => None,
+            }),
+        }),
+        _              => None,
+    })
+}
+
+// `instruction` writing `target` instead, for its slow path.
+retold = (instruction: Instruction, target: Res<usize>) Instruction {
+    target.match({
+        None     => instruction,
+        Ok(slot) => instruction.match({
+            BinaryValue(v) => Instruction.BinaryValue(Binary(
+                out: slot,
+                left: v.left,
+                right: v.right,
+                op: v.op,
+                span: v.span
+            )),
+            _              => instruction,
+        }),
+    })
+}
+
+word_class = (
+    ty : Scalar
+) bool { ty.match({ Block(_) => false, Unit => false, _ => true }) }
+
+step_at = (code: Code, i: usize) Step {
+    code.steps.get(i).value_or(Step(kind: Kind.Trap, a: 0, b: 0, c: 0, n: 0, w: 0, ty: Scalar.Unit))
+}
+
+// Where a jump to `start` ends up, following jumps and branches on `cell`
+// (which hold `truth` on this edge), at most 16 deep.
+through = (code: Code, start: usize, cell: usize, truth: bool) usize {
+    at :: usize = start;
+    Range(0, 16).loop((_) {
+        s  = step_at(code, at);
+        at = s.kind.match({
+            Jump   => s.a,
+            Branch => (s.a == cell).match({ true => truth.match({ true => s.b, false => s.c }), false => at }),
+            _      => at,
+        });
+    });
+    at
 }
 
 // The fast kind of an integer binary operation; None for what stays slow

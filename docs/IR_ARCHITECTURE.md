@@ -423,9 +423,17 @@ renderer with no semantic work:
   the branch that reads them, a jump to the next block falls through, slots
   only ever set to one constant are filled once per call from a per-function
   image instead of by a step, and rare instructions keep a slow path through
-  the original IR. `tests/bench/jit/run.py` measures it against C -O0/-O2,
-  asm, node and CPython on crypto, call-heavy and hash-map workloads, round
-  robin over backends, with a least-squares slope and its 95% interval.
+  the original IR. A few peepholes remove steps: an add of a small constant
+  that only feeds the next load or store becomes that step's offset, a
+  branch on `flag == 0` tests the comparison that set `flag`, arithmetic
+  read only by the next copy writes the copy's target, a copy read only by
+  the return is returned directly, and jumps and branches are threaded to
+  where they end up. `tests/bench/jit/run.py` measures it against C
+  -O0/-O2, asm, Zen's JS backend on node and CPython on crypto, call-heavy
+  and hash-map workloads, round robin over backends, with a least-squares
+  slope and its 95% interval. The JS row is Zen's generated JS, which
+  emulates 64-bit integers, not hand-written JS; the CPython map row mostly
+  measures Python's C dict.
 - **Tier 1:** an in-memory encoder that reuses the asm backend's instruction
   selection and register allocation, and writes machine code bytes instead of
   text into `mmap`ed pages (W^X, with `MAP_JIT` plus

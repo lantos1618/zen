@@ -416,8 +416,30 @@ Interp = {
                 11 => { stop = self.narrow_signed(index, frame, s, Op.Add); },
                 12 => { stop = self.narrow_signed(index, frame, s, Op.Sub); },
                 13 => { stop = self.narrow_signed(index, frame, s, Op.Mul); },
-                14 => { stop = self.unsigned(index, frame, s, Op.Add); },
-                15 => { stop = self.unsigned(index, frame, s, Op.Sub); },
+                14 => {
+                    a   = load_u64(frame +% part(s, 2));
+                    sum = a +% load_u64(frame +% part(s, 3));
+                    (sum < a || sum > part_u64(s, 4)).match({
+                        true  => { stop = self.cold(
+                            index,
+                            frame,
+                            part(s, 6)
+                        ); },
+                        false => set_u64(frame +% part(s, 1), sum),
+                    });
+                },
+                15 => {
+                    a = load_u64(frame +% part(s, 2));
+                    b = load_u64(frame +% part(s, 3));
+                    (a < b || a - b > part_u64(s, 4)).match({
+                        true  => { stop = self.cold(
+                            index,
+                            frame,
+                            part(s, 6)
+                        ); },
+                        false => set_u64(frame +% part(s, 1), a - b),
+                    });
+                },
                 16 => { stop = self.unsigned(index, frame, s, Op.Mul); },
                 28 => set_u64(
                     frame +% part(s, 1),
@@ -586,7 +608,13 @@ Interp = {
                         ))
                     );
                 },
-                20 => { stop = self.call(frame, s); },
+                20 => {
+                    got = self.call(frame, s);
+                    got.match({
+                        Returned => (),
+                        _        => { ended = got; going = false; h.break(); },
+                    });
+                },
                 23 => {
                     size = part(s, 4);
                     (size == 8).match({
@@ -694,13 +722,14 @@ Interp = {
         })
     }
 
-    // A call: arguments copied by the callee's parameter pairs.
-    call = (self :: @Self, frame: usize, s: usize) Res<Outcome> {
+    // A call: arguments copied by the callee's parameter pairs. Its outcome
+    // stays out of `perform`'s `stop`, whose halves reload as one word.
+    call = (self :: @Self, frame: usize, s: usize) Outcome {
         callee = part(s, 4);
         info   = self.info +% callee *% 32;
         inner  = self.top;
         (inner +% part(info, 1) > self.limit).match({
-            true  => Ok(self.overflowed()),
+            true  => self.overflowed(),
             false => {
                 self.top = inner +% part(info, 1);
                 args     = part(s, 2);
@@ -716,7 +745,7 @@ Interp = {
                 });
                 ended    = self.perform(callee, inner, frame +% part(s, 1));
                 self.top = inner;
-                unwound(ended)
+                ended
             },
         })
     }

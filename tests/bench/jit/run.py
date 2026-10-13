@@ -121,7 +121,7 @@ def main():
         row = {"name": name, "unit": unit, "backends": {}, "mismatch": None}
         reference = {}
         base = [zen, "build", root, "--entry", "main.zen", "--std", "src"]
-        builds = [("c-O2", "c", ["cc", "-O2"]), ("c-O0", "c", ["cc", "-O0"]), ("asm", "asm", None), ("js", "js", None)]
+        builds = [("c-O2", "c", ["cc", "-O2"]), ("c-O0", "c", ["cc", "-O0"]), ("asm", "asm", None), ("zen-js", "js", None)]
         try:
             runners, extra = [], {}
             for label, backend, cc in builds:

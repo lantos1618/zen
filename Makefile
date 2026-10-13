@@ -161,8 +161,10 @@ lspcheck: build
 ## Keep this target as the single list of required gates. Shared prerequisites
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
+## VERIFY_JIT= drops jitcorpus from verify; CI runs it as its own job.
+VERIFY_JIT ?= jitcorpus
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings nativecheck jitcorpus jscheck test stdcheck archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
+verify: warnings nativecheck $(VERIFY_JIT) jscheck test stdcheck archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
 
 .PHONY: ctcheck
 ## ctcheck: the constant-time tooling's self-test (tools/ct/check.zen): the

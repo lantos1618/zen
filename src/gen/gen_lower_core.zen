@@ -18,7 +18,7 @@
 { Ast, ExprId, BlockId, TypeId, Function, Literal, Bind, Deferred, Stmt } = std.ast
 { Span } = std.source
 { BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index } = std.ast
-{ TParam, Arg, Member } = std.ast
+{ TParam, Arg, Member, Decl } = std.ast
 { PatternId } = std.ast
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Ctx, Inst, decl_at } = sema.sema
@@ -37,6 +37,7 @@
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
 { to_bound, bound_of, handle_for_place, resolve } = gen.gen_lower_member
+{ Supplied, supplied_field, supplied_read } = gen.gen_lower_member
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { real_call } = gen.gen_lower_call
 { capability } = gen.gen_lower_shape
@@ -60,9 +61,13 @@ Place* = { base*: Base, offset*: usize, ty*: TyId }
 // in the frame that wrote it.
 LambdaRef* = { expr*: ExprId, frame*: usize }
 
+// A local function's declaration and the frame it was written in.
+LocalFunction* = { f*: Function, frame*: usize }
+
 LocalKind* = { Direct: Value
     | Ref: Place
     | Closure: LambdaRef
+    | Local: LocalFunction
     | Handle: usize
     | Capability: TyId }
 
@@ -746,7 +751,7 @@ Lowerer* = {
                 Ok(Ref(p))    => Ok(p),
                 _             => None,
             })),
-            Access(a) => self.is_value_access(a).match({
+            Access(a) => (self.is_value_access(a) && !self.computed(id, a)).match({
                 false => Ok(None),
                 true  => self.place_of(a.base).try().match({
                     Ok(base) => Ok(Ok(
@@ -858,6 +863,10 @@ Lowerer* = {
             Ok(Closure(_))    => Err(unsupported(
                 span,
                 "a closure used as a value"
+            )),
+            Ok(Local(_))      => Err(unsupported(
+                span,
+                "a local function used as a value"
             )),
             Ok(Handle(_))     => Err(unsupported(
                 span,
@@ -1758,7 +1767,7 @@ Lowerer* = {
                     tail.match({ true => want, false => None }),
                     None
                 ),
-                Decl(_)     => Err(unsupported(s.span, "nested declarations")),
+                Decl(d)     => self.local_decl(d, s.span),
             }).try();
         });
         value = into.match({
@@ -1799,6 +1808,21 @@ Lowerer* = {
                 None  => false,
             }),
             _       => false,
+        })
+    }
+
+    // A local function binds its name to its declaration, inlined where it
+    // is called (`sema_local.local_function`).
+    local_decl = (self :: @Self, d: Decl, span: Span) Res<Value, LowerError> {
+        d.kind.match({
+            Function(f) => {
+                self.bind_local(
+                    f.name.text,
+                    LocalKind.Local(LocalFunction(f: f, frame: self.frame))
+                ).try();
+                self.unit()
+            },
+            _           => Err(unsupported(span, "nested declarations")),
         })
     }
 
@@ -2200,20 +2224,47 @@ Lowerer* = {
                     }),
                 })
             },
-            None  => self.place_of(a.base).try().match({
-                Ok(place) => self.read(
-                    self.field_place(place, a.name.text, span).try()
+            None  => self.supplied(id, a).try().match({
+                Ok(s) => supplied_read(
+                    self,
+                    s,
+                    self.expr(a.base).try(),
+                    self.type_of(id).try()
                 ),
-                None      => {
-                    base  = self.expr(a.base).try();
-                    field = self.field_place(
-                        self.spill(base),
-                        a.name.text,
-                        span
-                    ).try();
-                    self.read(field)
-                },
+                None  => self.stored_field(a, span),
             }),
+        })
+    }
+
+    // An impl-supplied field has no place: it is computed on every read.
+    computed = (self :: @Self, id: ExprId, a: Access) bool {
+        self.supplied(
+            id,
+            a
+        ).match({ Ok(found) => found.match({ Ok(_) => true, None => false }), Err(_) => false })
+    }
+
+    supplied = (self :: @Self, id: ExprId, a: Access) Res<Res<Supplied>, LowerError> {
+        self.type_of(a.base).match({
+            Ok(rty) => supplied_field(self, id, rty, a.name.text),
+            Err(_)  => Ok(None),
+        })
+    }
+
+    stored_field = (self :: @Self, a: Access, span: Span) Res<Value, LowerError> {
+        self.place_of(a.base).try().match({
+            Ok(place) => self.read(
+                self.field_place(place, a.name.text, span).try()
+            ),
+            None      => {
+                base  = self.expr(a.base).try();
+                field = self.field_place(
+                    self.spill(base),
+                    a.name.text,
+                    span
+                ).try();
+                self.read(field)
+            },
         })
     }
 
@@ -3390,20 +3441,42 @@ Lowerer* = {
     // caller's `h` on, and `h.break()` in the body leaves that loop).
     inline_bound* = (self :: @Self, lambda: LambdaRef, args: Vec<LocalKind>, want: TyId)
                     Res<Value, LowerError> {
-        l          = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+        l = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
             .ok_or(unsupported(
                 nowhere(),
                 "a closure that is not a lambda"
             )).try();
+        self.inline_body(l.params, l.body, lambda.frame, args, want)
+    }
+
+    // Inline a local function where it is called, as a closure written in
+    // the frame that declared it.
+    inline_local* = (self :: @Self, local: LocalFunction, args: Vec<LocalKind>, want: TyId)
+                    Res<Value, LowerError> {
+        body = local.f.body.ok_or(unsupported(
+            local.f.name.span,
+            "a local function without a body"
+        )).try();
+        self.inline_body(local.f.params, body, local.frame, args, want)
+    }
+
+    inline_body = (
+        self   :: @Self,
+        params : Vec<Param>,
+        body   : BlockId,
+        frame  : usize,
+        args   : Vec<LocalKind>,
+        want   : TyId
+    ) Res<Value, LowerError> {
         saved      = self.frame;
-        self.frame = lambda.frame;
+        self.frame = frame;
         mark       = self.locals.len;
-        l.params.loop((h, i, p) {
+        params.loop((h, i, p) {
             args.get(i).when_ok((arg) { self.bind_local(p.name.text, arg).try(); });
         });
         value = self.settled(want).match({
-            true  => self.block_want(l.body, want),
-            false => self.block(l.body),
+            true  => self.block_want(body, want),
+            false => self.block(body),
         }).try();
         self.release_locals(mark);
         self.frame = saved;

@@ -248,7 +248,6 @@ tests/corpus/std/constant_time # UNSUPPORTED: constant_time.zen:50:18: error: un
 tests/corpus/std/display_allocating_overload_picked_by_argument # UNSUPPORTED: display_allocating_overload_picked_by_argument.zen:29:13: error: unsupported by this backend: a valu
 tests/corpus/std/os_entropy # UNSUPPORTED: os_entropy.zen:5:23: error: unsupported by this backend: a call without successful semantic checking
 tests/corpus/std/secret_discipline_accepts_constant_time_code # UNSUPPORTED: secret_discipline_accepts_constant_time_code.zen:56:42: error: unsupported by this backend: the mach
-tests/corpus/std/signed_shift_right_fills_with_the_sign # UNSUPPORTED: signed_shift_right_fills_with_the_sign.zen:26:9: error: unsupported by this backend: an arithmetic s
 tests/corpus/std/simd_bmi2 # UNSUPPORTED: std/simd.zen:214:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_features # UNSUPPORTED: simd_features.zen:93:25: error: unsupported by this backend: the std.simd operation lane
 tests/corpus/std/simd_sha # UNSUPPORTED: std/simd.zen:229:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu

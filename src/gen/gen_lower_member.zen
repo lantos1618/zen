@@ -24,7 +24,6 @@
 { Shape, Form, shape, size_of } = gen.gen_lower_shape
 { Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call } = gen.gen_lower_call
 { argument_value } = gen.gen_lower_call
-{ settle_params } = gen.gen_lower_call
 { runtime_call } = gen.gen_lower_thread
 { actor_of_ref, actor_member } = gen.gen_lower_actor
 { class_of } = gen.gen_lower_shape
@@ -1082,7 +1081,7 @@ created_element = (lo :: Lowerer, ty: TyId) Res<TyId> {
 // Call a resolved member with already-evaluated receiver and arguments.
 call_values* = (
     lo       :: Lowerer,
-    open     : Callee,
+    callee   : Callee,
     receiver : Place,
     args     : Vec<Source>,
     ty       : TyId,
@@ -1092,8 +1091,7 @@ call_values* = (
     given ::= lo.alloc.Vec<Source>();
     given.add(Source.Located(receiver)).try(LowerError.OutOfMemory);
     args.loop((a) { given.add(a).try(LowerError.OutOfMemory); });
-    callee = lo.settle_params(open, given).try();
-    out    = lo.real_call(callee, given, span).try();
+    out = lo.real_call(callee, given, span).try();
     lo.coerce(out, ty)
 }
 

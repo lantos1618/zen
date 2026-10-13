@@ -34,7 +34,9 @@
 { bound_of, dispatch, Bound } = gen.gen_lower_member
 { to_i64_bits, slot_place, placed_value } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
-{ variant_index, size_of } = gen.gen_lower_shape
+{ variant_index, size_of, is_scope } = gen.gen_lower_shape
+{ has_record, defer_into } = gen.gen_lower_scope
+{ meta_walk, meta_proj } = gen.gen_lower_meta
 { inst_of_named } = sema.sema_inst
 { json_door, outcome_door } = gen.gen_lower_door
 
@@ -215,11 +217,36 @@ dot_call = (
     a    : Access,
     span : Span
 ) Res<Value, LowerError> {
+    lo.check.meta_walk_of(id).match({
+        Ok(names) => lo.meta_walk(c, names, span),
+        None      => lo.check.meta_proj(id).match({
+            true  => lo.meta_proj(id, a, span),
+            false => lo.ordinary_dot_call(id, c, a, span),
+        }),
+    })
+}
+
+ordinary_dot_call = (
+    lo   :: Lowerer,
+    id   : ExprId,
+    c    : Call,
+    a    : Access,
+    span : Span
+) Res<Value, LowerError> {
     base     = lo.tree.expr_at(a.base);
     at_scope = base.kind.match({ Scope => true, _ => false });
-    (at_scope && a.name.text.eq("defer")).match({
+    defers   = a.name.text.eq("defer");
+    // `@scope.defer` stays static until the block's Scope is a value;
+    // after that every registration goes through its record.
+    (defers && at_scope && !lo.has_record()).match({
         true  => lo.defer(c, span),
-        false => lo.dot_call_on(id, c, a, base, span),
+        false => (defers && lo.is_scope(lo.type_of(a.base).try())).match({
+            true  => {
+                scope = lo.expr(a.base).try();
+                lo.defer_into(scope.slot, c, span)
+            },
+            false => lo.dot_call_on(id, c, a, base, span),
+        }),
     })
 }
 

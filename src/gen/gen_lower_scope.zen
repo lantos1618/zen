@@ -1,0 +1,242 @@
+// `@scope` as a runtime value. A block whose Scope is bound, passed to a
+// helper or captured gets a defer record in its frame:
+//
+//     count: u64 | DEFER_MAX entries of { code: Ptr, captures }
+//
+// A Scope is the record's address. `Scope.defer` lifts the closure into its
+// own function `(entry: Ptr) ()`, copies the captures into the next entry,
+// and traps past DEFER_MAX; the block's exit pops entries last-in first-out
+// and calls each with a copy of its entry, so a closure that registers
+// another reuses the slot it ran from. Captures keep their kind: a `:`
+// local is snapshotted, a `::` one is its address (gen_lower_thread).
+
+{ Vec } = std.collections
+{ Res, Ok, Err, None } = std.core
+{ ExprId, Call } = std.ast
+{ Span, nowhere } = std.source
+{ Scalar, Layout, Op, Const, Binary, Instruction, Load, Store, Address, CopyMem } = gen.gen_ir
+{ CodeRef, IndirectCall, Convert, Func, Terminator, TrapKind } = gen.gen_ir
+{ LowerError, unsupported } = gen.gen_lower
+{ Lowerer, Value, Cleanup, to_i64_bits } = gen.gen_lower_core
+{ size_of, class_of } = gen.gen_lower_shape
+{ Source, closure_of } = gen.gen_lower_call
+{ Synth, LiftedBody, Capture, enqueue_synth, begin_synth, finish_synth } = gen.gen_lower_thread
+{ thread_captures, store_capture, bind_captures } = gen.gen_lower_thread
+
+// The C runtime's ZG_DEFER_MAX.
+DEFER_MAX: usize = 32
+ENTRY_BYTES: usize = 128
+ENTRIES: usize = 8
+RECORD: Layout = Layout(size: ENTRIES + DEFER_MAX * ENTRY_BYTES, align: 8)
+
+// `@scope`: the address of the innermost block's record.
+scope_value* = (lo :: Lowerer, id: ExprId) Res<Value, LowerError> {
+    ty     = lo.type_of(id).try();
+    record = lo.scope_record().try();
+    out    = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: out, slot: record))).try();
+    Ok(Value(slot: out, ty: ty))
+}
+
+// Whether the innermost block already registers through a record.
+has_record* = (lo :: Lowerer) bool {
+    lo.scopes.get(lo.scopes.len - 1).match({
+        Ok(open) => open.record.match({ Ok(_) => true, None => false }),
+        None     => false,
+    })
+}
+
+// The innermost block's record, made on first use. Every exit empties it,
+// so clearing the count once on function entry is enough.
+scope_record = (lo :: Lowerer) Res<usize, LowerError> {
+    index = lo.scopes.len - 1;
+    open  = lo.scopes.get(index).ok_or(unsupported(nowhere(), "`@scope` outside a block")).try();
+    open.record.match({
+        Ok(record) => Ok(record),
+        None       => {
+            record  = lo.slot_of(Scalar.Block(RECORD)).try();
+            address = lo.slot_of(Scalar.Ptr).try();
+            zero    = lo.slot_of(Scalar.U64).try();
+            lo.prologue.add(Instruction.AddressOf(Address(
+                out: address,
+                slot: record
+            ))).try(LowerError.OutOfMemory);
+            lo.prologue.add(Instruction.Constant(Const(
+                out: zero,
+                value: 0
+            ))).try(LowerError.OutOfMemory);
+            lo.prologue.add(Instruction.StoreValue(Store(
+                base: address,
+                offset: 0,
+                value: zero
+            ))).try(LowerError.OutOfMemory);
+            lo.scopes.set(index, Cleanup(
+                drops: open.drops,
+                defers: open.defers,
+                record: Ok(record)
+            )).ok_or(unsupported(nowhere(), "a missing scope")).try();
+            Ok(record)
+        },
+    })
+}
+
+// `scope.defer(closure)` through the record at `scope`.
+defer_into* = (lo :: Lowerer, scope: usize, c: Call, span: Span) Res<Value, LowerError> {
+    arg      = c.args.get(0).ok_or(unsupported(span, "a defer without a closure")).try();
+    lambda   = lo.closure_of(Source.Given(arg.value), span).try();
+    frame    = lo.frames.get(lambda.frame).ok_or(unsupported(span, "a closure without a frame")).try();
+    saved    = lo.use_frame(lambda.frame);
+    captures = lo.thread_captures(lambda, 8, span);
+    lo.use_frame(saved);
+    fields = captures.try();
+    (lo.captures_end(fields).try() <= ENTRY_BYTES).ensure(unsupported(
+        span,
+        "a deferred closure capturing more than 120 bytes"
+    )).try();
+    stand_in = frame.scope.ok_or(unsupported(span, "a defer outside a function")).try();
+    index    = lo.enqueue_synth(
+        stand_in,
+        Synth.Deferred(LiftedBody(
+            lambda: lambda.expr,
+            inst: frame.inst,
+            module: frame.module,
+            self_ty: frame.self_ty,
+            scope: frame.scope,
+            ret_ty: lo.unit_ty,
+            captures: fields
+        ))
+    ).try();
+    count = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.LoadValue(Load(out: count, base: scope, offset: 0))).try();
+    full = lo.binary_word(Op.GreaterEqual, count, DEFER_MAX, span).try();
+    over = lo.label().try();
+    fill = lo.label().try();
+    lo.branch_to(full, over, fill).try();
+    lo.start(over);
+    lo.trap(TrapKind.DeferLimit, span).try();
+    lo.start(fill);
+    entry = lo.entry_at(scope, count, span).try();
+    code  = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.CodeAddress(CodeRef(out: code, function: index))).try();
+    lo.add(Instruction.StoreValue(Store(base: entry, offset: 0, value: code))).try();
+    saved_fill = lo.use_frame(lambda.frame);
+    fields.loop((f) { lo.store_capture(entry, f).try(); });
+    lo.use_frame(saved_fill);
+    next = lo.binary_word(Op.Add, count, 1, span).try();
+    lo.add(Instruction.StoreValue(Store(base: scope, offset: 0, value: next))).try();
+    lo.unit()
+}
+
+// Where the last capture ends in an entry.
+captures_end = (lo :: Lowerer, captures: Vec<Capture>) Res<usize, LowerError> {
+    end :: usize = 8;
+    captures.loop((c) {
+        c.kind.match({
+            Copied    => {
+                ends = c.offset + size_of(lo.class_of(c.ty).try());
+                (ends > end).then(() { end = ends; });
+            },
+            Address   => { (c.offset + 8 > end).then(() { end = c.offset + 8; }); },
+            Authority => (),
+        });
+    });
+    Ok(end)
+}
+
+// Run and empty the record in slot `record`, newest entry first.
+run_record* = (lo :: Lowerer, record: usize) Res<LowerError> {
+    span    = nowhere();
+    address = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: address, slot: record))).try();
+    head = lo.label().try();
+    body = lo.label().try();
+    done = lo.label().try();
+    lo.enter(head).try();
+    count = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.LoadValue(Load(out: count, base: address, offset: 0))).try();
+    empty = lo.binary_word(Op.Equal, count, 0, span).try();
+    lo.branch_to(empty, done, body).try();
+    lo.start(body);
+    last = lo.binary_word(Op.Sub, count, 1, span).try();
+    lo.add(Instruction.StoreValue(Store(base: address, offset: 0, value: last))).try();
+    entry  = lo.entry_at(address, last, span).try();
+    copy   = lo.slot_of(Scalar.Block(Layout(size: ENTRY_BYTES, align: 8))).try();
+    copied = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: copied, slot: copy))).try();
+    bytes = lo.word_const(Scalar.U64, ENTRY_BYTES.to_i64_bits()).try();
+    lo.add(Instruction.CopyBytes(CopyMem(dest: copied, source: entry, bytes: bytes))).try();
+    code = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.LoadValue(Load(out: code, base: copied, offset: 0))).try();
+    args ::= lo.alloc.Vec<usize>();
+    args.add(copied).try(LowerError.OutOfMemory);
+    ran = lo.slot_of(Scalar.Unit).try();
+    lo.add(Instruction.InvokeAt(IndirectCall(out: ran, target: code, args: args))).try();
+    lo.finish(Terminator.Jump(head)).try();
+    lo.start(done);
+    Ok
+}
+
+// The address of entry `index` (a U64 slot) of the record at `scope`.
+entry_at = (lo :: Lowerer, scope: usize, index: usize, span: Span) Res<usize, LowerError> {
+    base = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.Cast(Convert(out: base, input: scope))).try();
+    skip   = lo.binary_word(Op.Mul, index, ENTRY_BYTES, span).try();
+    inside = lo.binary_word(Op.Add, skip, ENTRIES, span).try();
+    at     = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: at,
+        left: base,
+        right: inside,
+        op: Op.Add,
+        span: span
+    ))).try();
+    out = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.Cast(Convert(out: out, input: at))).try();
+    Ok(out)
+}
+
+// `left op constant` on U64 words; comparisons answer a Bool slot.
+binary_word = (lo :: Lowerer, op: Op, left: usize, right: usize, span: Span)
+              Res<usize, LowerError> {
+    class = op.match({
+        Equal        => Scalar.Bool,
+        GreaterEqual => Scalar.Bool,
+        _            => Scalar.U64,
+    });
+    constant = lo.word_const(Scalar.U64, right.to_i64_bits()).try();
+    out      = lo.slot_of(class).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out,
+        left: left,
+        right: constant,
+        op: op,
+        span: span
+    ))).try();
+    Ok(out)
+}
+
+// A deferred closure lifted into `(entry: Ptr) ()`: its captures bound to
+// the entry copy, then its statements.
+deferred_function* = (lo :: Lowerer, body: LiftedBody) Res<Func, LowerError> {
+    l = lo.tree.expr_at(body.lambda).kind.match({ Lambda(l) => Ok(l), _ => None })
+        .ok_or(unsupported(
+            nowhere(),
+            "a deferred closure that is not a lambda"
+        )).try();
+    params ::= lo.alloc.Vec<Scalar>();
+    params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
+    entry_block = lo.begin_synth(params).try();
+    frame       = lo.push_frame(
+        body.inst,
+        body.module,
+        body.ret_ty,
+        body.self_ty,
+        body.scope
+    ).try();
+    lo.use_frame(frame);
+    lo.bind_captures(0, body.captures).try();
+    lo.block(l.body).try();
+    lo.enter(lo.here().ret_block).try();
+    done = lo.unit().try();
+    lo.finish_synth("defer_body", entry_block, 1, done.slot, Scalar.Unit)
+}

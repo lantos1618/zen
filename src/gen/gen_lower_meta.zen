@@ -1,0 +1,100 @@
+// `@meta(..)` reads sema folded to constants: a written type's name, a
+// walk's current `field.name`, and a `.fields().len` count. A field walk
+// `@meta(t: T).fields().loop((h, field) { .. })` is unrolled, one pass per
+// field sema listed, with `field.name` and `recv.at(field)` naming that
+// field and `h` the walk's break and next.
+
+{ Vec } = std.collections
+{ Res, Ok, None } = std.core
+{ str } = std.text
+{ ExprId, Access, Call, Ident } = std.ast
+{ Span } = std.source
+{ is_count_chain } = sema.sema_meta
+{ LowerError, unsupported } = gen.gen_lower
+{ Lowerer, Value, LocalKind, LoopTarget, to_i64_bits } = gen.gen_lower_core
+
+// The folded value of `a`, or None when the ordinary access applies.
+meta_access* = (lo :: Lowerer, id: ExprId, a: Access) Res<Res<Value>, LowerError> {
+    text: Res<str> = lo.tree.expr_at(a.base).kind.match({
+        Meta(m) => m.type.match({ Ok(t) => lo.check.meta_str(t), None => None }),
+        _       => lo.check.meta_name_read(id).match({
+            true  => lo.check.walk_field_now(),
+            false => None,
+        }),
+    });
+    text.match({
+        Ok(name) => Ok(Ok(lo.string(name, lo.prim("str").try()).try())),
+        None     => lo.check.is_count_chain(a).match({
+            true  => {
+                count = lo.chain_count(a.base).ok_or(unsupported(
+                    lo.tree.expr_at(id).span,
+                    "a field count sema did not fold"
+                )).try();
+                Ok(Ok(lo.constant(lo.prim("usize").try(), count.to_i64_bits()).try()))
+            },
+            false => Ok(None),
+        }),
+    })
+}
+
+// `@meta(t: T).fields()`'s folded count, read at the Meta the chain's
+// call is made on.
+chain_count = (lo :: Lowerer, call: ExprId) Res<usize> {
+    lo.tree.expr_at(call).kind.match({
+        Call(k) => lo.tree.expr_at(k.callee).kind.match({
+            Access(f) => lo.tree.expr_at(f.base).kind.match({
+                Meta(m) => m.type.match({ Ok(t) => lo.check.meta_count_of(t), None => None }),
+                _       => None,
+            }),
+            _         => None,
+        }),
+        _       => None,
+    })
+}
+
+// The unrolled walk: each pass's `next` falls through to the following
+// pass, `break` leaves after the last.
+meta_walk* = (lo :: Lowerer, c: Call, names: Vec<str>, span: Span) Res<Value, LowerError> {
+    arg = c.args.get(0).ok_or(unsupported(span, "a field walk with no body")).try();
+    l   = lo.tree.expr_at(arg.value).kind.match({ Lambda(l) => Ok(l), _ => None })
+        .ok_or(unsupported(span, "a field walk with no body")).try();
+    brk     = lo.label().try();
+    loop_id = lo.loops.len;
+    lo.loops.add(LoopTarget(
+        brk: brk,
+        next: brk,
+        result: None,
+        depth: lo.scopes.len
+    )).try(LowerError.OutOfMemory);
+    names.loop((name) {
+        next = lo.label().try();
+        lo.loops.set(loop_id, LoopTarget(
+            brk: brk,
+            next: next,
+            result: None,
+            depth: lo.scopes.len
+        )).ok_or(unsupported(span, "a missing walk")).try();
+        mark = lo.locals.len;
+        l.params.get(0).when_ok((p) {
+            lo.bind_local(p.name.text, LocalKind.Handle(loop_id)).try();
+        });
+        lo.check.push_walk_now(name).try(LowerError.OutOfMemory);
+        lowered = lo.block(l.body);
+        lo.check.pop_walk_now();
+        lowered.try();
+        lo.release_locals(mark);
+        lo.enter(next).try();
+    });
+    lo.loops.take(lo.loops.len - 1);
+    lo.enter(brk).try();
+    lo.unit()
+}
+
+// `recv.at(field)` in a pass: the field this pass names, read off `recv`.
+meta_proj* = (lo :: Lowerer, id: ExprId, a: Access, span: Span) Res<Value, LowerError> {
+    name = lo.check.walk_field_now().ok_or(unsupported(
+        span,
+        "a field projection outside a field walk"
+    )).try();
+    lo.value_access(id, Access(base: a.base, name: Ident(text: name, span: a.name.span)), span)
+}

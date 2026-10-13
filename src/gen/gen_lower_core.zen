@@ -43,6 +43,8 @@
 { variant_index, size_of, TAG_BYTES } = gen.gen_lower_shape
 { call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
 { SynthAt, TurnName, lower_pending } = gen.gen_lower_thread
+{ scope_value, run_record } = gen.gen_lower_scope
+{ meta_access } = gen.gen_lower_meta
 { owner_of } = sema.sema_inst
 { alias_module } = sema.sema_module
 
@@ -150,8 +152,10 @@ Callee* = {
 LoopTarget* = { brk*: usize, next*: usize, result*: Res<Value>, depth* :: usize = 0 }
 
 // One open block's cleanup: its Drop bindings from `drops`, its defers from
-// `defers`, both in registration order.
-Cleanup* = { drops*: usize, defers*: usize }
+// `defers`, both in registration order. `record` is the block's runtime
+// defer record, made when `@scope` is first used as a value
+// (gen_lower_scope).
+Cleanup* = { drops*: usize, defers*: usize, record* :: Res<usize> = None }
 
 // A binding whose type implements Drop; `live` is a Bool slot cleared when
 // the value is consumed.
@@ -824,6 +828,7 @@ Lowerer* = {
             FixedArray(f) => self.array(id, f.elems, e.span),
             Array(a)      => self.array(id, a.elems, e.span),
             SelfType      => self.name(id, "self", e.span),
+            Scope         => self.scope_value(id),
             // `consume x` moves the value out: this frame no longer drops it.
             Consume(c)    => {
                 value = self.expr(c.operand).try();
@@ -1843,6 +1848,9 @@ Lowerer* = {
         defers_end = self.scopes.get(
             index + 1
         ).match({ Ok(next) => next.defers, None => self.defers.len });
+        // Record entries were all registered after the static defers
+        // before them, so they run first.
+        scope.record.when_ok((record) { self.run_record(record).try(); }).ignore_absent();
         Range(scope.defers, defers_end).loop((k) {
             entry = self.defers.get(defers_end - 1 - (k - scope.defers)).ok_or(unsupported(nowhere(), "a missing defer")).try();
             self.run_defer(entry).try();
@@ -2100,11 +2108,15 @@ Lowerer* = {
             }),
             _       => None,
         });
-        type_name.match({
-            Ok(name) => self.type_member(id, name, a.name.text, span),
-            None     => self.member_const(a.base, a.name.text, id).try().match({
-                Ok(v) => Ok(v),
-                None  => self.value_access(id, a, span),
+        folded = self.meta_access(id, a).try();
+        folded.match({
+            Ok(v) => Ok(v),
+            None  => type_name.match({
+                Ok(name) => self.type_member(id, name, a.name.text, span),
+                None     => self.member_const(a.base, a.name.text, id).try().match({
+                    Ok(v) => Ok(v),
+                    None  => self.value_access(id, a, span),
+                }),
             }),
         })
     }
@@ -2150,7 +2162,7 @@ Lowerer* = {
         })
     }
 
-    value_access = (self :: @Self, id: ExprId, a: Access, span: Span) Res<Value, LowerError> {
+    value_access* = (self :: @Self, id: ExprId, a: Access, span: Span) Res<Value, LowerError> {
         capability = self.capability_of(a.base).try();
         capability.match({
             Ok(_) => {

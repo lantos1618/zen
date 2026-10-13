@@ -32,6 +32,7 @@
 { Source, argument_value, argument_place, sys_env_call, closure_of } = gen.gen_lower_call
 { pointee_of, payload_type } = gen.gen_lower_member
 { real_call } = gen.gen_lower_call
+{ deferred_function } = gen.gen_lower_scope
 
 // ---------------------------------------------------------------------
 // std.sys runtime operations
@@ -235,7 +236,7 @@ element = (
 // A function instance with no declaration of its own. It occupies a slot in
 // `Lowerer.pending` like any instance (so calls and code addresses name it
 // by index) and is lowered from this description instead of a Function.
-Synth* = { Lifted: LiftedBody | Actor: ActorEntry | Names }
+Synth* = { Lifted: LiftedBody | Deferred: LiftedBody | Actor: ActorEntry | Names }
 // A turn's source name, `Type.behaviour`, for the trace's name table.
 TurnName* = { index*: usize, name*: String }
 SynthAt* = { index*: usize, synth*: Synth }
@@ -250,6 +251,7 @@ lower_pending* = (
     lo.synths.find((s) { s.index == index }).match({
         Ok(at) => at.synth.match({
             Lifted(body)   => lo.lifted_function(body),
+            Deferred(body) => lo.deferred_function(body),
             Actor(routine) => lo.actor_function(routine),
             Names          => lo.names_function(),
         }),
@@ -465,7 +467,7 @@ spawn_thread* = (
 
 // The names the closure reads that are locals of the frame it was written
 // in, with their record offsets after the answer at `start`.
-thread_captures = (lo :: Lowerer, lambda: LambdaRef, start: usize, span: Span)
+thread_captures* = (lo :: Lowerer, lambda: LambdaRef, start: usize, span: Span)
                   Res<Vec<Capture>, LowerError> {
     l = lo.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
         .ok_or(unsupported(span, "a closure that is not a lambda")).try();
@@ -546,7 +548,7 @@ record_size = (
 }
 
 // Copy one captured local into the record, in the closure's frame.
-store_capture = (
+store_capture* = (
     lo     :: Lowerer,
     record : usize,
     c      : Capture
@@ -589,38 +591,7 @@ lifted_function = (lo :: Lowerer, body: LiftedBody) Res<Func, LowerError> {
         body.scope
     ).try();
     lo.use_frame(frame);
-    body.captures.loop((c) {
-        c.kind.match({
-            Copied    => lo.bind_local(
-                c.name,
-                LocalKind.Ref(Place(
-                    base: Base.Through(record),
-                    offset: c.offset,
-                    ty: c.ty
-                ))
-            ).try(),
-            Address   => {
-                pointer = lo.slot_of(Scalar.Ptr).try();
-                lo.add(Instruction.LoadValue(Load(
-                    out: pointer,
-                    base: record,
-                    offset: c.offset
-                ))).try();
-                lo.bind_local(
-                    c.name,
-                    LocalKind.Ref(Place(
-                        base: Base.Through(pointer),
-                        offset: 0,
-                        ty: c.ty
-                    ))
-                ).try();
-            },
-            Authority => lo.bind_local(
-                c.name,
-                LocalKind.Capability(c.ty)
-            ).try(),
-        });
-    });
+    lo.bind_captures(record, body.captures).try();
     value  = lo.block(l.body).try();
     here   = lo.here();
     answer = lo.coerce(value, body.ret_ty).try();
@@ -888,4 +859,42 @@ byte_pointer* = (lo :: Lowerer) Res<TyId, LowerError> {
         d.name,
         args
     ).try(LowerError.OutOfMemory)
+}
+
+// Bind each capture to its place in `record`: copies read in place, an
+// address reaches the creator's binding, an authority is the type alone.
+bind_captures* = (lo :: Lowerer, record: usize, captures: Vec<Capture>) Res<LowerError> {
+    captures.loop((c) {
+        c.kind.match({
+            Copied    => lo.bind_local(
+                c.name,
+                LocalKind.Ref(Place(
+                    base: Base.Through(record),
+                    offset: c.offset,
+                    ty: c.ty
+                ))
+            ).try(),
+            Address   => {
+                pointer = lo.slot_of(Scalar.Ptr).try();
+                lo.add(Instruction.LoadValue(Load(
+                    out: pointer,
+                    base: record,
+                    offset: c.offset
+                ))).try();
+                lo.bind_local(
+                    c.name,
+                    LocalKind.Ref(Place(
+                        base: Base.Through(pointer),
+                        offset: 0,
+                        ty: c.ty
+                    ))
+                ).try();
+            },
+            Authority => lo.bind_local(
+                c.name,
+                LocalKind.Capability(c.ty)
+            ).try(),
+        });
+    });
+    Ok
 }

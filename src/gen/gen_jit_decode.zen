@@ -42,7 +42,7 @@ Kind* = { ConstWord
 // a width in bytes or an operator code; `ty` is the result's class.
 // `slow` indexes the instruction itself in `Code.slow`, which a fast step
 // falls back to when its fast path cannot finish (an overflow trap).
-Step* = { kind*: Kind, a*: usize, b*: usize, c*: usize, n*: u64, w*: usize, ty*: Scalar, slow* :: usize = 0 }
+Step* = { kind*: Kind, a*: usize, b*: usize, c*: usize, n*: u64, w*: usize, ty*: Scalar, slow* :: usize = 0, index* :: usize = 0 }
 
 Code* = {
     steps* :: Vec<Step>,
@@ -263,7 +263,8 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                     c: v.offset + shift,
                     n: 0,
                     w: moved(class_of(f, v.out)),
-                    ty: class_of(f, v.out)
+                    ty: class_of(f, v.out),
+                    index: indexed_cell(offsets, base, fold)
                 ),
                 StoreValue(v)  => Step(
                     kind: Kind.Store,
@@ -276,7 +277,8 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                     c: v.offset + shift,
                     n: 0,
                     w: moved(class_of(f, v.value)),
-                    ty: class_of(f, v.value)
+                    ty: class_of(f, v.value),
+                    index: indexed_cell(offsets, base, fold)
                 ),
                 AddressOf(v)   => Step(
                     kind: Kind.AddressOf,
@@ -465,7 +467,8 @@ landed = (f: Func, exit: Terminator) Terminator {
 Facts = { fixed: Vec<bool>, sets: Vec<usize>, value: Vec<i64>, uses: Vec<usize>, taken: Vec<bool>, truthy: Vec<bool> }
 
 // A load or store's base and offset after folding the add before it.
-Fold = { base: usize, by: usize }
+// `index` is a slot plus one whose value is added too, or 0.
+Fold = { base: usize, by: usize, index: usize }
 
 // A branch on a comparison's 0 or 1 instead of on `flag == constant`.
 Test = { flag: usize, swap: bool }
@@ -503,14 +506,63 @@ fold_add = (
                            && single(facts, v.out) && based_on(next, v.out)).match({
             false => None,
             true  => small(pinned_value(facts, v.right)).match({
-                Ok(by) => Ok(Fold(base: v.left, by: by)),
+                Ok(by) => Ok(Fold(base: v.left, by: by, index: 0)),
                 None   => small(pinned_value(facts, v.left)).match({
-                    Ok(by) => Ok(Fold(base: v.right, by: by)),
-                    None   => None,
+                    Ok(by) => Ok(Fold(base: v.right, by: by, index: 0)),
+                    None   => indexable(f, next).match({
+                        true  => Ok(Fold(
+                            base: v.left,
+                            by: 0,
+                            index: v.right + 1
+                        )),
+                        false => None,
+                    }),
                 }),
             }),
         }),
         _              => None,
+    })
+}
+
+// Whether `next` is a load or store whose width has an indexed step.
+indexable = (f: Func, next: Res<Instruction>) bool {
+    next.match({
+        Ok(i) => i.match({
+            LoadValue(l)  => fast_load(class_of(f, l.out)),
+            StoreValue(s) => moved(class_of(
+                f,
+                s.value
+            )).match({ 8 => true, 1 => true, 4 => true, _ => false }),
+            _             => false,
+        }),
+        None  => false,
+    })
+}
+
+fast_load = (ty: Scalar) bool {
+    moved(ty) == 8 || (moved(ty) == 1 && widening(ty) == 2) || (moved(ty) == 4 && widening(ty) == 6)
+}
+
+// A step's index cell plus one, or 0.
+indexed_cell = (offsets: Vec<usize>, base: usize, fold: Res<Fold>) usize {
+    fold.match({
+        Ok(d) => (d.index == 0).match({ true => 0, false => cell_of(
+            offsets,
+            base,
+            d.index - 1
+        ) + 1 }),
+        None  => 0,
+    })
+}
+
+// The indexed form of a load or store step, its index cell in word 7.
+indexed = (out: usize, index: usize, op: usize) usize {
+    (index == 0).match({
+        true  => op,
+        false => {
+            put(out, 7, index - 1);
+            op.match({ 4 => 53, 47 => 54, 48 => 55, 6 => 56, 49 => 57, _ => 58 })
+        },
     })
 }
 
@@ -762,7 +814,7 @@ encode* = (code: Code, at: usize) usize {
             CopyWord        => 1,
             CopyBlock       => 2,
             AddressOf       => 3,
-            Load            => (s.w == 8).match({
+            Load            => indexed(out, s.index, (s.w == 8).match({
                 true  => 4,
                 false => (s.w == 1 && widening(s.ty) == 2).match({
                     true  => 47,
@@ -771,8 +823,12 @@ encode* = (code: Code, at: usize) usize {
                         false => { put(out, 7, widening(s.ty)); 5 },
                     }),
                 }),
-            }),
-            Store           => s.w.match({ 8 => 6, 1 => 49, 4 => 50, _ => 7 }),
+            })),
+            Store           => indexed(
+                out,
+                s.index,
+                s.w.match({ 8 => 6, 1 => 49, 4 => 50, _ => 7 })
+            ),
             AddSigned       => narrow(out, s, 8),
             SubSigned       => narrow(out, s, 9),
             MulSigned       => narrow(out, s, 10),

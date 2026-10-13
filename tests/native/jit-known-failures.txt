@@ -64,6 +64,5 @@ tests/corpus/std/simd_sha	std/simd.zen:230:27: error: unsupported by this backen
 tests/corpus/std/simd_vectors	simd_vectors.zen:46:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements	std/math/math.zen:24:28: error: unsupported by this backend: a member without a body this backend can find (`f64`)
 tests/corpus/std/volatile_and_inline	volatile_and_inline.zen:18:35: error: unsupported by this backend: this pointer operation
-tests/corpus/string-basic/a_float_fits_the_buffer/main	main.zen:44:25: error: unsupported by this backend: formatting an f64 into text
 tests/corpus/trait-bound/computed_fields_recompute_and_own_storage_wins/main	main.zen:41:19: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/traps/simd_lane_out_of_bounds	simd_lane_out_of_bounds.zen:8:12: error: unsupported by this backend: the std.simd operation splat_*

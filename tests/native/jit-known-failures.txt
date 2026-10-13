@@ -7,9 +7,6 @@ tests/corpus/actor/bytes_payload_moves_to_receiver	bytes_payload_moves_to_receiv
 tests/corpus/actor/safe_nested_payload_crosses_actor	safe_nested_payload_crosses_actor.zen:27:15: error: unsupported by this backend: a type sema did not settle
 tests/corpus/actor/vector_state_is_16_aligned	vector_state_is_16_aligned.zen:22:9: error: unsupported by this backend: u8x16 values
 tests/corpus/bitwise/secret_words_take_public_counts	secret_words_take_public_counts.zen:6:8: error: unsupported by this backend: a Secret parameter
-tests/corpus/bitwise/u128_words	:0:0: error: unsupported by this backend: u128 values
-tests/corpus/casts-conversions/float_narrowing_rounds_and_exact_conversions_check/main	main.zen:29:30: error: unsupported by this backend: f32 values
-tests/corpus/casts-conversions/float_widening_is_exact/main	:0:0: error: unsupported by this backend: f32 values
 tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main	main.zen:23:27: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i64`)
 tests/corpus/codegen/byte_order_reads_and_writes_round_trip	byte_order_reads_and_writes_round_trip.zen:11:22: error: unsupported by this backend: this pointer operation
 tests/corpus/codegen/c_abi_integer_spelling	c_abi_integer_spelling.zen:28:30: error: unsupported by this backend: the compiler-provided operation `c_abi_integer_spelling.abs`
@@ -18,28 +15,21 @@ tests/corpus/codegen/unit_pointer_is_an_opaque_handle	unit_pointer_is_an_opaque_
 tests/corpus/env/proc_close_without_live_child	proc_close_without_live_child.zen:28:6: error: unsupported by this backend: the compiler-provided operation `proc_close_without_live_child.setpgid`
 tests/corpus/file-io/posix_stream/main	main.zen:78:6: error: unsupported by this backend: the compiler-provided operation `main.pipe`
 tests/corpus/gen_zen/bodyless_free_function_is_extern/main	main.zen:17:11: error: unsupported by this backend: the compiler-provided operation `main.isdigit`
-tests/corpus/math/power_and_rounding	power_and_rounding.zen:13:34: error: unsupported by this backend: a float literal with more than 15 significant digits or a decimal exponent beyond 22
-tests/corpus/math/scalar	scalar.zen:9:21: error: unsupported by this backend: a float literal with more than 15 significant digits or a decimal exponent beyond 22
+tests/corpus/math/power_and_rounding	std/math/math.zen:26:41: error: unsupported by this backend: a member without a body this backend can find (`f64`)
+tests/corpus/math/scalar	std/math/math.zen:19:27: error: unsupported by this backend: a member without a body this backend can find (`f64`)
 tests/corpus/net/dns_resolve/main	std/net/socket.zen:175:12: error: unsupported by this backend: a native C record
 tests/corpus/net/tcp_connect/main	std/net/socket.zen:248:27: error: unsupported by this backend: the compiler-provided operation `std.net.socket.freeaddrinfo`
 tests/corpus/net/tls_connect/main	std/net/tls.zen:261:13: error: unsupported by this backend: the compiler-provided operation `std.net.tls.SSL_shutdown`
 tests/corpus/own/send_consumed_buffer	send_consumed_buffer.zen:58:38: error: unsupported by this backend: the compiler-provided operation `send_consumed_buffer.abort`
-tests/corpus/printing/floats_print_only_through_f64/main	:0:0: error: unsupported by this backend: f32 values
 tests/corpus/proc_run/creation_mask/main	std/proc/proc.zen:213:28: error: unsupported by this backend: a C macro other than a target predefine
-tests/corpus/ptr/comparisons_preserve_element_types	comparisons_preserve_element_types.zen:56:10: error: unsupported by this backend: f32 values
 tests/corpus/sema/statement_tail_is_not_a_value	:0:0: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i32`)
-tests/corpus/sema/widening_conversions_are_bounds	:0:0: error: unsupported by this backend: f32 values
-tests/corpus/std/carry_limbs	carry_limbs.zen:34:9: error: unsupported by this backend: the machine primitive add_carry
-tests/corpus/std/constant_time	constant_time.zen:53:18: error: unsupported by this backend: the machine primitive truncate_*
+tests/corpus/std/carry_limbs	std/simd.zen:218:22: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
+tests/corpus/std/constant_time	constant_time.zen:154:9: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.value_barrier`
+tests/corpus/std/secret_discipline_accepts_constant_time_code	std/ct/ct.zen:48:34: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.declassify_barrier`
 tests/corpus/std/os_entropy	std/entropy.zen:23:27: error: unsupported by this backend: the compiler-provided operation `std.entropy.arc4random_buf`
-tests/corpus/std/secret_discipline_accepts_constant_time_code	secret_discipline_accepts_constant_time_code.zen:59:49: error: unsupported by this backend: the machine primitive truncate_*
-tests/corpus/std/signed_shift_right_fills_with_the_sign	signed_shift_right_fills_with_the_sign.zen:27:9: error: unsupported by this backend: an arithmetic shift of a signed word
 tests/corpus/std/simd_bmi2	std/simd.zen:215:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
 tests/corpus/std/simd_features	simd_features.zen:96:25: error: unsupported by this backend: the std.simd operation lane
 tests/corpus/std/simd_sha	std/simd.zen:230:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
 tests/corpus/std/simd_vectors	simd_vectors.zen:46:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements	std/math/math.zen:24:28: error: unsupported by this backend: the compiler-provided operation `std.math.math.sqrt`
-tests/corpus/std/volatile_and_inline	volatile_and_inline.zen:18:35: error: unsupported by this backend: this pointer operation
-tests/corpus/std/wide_integers	wide_integers.zen:17:15: error: unsupported by this backend: the machine primitive mul_wide (64x64 -> 128)
-tests/corpus/string-basic/a_float_fits_the_buffer/main	main.zen:44:25: error: unsupported by this backend: formatting an f64 into text
 tests/corpus/traps/simd_lane_out_of_bounds	simd_lane_out_of_bounds.zen:8:12: error: unsupported by this backend: the std.simd operation splat_*

@@ -218,13 +218,11 @@ tests/corpus/std/cli_nested_commands_and_trailing_args # UNSUPPORTED: cli_nested
 tests/corpus/std/constant_time # UNSUPPORTED: constant_time.zen:50:18: error: unsupported by this backend: the machine primitive truncate_*
 tests/corpus/std/os_entropy # UNSUPPORTED: os_entropy.zen:5:23: error: unsupported by this backend: a call without successful semantic checking
 tests/corpus/std/secret_discipline_accepts_constant_time_code # UNSUPPORTED: secret_discipline_accepts_constant_time_code.zen:56:42: error: unsupported by this backend: the mach
-tests/corpus/std/signed_shift_right_fills_with_the_sign # UNSUPPORTED: signed_shift_right_fills_with_the_sign.zen:26:9: error: unsupported by this backend: an arithmetic s
 tests/corpus/std/simd_bmi2 # UNSUPPORTED: std/simd.zen:214:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_features # UNSUPPORTED: simd_features.zen:93:25: error: unsupported by this backend: the std.simd operation lane
 tests/corpus/std/simd_sha # UNSUPPORTED: std/simd.zen:229:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_vectors # UNSUPPORTED: simd_vectors.zen:43:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements # UNSUPPORTED: std/math/math.zen:14:28: error: unsupported by this backend: alternatives of a value without them (`
-tests/corpus/std/volatile_and_inline # UNSUPPORTED: volatile_and_inline.zen:15:28: error: unsupported by this backend: this pointer operation
 tests/corpus/std/wide_integers # UNSUPPORTED: wide_integers.zen:16:15: error: unsupported by this backend: the machine primitive mul_wide (64x64 -
 tests/corpus/string-basic/a_float_fits_the_buffer/main # UNSUPPORTED: main.zen:39:25: error: unsupported by this backend: formatting an f64 into text
 tests/corpus/traps/simd_lane_out_of_bounds # UNSUPPORTED: simd_lane_out_of_bounds.zen:7:12: error: unsupported by this backend: the std.simd operation splat_*

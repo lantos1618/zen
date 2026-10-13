@@ -8,7 +8,7 @@
 { Alloc, AllocError } = std.mem
 { String, str } = std.text
 { Vec } = std.collections
-{ Res, Ok, Range } = std.core
+{ Res, Ok, loop, Range } = std.core
 { Span } = std.source
 { Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print, Move } = gen.gen_ir
 { Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
@@ -49,6 +49,9 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         target: a.Vec<usize>(),
         named: a.Vec<bool>(),
         lent: a.Vec<bool>(),
+        pure: a.Vec<bool>(),
+        dirty: a.Vec<bool>(),
+        calls: a.Vec<usize>(),
         copies: 0
     );
     writer.program(program).try();
@@ -75,6 +78,16 @@ C = {
     first :: Vec<usize>,
     borrowed :: Vec<bool>,
     taken :: Vec<bool>,
+    // From `plan`, per function: neither it nor anything it calls writes
+    // storage older than its own frame, so memory it is lent stays put until
+    // it returns.
+    pure :: Vec<bool>,
+    // Per parameter, laid out as `borrowed`: a store reaches through it.
+    dirty :: Vec<bool>,
+    // Four words per call argument not addressing the caller's frame, and per
+    // call: caller, callee, argument position plus one (zero for the whole
+    // call) and the caller's parameter it is plus one (zero for none).
+    calls :: Vec<usize>,
     names :: Vec<str>,
     // From `survey`, per slot of one function: the slot an address slot
     // points at (plus one; zero for none), whether that slot's address
@@ -199,6 +212,7 @@ C = {
         program.functions.loop((h, index, function) {
             self.first.add(self.borrowed.len).try();
             self.survey(function).try();
+            self.effects(index, function).try();
             Range(0, function.parameters).loop((i) {
                 self.borrowed.add(
                     !self.taken.get(index).value_or(true)
@@ -209,7 +223,140 @@ C = {
                 ).try();
             });
         });
+        changed ::= true;
+        loop(() { changed }, (h) {
+            changed = false;
+            Range(0, self.calls.len / 4).loop((e) {
+                caller = self.calls.get(4 * e).value_or(0);
+                callee = self.calls.get(4 * e + 1).value_or(0);
+                at     = self.calls.get(4 * e + 2).value_or(0);
+                param  = self.calls.get(4 * e + 3).value_or(0);
+                hit    = (at == 0).match({
+                    true  => !self.pure.get(callee).value_or(false),
+                    false => self.dirty.get(self.first.get(callee).value_or(0) + at - 1).value_or(true),
+                });
+                (hit && param == 0 && self.pure.get(caller).value_or(false))
+                    .then(() {
+                    self.pure.set(caller, false);
+                    changed = true;
+                });
+                (hit && param > 0).then(() {
+                    k = self.first.get(caller).value_or(0) + param - 1;
+                    (!self.dirty.get(k).value_or(true)).then(() {
+                        self.dirty.set(k, true);
+                        changed = true;
+                    });
+                });
+            });
+        });
+        program.functions.loop((g, index, function) {
+            steady ::= self.pure.get(index).value_or(false);
+            Range(0, function.parameters).loop((i) {
+                steady = steady && !self.dirty.get(self.first.get(index).value_or(0) + i).value_or(true);
+            });
+            self.pure.set(index, steady);
+        });
         Ok
+    }
+
+    // How `f` writes memory, before its calls are settled: a store through
+    // one of its own slots' addresses stays in its frame, one through a
+    // parameter marks that parameter, and its calls become `calls` entries.
+    effects = (self :: @Self, index: usize, f: Func) Res<(), AllocError> {
+        only ::= true;
+        Range(0, f.parameters).loop((i) { self.dirty.add(false).try(); });
+        f.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    StoreValue(v)   => { only = only && self.reach(
+                        f,
+                        index,
+                        v.base
+                    ); },
+                    CopyBytes(v)    => { only = only && self.reach(
+                        f,
+                        index,
+                        v.dest
+                    ); },
+                    AtomicStore(v)  => { only = only && self.reach(
+                        f,
+                        index,
+                        v.base
+                    ); },
+                    AtomicUpdate(v) => { only = only && self.reach(
+                        f,
+                        index,
+                        v.base
+                    ); },
+                    CompareSwap(v)  => { only = only && self.reach(
+                        f,
+                        index,
+                        v.base
+                    ); },
+                    Invoke(call)    => {
+                        self.calls.add(index).try();
+                        self.calls.add(call.function).try();
+                        self.calls.add(0).try();
+                        self.calls.add(0).try();
+                        call.args.loop((h, i, slot) {
+                            (!self.own(slot)).then(() {
+                                self.calls.add(index).try();
+                                self.calls.add(call.function).try();
+                                self.calls.add(i + 1).try();
+                                self.calls.add(self.parameter(f, slot)).try();
+                            });
+                        });
+                    },
+                    _               => { only = only && !self.writes_memory(
+                        instruction
+                    ); },
+                });
+            });
+        });
+        self.pure.add(only).try();
+        Ok
+    }
+
+    // A store through `base` stays in the frame, or marks the parameter it is.
+    reach = (self :: @Self, f: Func, index: usize, base: usize) bool {
+        at = self.parameter(f, base);
+        (at > 0).then(() {
+            self.dirty.set(self.first.get(index).value_or(0) + at - 1, true);
+        });
+        at > 0 || self.own(base)
+    }
+
+    // The never reassigned parameter `slot` is, plus one; zero for none.
+    parameter = (self: @Self, f: Func, slot: usize) usize {
+        (slot < f.parameters && self.writes.get(slot).value_or(1) == 0).match({
+            true  => slot + 1,
+            false => 0,
+        })
+    }
+
+    own = (self: @Self, base: usize) bool {
+        self.origin.get(base).value_or(0) != 0
+            && self.writes.get(base).value_or(0) == 1
+    }
+
+    writes_memory = (self: @Self, instruction: Instruction) bool {
+        instruction.match({
+            Invoke(call)    => !self.pure.get(call.function).value_or(false),
+            StoreValue(_)   => true,
+            CopyBytes(_)    => true,
+            Text(_)         => true,
+            System(_)       => true,
+            MapPages(_)     => true,
+            UnmapPages(_)   => true,
+            Machine(_)      => true,
+            Host(_)         => true,
+            Wait(_)         => true,
+            AtomicStore(_)  => true,
+            AtomicUpdate(_) => true,
+            CompareSwap(_)  => true,
+            InvokeAt(_)     => true,
+            _               => false,
+        })
     }
 
     by_pointer = (self: @Self, function: usize, param: usize) bool {
@@ -479,7 +626,9 @@ C = {
     lends = (self: @Self, f: Func, b: usize, j: usize, k: usize,
              call: Invocation, base: usize) bool {
         // A `::` parameter may change through another alias during the call.
-        // Only a local AddressOf origin has storage this pass can prove stable.
+        // A local AddressOf origin has storage this pass can prove stable;
+        // storage behind any other pointer stays put only while nothing
+        // writes memory between the load and the callee's return.
         at = self.origin.get(base).value_or(0);
         (at > f.parameters && self.writes.get(base).value_or(0) == 1).match({
             true  => {
@@ -489,8 +638,32 @@ C = {
                     && self.root(call.out) != dest
                     && self.untouched(f, b, j + 1, k, dest)
             },
-            false => false,
+            false => at == 0 && self.pure.get(call.function).value_or(false)
+                && self.quiet(f, b, j + 1, k, base),
         })
+    }
+
+    // No instruction from `from` up to `to` writes memory or `base`.
+    quiet = (self: @Self, f: Func, b: usize, from: usize, to: usize,
+             base: usize) bool {
+        clear ::= true;
+        f.blocks.get(b).match({
+            Ok(block) => Range(from, to).loop((k) {
+                block.code.get(k).match({
+                    Ok(instruction) => {
+                        self.writes_memory(instruction).then(() {
+                            clear = false;
+                        });
+                        mentions(instruction, (slot, read) {
+                            (!read && self.root(slot) == self.root(base)).then(() { clear = false; });
+                        });
+                    },
+                    None            => (),
+                });
+            }),
+            None      => { clear = false; },
+        });
+        clear
     }
 
     // The local place a lent load would have copied from.

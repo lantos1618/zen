@@ -203,16 +203,32 @@ Runner = {
         ).try();
         link ::= self.a.Vec<str>();
         ["/bin/sh", "-c", stage.view()].loop((w) { link.add(w).try(); });
-        self.run(link).try();
-        script = self.a.String(
-            "#!/bin/sh\nexec '{}' build '{}/{}' --entry '{}' --std '{}/{}' --backend jit --argv0 \"$0\" -- \"$@\"\n",
-            zen.view(),
-            here,
-            root.view(),
-            c.entry,
-            here,
-            root.view()
-        ).try();
+        staged = self.run(link).try();
+        // A root that did not stage is reported by the run, not run half
+        // staged.
+        failure = self.a.String("{}.stage.err", binary).try();
+        script  = (staged.code == 0).match({
+            true  => self.a.String(
+                "#!/bin/sh\nexec '{}' build '{}/{}' --entry '{}' --std '{}/{}' --backend jit --argv0 \"$0\" -- \"$@\"\n",
+                zen.view(),
+                here,
+                root.view(),
+                c.entry,
+                here,
+                root.view()
+            ).try(),
+            false => self.a.String(
+                "#!/bin/sh\necho 'native-corpus: staging failed:' >&2\ncat '{}/{}' >&2\nexit 1\n",
+                here,
+                failure.view()
+            ).try(),
+        });
+        (staged.code != 0).then(
+            () { self.env.fs.write(
+                failure.view(),
+                staged.err.view()
+            ).ignore(); }
+        );
         self.env.fs.write(binary, script.view()).ignore();
         chmod ::= self.a.Vec<str>();
         ["chmod", "+x", binary].loop((w) { chmod.add(w).try(); });
@@ -378,14 +394,20 @@ Runner = {
         source = self.a.String("{}/prog.s", dir.view()).try();
         object = self.a.String("{}/prog.o", dir.view()).try();
         binary = self.a.String("{}/prog", dir.view()).try();
-        commands ::= self.a.String(
-            "'{}' build '{}' --entry '{}' --std src --backend asm --target '{}' -o '{}'\n",
-            self.zen,
-            c.root,
-            c.entry,
-            self.target_name,
-            source.view()
-        ).try();
+        commands ::= self.jit().match({
+            true  => self.a.String(
+                "# {} stages the root (tests/native/stage.py) and runs it with --backend jit\n",
+                binary.view()
+            ).try(),
+            false => self.a.String(
+                "'{}' build '{}' --entry '{}' --std src --backend asm --target '{}' -o '{}'\n",
+                self.zen,
+                c.root,
+                c.entry,
+                self.target_name,
+                source.view()
+            ).try(),
+        });
         passed   ::= false;
         self.compile(c, source.view()).try().match({
             Ok(reason) => {
@@ -402,18 +424,23 @@ Runner = {
                 );
             },
             None       => {
-                commands.add(
-                    quoted(
-                        self.a,
-                        self.assemble_argv(source.view(), object.view()).try()
-                    ).try().view()
-                ).try();
-                commands.add(
-                    quoted(
-                        self.a,
-                        self.link_argv(object.view(), binary.view()).try()
-                    ).try().view()
-                ).try();
+                (!self.jit()).then(() {
+                    commands.add(
+                        quoted(
+                            self.a,
+                            self.assemble_argv(
+                                source.view(),
+                                object.view()
+                            ).try()
+                        ).try().view()
+                    ).try();
+                    commands.add(
+                        quoted(
+                            self.a,
+                            self.link_argv(object.view(), binary.view()).try()
+                        ).try().view()
+                    ).try();
+                });
                 self.link(
                     source.view(),
                     object.view(),
@@ -635,6 +662,21 @@ first_line = (text: str) str {
     text.split_once('\n').match({ Ok(pair) => pair.before, None => text })
 }
 
+// A directory's `main.expected` that tests/run.py ignores because the
+// directory also has `.expected` or `<dir>.expected` (DIR_EXPECTED_NAMES).
+shadowed = (env: Env, a: Alloc, expected: str) bool {
+    expected.ends_with("/main.expected").match({
+        false => false,
+        true  => {
+            dir    = expected.slice(0, expected.len - "/main.expected".len);
+            name   = dir.rfind('/').match({ Ok(at) => dir.slice(at + 1, dir.len), None => dir });
+            dotted = a.String("{}/.expected", dir).match({ Ok(p) => env.fs.exists(p.view()), Err(_) => false });
+            named  = a.String("{}/{}.expected", dir, name).match({ Ok(p) => env.fs.exists(p.view()), Err(_) => false });
+            dotted || named
+        },
+    })
+}
+
 // `name.expected` beside `name.zen` is a single-file test; a directory
 // holding `main.zen` and `.expected` (or `main.expected`) is a program root.
 case_of = (a: Alloc, expected: str) Res<Res<Case>, AllocError> {
@@ -710,7 +752,7 @@ main = (env: Env) Res<i32, AllocError> {
     paths ::= a.Vec<str>();
     listed.split('\n').loop((line) {
         wanted = filter.split(',').find((part) { line.contains(part) }).match({ Ok(_) => true, None => false });
-        (!line.is_empty() && wanted).then(() { paths.add(line).try(); });
+        (!line.is_empty() && wanted && !shadowed(env, a, line)).then(() { paths.add(line).try(); });
     });
     keep_flag = env.var("KEEP_ARTIFACTS").value_or("");
     required  = listed_tests(

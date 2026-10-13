@@ -1610,7 +1610,7 @@ runtime = (out :: String) Res<(), AllocError> {
     // byte-aligned spellings: a plain move even unoptimized, and still
     // defined under strict aliasing. GCC ignores may_alias on a typedef of
     // an already defined struct, so blocks keep memcpy.
-    out.add("typedef unsigned __int128 zr_u128;\n").try();
+    out.add("__extension__ typedef unsigned __int128 zr_u128;\n").try();
     ["int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "int64_t", "uint64_t", "zr_u128", "float", "double"].loop((name) {
         out.fmt(
             "typedef {} __attribute__((may_alias, aligned(1))) za_{};\n",

@@ -1884,9 +1884,9 @@ truncated = (value: f64, into_signed: bool, out: usize) {
     into_signed.match({
         true  => set_i64(
             out,
-            whole.to_i64().value_or(
-                (whole < 0.0).match({ true => i64.MIN, false => i64.MAX })
-            )
+            // Out of range (and NaN) is x86-64's integer indefinite, as
+            // a native build's conversion gives.
+            whole.to_i64().value_or(i64.MIN)
         ),
         false => (whole >= HALF_RANGE()).match({
             true  => {

@@ -1221,24 +1221,19 @@ Lowerer* = {
                 self.string(text, ty)
             },
             Float => {
-                bits   = float_bits(
-                    self.alloc,
-                    l.text
-                ).try(LowerError.OutOfMemory)
-                    .ok_or(unsupported(
-                        span,
-                        "a float literal with more than 15 significant digits or a decimal exponent beyond 22"
-                    )).try();
                 single = self.class_of(
                     ty
                 ).try().match({ F32 => true, _ => false });
-                self.constant(ty, single.match({
-                    true  => single_bits(
-                        self.alloc,
-                        bits
-                    ).try(LowerError.OutOfMemory),
-                    false => bits,
-                }))
+                bits   = float_bits(
+                    self.alloc,
+                    l.text,
+                    single
+                ).try(LowerError.OutOfMemory)
+                    .ok_or(unsupported(
+                        span,
+                        "a float literal with more than 800 digits or a decimal exponent beyond 400"
+                    )).try();
+                self.constant(ty, bits)
             },
         })
     }
@@ -3859,15 +3854,14 @@ to_i64_bits* = (value: usize) i64 {
     value.to_u64().to_i64_bits()
 }
 
-// The IEEE-754 binary64 bits of a decimal float literal (`12.5`, `1e-3`,
-// `1_000.0`). Exact under Clinger's fast path: at most 15 significant
-// digits (an integer below 2^53, so an exact double) and a decimal exponent
-// within 22 (10^22 is the largest exact power of ten), so the one multiply
-// or divide rounds correctly. None outside that range: such a literal is
-// refused rather than rounded twice.
-float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
-    mantissa          :: u64 = 0;
-    digits            ::= 0;
+// The IEEE-754 bits of a decimal float literal (`12.5`, `1e-3`, `1_000.0`),
+// binary32 when `single`, else binary64, rounded to nearest with ties to
+// even from the exact decimal value, as a C compiler reads it. None for a
+// malformed literal, one with more than 800 digits, or a decimal exponent
+// beyond 400.
+float_bits* = (a: Alloc, text: str, single: bool) Res<Res<i64>, AllocError> {
+    digits            ::= Big(limbs: a.Vec<u64>());
+    count             ::= 0;
     scale             :: i64 = 0;
     exponent          :: i64 = 0;
     negative_exponent ::= false;
@@ -3882,11 +3876,9 @@ float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
                     () { valid = false; }
                 ); },
                 false => {
-                    // Leading zeros are not significant digits.
-                    (mantissa > 0 || c != 48).then(() {
-                        digits = digits + 1;
-                        (digits <= 15).match({ true => { mantissa = mantissa * 10 + (c - 48); }, false => { valid = false; } });
-                    });
+                    count = count + 1;
+                    (count > 800).then(() { valid = false; });
+                    valid.then(() { digits.times_add(10, c - 48).try(); });
                     fraction.then(() { scale = scale - 1; });
                 },
             }),
@@ -3902,32 +3894,173 @@ float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
         });
     });
     power = scale + negative_exponent.match({ true => 0 - exponent, false => exponent });
-    (valid && power >= -22 && power <= 22).match({
+    valid.match({
         false => Ok(None),
-        true  => {
-            // Split below 2^30 per part: only i32 converts to f64.
-            high  = (mantissa / 1073741824).to_i32().value_or(0).to_f64();
-            low   = (mantissa % 1073741824).to_i32().value_or(0).to_f64();
-            value = high * 1073741824.0 + low;
-            ten ::= 1.0;
-            steps = (power < 0).match({ true => 0 - power, false => power });
-            Range(0, steps.to_usize().value_or(0)).loop((_) { ten = ten * 10.0; });
-            exact = (power < 0).match({ true => value / ten, false => value * ten });
-            cell  = a.realloc<f64>(null_ptr<f64>(), 1).try();
-            cell.write(0, exact);
-            Ok(Ok(cell.to<u64>().read(0).to_i64_bits()))
+        true  => Ok(Ok(nearest(a, digits, power, single).try())),
+    })
+}
+
+// The float nearest `digits * 10^power` (ties to even). With `V` that
+// value, `e` is the binary exponent (2^e <= V < 2^(e+1), or the least
+// normal exponent for a subnormal) and `q` the integer part of
+// `V * 2^(precision - 1 - e)`, whose remainder decides the rounding.
+nearest = (
+    a      : Alloc,
+    digits : Big,
+    power  : i64,
+    single : bool
+) Res<i64, AllocError> {
+    precision: usize = single.match({ true => 24, false => 53 });
+    bias: i64        = single.match({ true => 127, false => 1023 });
+    infinite: u64    = single.match({ true => 255, false => 2047 });
+    num ::= digits;
+    den ::= Big(limbs: a.Vec<u64>());
+    den.limbs.add(1).try();
+    steps = (power < 0).match({ true => 0 - power, false => power });
+    Range(0, steps.to_usize().value_or(0)).loop((_) {
+        (power > 0).match({
+            true  => num.times_add(10, 0).try(),
+            false => den.times_add(10, 0).try(),
+        });
+    });
+    (num.bits() == 0).match({
+        true  => Ok(0),
+        false => {
+            e ::= num.bits().to_i64_bits() - den.bits().to_i64_bits();
+            above = (e >= 0).match({
+                true  => compare(
+                    num,
+                    den.shifted(a, e.to_usize().value_or(0)).try()
+                ) >= 0,
+                false => compare(
+                    num.shifted(a, (0 - e).to_usize().value_or(0)).try(),
+                    den
+                ) >= 0,
+            });
+            (!above).then(() { e = e - 1; });
+            (e < 1 - bias).then(() { e = 1 - bias; });
+            s = (precision.to_i64_bits() - 1) - e;
+            n ::= (s >= 0).match({
+                true  => num.shifted(a, s.to_usize().value_or(0)).try(),
+                false => num,
+            });
+            d = (s >= 0).match({
+                true  => den,
+                false => den.shifted(a, (0 - s).to_usize().value_or(0)).try(),
+            });
+            q :: u64 = 0;
+            Range(0, precision + 1).loop((k) {
+                bit  = precision - k;
+                part = d.shifted(a, bit).try();
+                (compare(n, part) >= 0).then(() {
+                    n.take(part);
+                    q = q + ONE.shift_left(bit);
+                });
+            });
+            half = compare(n.shifted(a, 1).try(), d);
+            (half > 0 || (half == 0 && q % 2 == 1)).then(() { q = q + 1; });
+            (q == ONE.shift_left(precision)).then(() {
+                q = q.shift_right(1);
+                e = e + 1;
+            });
+            normal      = q >= ONE.shift_left(precision - 1);
+            biased: i64 = normal.match({ true => e + bias, false => 0 });
+            unit        = ONE.shift_left(precision - 1);
+            (biased >= infinite.to_i64_bits()).match({
+                true  => Ok(infinite.to_i64_bits() * unit.to_i64_bits()),
+                false => Ok(
+                    biased * unit.to_i64_bits() + q.bit_and(
+                        unit - 1
+                    ).to_i64_bits()
+                ),
+            })
         },
     })
 }
 
-// The binary32 bits of the f64 whose bits are `bits`, rounded to nearest.
-single_bits = (a: Alloc, bits: i64) Res<i64, AllocError> {
-    cell = a.realloc<u64>(null_ptr<u64>(), 1).try();
-    cell.to<i64>().write(0, bits);
-    narrowed = cell.to<f64>().read(0).narrow_f32();
-    cell.write(0, 0);
-    cell.to<f32>().write(0, narrowed);
-    Ok(cell.read(0).to_i64_bits())
+ONE: u64 = 1
+
+// A non-negative integer in 32-bit limbs, least significant first: just
+// enough arithmetic to round a decimal literal exactly.
+Big = {
+    limbs :: Vec<u64>,
+
+    // self * by + add, for `by` and `add` below 2^32.
+    times_add = (self :: @Self, by: u64, add: u64) Res<AllocError> {
+        carry :: u64 = add;
+        Range(0, self.limbs.len).loop((i) {
+            v = self.limbs.get(i).value_or(0) * by + carry;
+            self.limbs.set(i, v % 4294967296);
+            carry = v / 4294967296;
+        });
+        (carry > 0).match({ true => self.limbs.add(carry), false => Ok })
+    }
+
+    // The number of significant bits.
+    bits = (self: @Self) usize {
+        n :: usize = 0;
+        Range(0, self.limbs.len).loop((h, k) {
+            i = self.limbs.len - 1 - k;
+            v = self.limbs.get(i).value_or(0);
+            (v != 0).then(() {
+                width :: usize = 0;
+                rest  ::= v;
+                going ::= true;
+                going.loop((g) {
+                    width = width + 1;
+                    rest  = rest.shift_right(1);
+                    going = rest != 0;
+                });
+                n = i * 32 + width;
+                h.break();
+            });
+        });
+        n
+    }
+
+    // self * 2^by.
+    shifted = (self: @Self, a: Alloc, by: usize) Res<Big, AllocError> {
+        out ::= Big(limbs: a.Vec<u64>());
+        Range(0, by / 32).loop((_) { out.limbs.add(0).try(); });
+        r = by % 32;
+        carry :: u64 = 0;
+        self.limbs.loop((v) {
+            w = v.shift_left(r).bit_or(carry);
+            out.limbs.add(w.bit_and(4294967295)).try();
+            carry = w.shift_right(32);
+        });
+        (carry > 0).match({ true => out.limbs.add(carry).try(), false => () });
+        Ok(out)
+    }
+
+    // self - other, for other <= self.
+    take = (self :: @Self, other: Big) {
+        borrow :: u64 = 0;
+        Range(0, self.limbs.len).loop((i) {
+            x = self.limbs.get(i).value_or(0);
+            y = other.limbs.get(i).value_or(0) + borrow;
+            (x >= y).match({
+                true  => { self.limbs.set(i, x - y); borrow = 0; },
+                false => { self.limbs.set(i, x + 4294967296 - y); borrow = 1; },
+            });
+        });
+    }
+}
+
+// The sign of x - y.
+compare = (x: Big, y: Big) i64 {
+    n = (x.limbs.len > y.limbs.len).match({ true => x.limbs.len, false => y.limbs.len });
+    result :: i64 = 0;
+    Range(0, n).loop((h, k) {
+        i = n - 1 - k;
+        p = x.limbs.get(i).value_or(0);
+        q = y.limbs.get(i).value_or(0);
+        (p != q).then(() {
+            result = (p > q).match({ true => 1, false => -1 });
+            h.break();
+        });
+    });
+    result
 }
 
 signed_max = (bits: i64) i64 {

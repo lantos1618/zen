@@ -10,7 +10,6 @@ tests/corpus/actor/vector_state_is_16_aligned	vector_state_is_16_aligned.zen:22:
 tests/corpus/bitwise/secret_words_take_public_counts	secret_words_take_public_counts.zen:6:8: error: unsupported by this backend: a Secret parameter
 tests/corpus/bitwise/u128_words	:0:0: error: unsupported by this backend: u128 values
 tests/corpus/casts-conversions/float_narrowing_rounds_and_exact_conversions_check/main	main.zen:29:30: error: unsupported by this backend: f32 values
-tests/corpus/casts-conversions/float_widening_is_exact/main	:0:0: error: unsupported by this backend: f32 values
 tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main	main.zen:34:13: error: unsupported by this backend: this expression in a native executable
 tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main	main.zen:23:27: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i64`)
 tests/corpus/closures-capture/i_local_function_reads_the_live_frame/main	main.zen:21:5: error: unsupported by this backend: nested declarations
@@ -50,14 +49,12 @@ tests/corpus/own/scope_nests_per_block	scope_nests_per_block.zen:10:13: error: u
 tests/corpus/own/scope_passed_inward	scope_passed_inward.zen:18:14: error: unsupported by this backend: this expression in a native executable
 tests/corpus/own/send_consumed_buffer	send_consumed_buffer.zen:58:38: error: unsupported by this backend: the compiler-provided operation `send_consumed_buffer.abort`
 tests/corpus/parse/impl_decl_statement	impl_decl_statement.zen:22:35: error: unsupported by this backend: a field of a value without record layout
-tests/corpus/printing/floats_print_only_through_f64/main	:0:0: error: unsupported by this backend: f32 values
 tests/corpus/proc_run/creation_mask/main	std/proc/proc.zen:213:28: error: unsupported by this backend: a C macro other than a target predefine
 tests/corpus/ptr/comparisons_preserve_element_types	comparisons_preserve_element_types.zen:56:10: error: unsupported by this backend: f32 values
 tests/corpus/sema/bound_third_module/	boxy/boxy.zen:8:35: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/computed_field_read	computed_field_read.zen:31:19: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/impl_collision_bound_in_scope	impl_collision_bound_in_scope.zen:37:36: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/statement_tail_is_not_a_value	:0:0: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i32`)
-tests/corpus/sema/widening_conversions_are_bounds	:0:0: error: unsupported by this backend: f32 values
 tests/corpus/std/carry_limbs	carry_limbs.zen:34:9: error: unsupported by this backend: the machine primitive add_carry
 tests/corpus/std/constant_time	constant_time.zen:53:18: error: unsupported by this backend: the machine primitive truncate_*
 tests/corpus/std/display_allocating_overload_picked_by_argument	display_allocating_overload_picked_by_argument.zen:34:13: error: unsupported by this backend: a value conversion this backend does not model (`()` to `std.text.text_string.String`)
@@ -69,7 +66,6 @@ tests/corpus/std/simd_sha	std/simd.zen:230:27: error: unsupported by this backen
 tests/corpus/std/simd_vectors	simd_vectors.zen:46:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements	std/math/math.zen:24:28: error: unsupported by this backend: a member without a body this backend can find (`f64`)
 tests/corpus/std/volatile_and_inline	volatile_and_inline.zen:18:35: error: unsupported by this backend: this pointer operation
-tests/corpus/std/wide_integers	wide_integers.zen:17:15: error: unsupported by this backend: the machine primitive mul_wide (64x64 -> 128)
 tests/corpus/string-basic/a_float_fits_the_buffer/main	main.zen:44:25: error: unsupported by this backend: formatting an f64 into text
 tests/corpus/trait-bound/computed_fields_recompute_and_own_storage_wins/main	main.zen:41:19: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/traps/simd_lane_out_of_bounds	simd_lane_out_of_bounds.zen:8:12: error: unsupported by this backend: the std.simd operation splat_*

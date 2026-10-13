@@ -13,7 +13,7 @@
 
 { Alloc, AllocError, Ptr } = std.mem
 { Vec } = std.collections
-{ str } = std.text
+{ str, String } = std.text
 { Span } = std.source
 { Res, Ok, None, Range } = std.core
 {
@@ -30,7 +30,7 @@
 {
     Program, Func, Scalar, Instruction, Terminator, Op, Binary, Unary, Convert,
     Print, SysCall, Load, Store, Update, Compare, TrapKind, Stream, StartValue,
-    trap_message, width, signed, integer, float
+    trap_message, width, signed, integer, float, same
 } = gen.gen_ir
 { Sys, Platform, constant_value } = gen.gen_sys
 { Code, decode, encode, size_of, minimum, maximum, ceiling } = gen.gen_jit_decode
@@ -66,10 +66,6 @@ need = (f: Func, instruction: Instruction) Res<str> {
         Host(_)            => Ok("JavaScript host calls"),
         Wait(_)            => Ok("JavaScript event waits"),
         Machine(_)         => Ok("machine instructions"),
-        PrintValue(value)  => float(value.ty).match({
-            true  => Ok("printing floating-point values"),
-            false => None,
-        }),
         BinaryValue(value) => (value.op.match({ Rem => true, _ => false })
             && float(slot_ty(f, value.left))).match({
             true  => Ok("floating-point remainder"),
@@ -90,7 +86,7 @@ slot_ty = (f: Func, slot: usize) Scalar { f.slots.get(slot).value_or(Scalar.Unit
 
 // Bytes a slot's cell occupies.
 cell_size = (ty: Scalar) usize {
-    ty.match({ Unit => 0, Block(l) => l.size, _ => 8 })
+    ty.match({ Unit => 0, Block(l) => l.size, U128 => 16, _ => 8 })
 }
 
 // Run `program` to completion with `argv` as its command line. The result
@@ -167,7 +163,8 @@ execute* = (a: Alloc, program: Program, platform: Platform, argv: Vec<str>)
                 argv: vector,
                 env: address_of(envp().to<u8>()),
                 held: 0,
-                word: 0
+                word: 0,
+                text: a.String().try()
             );
             (info == 0).match({ true => Ok(None), false => Ok(Ok(vm.main())) })
         },
@@ -227,6 +224,8 @@ Interp = {
     env: usize,
     held :: usize,
     word :: usize,
+    // Where a float is formatted before it is printed.
+    text :: String,
     // Each function decoded once (gen_jit_decode).
     codes: Vec<Code>,
     // gen_jit_decode `encode`d functions, through a table of four words per
@@ -768,6 +767,7 @@ Interp = {
                 at = self.cell(index, frame, value.out);
                 set_i64(at, value.value);
                 extend(at, slot_ty(f, value.out));
+                same(slot_ty(f, value.out), Scalar.U128).then(() { set_u64(at + 8, 0); });
                 None
             },
             Copy(value)         => {
@@ -923,7 +923,13 @@ Interp = {
         value.op.match({
             Not => {
                 integer(ty).match({
-                    true  => { set_u64(out, load_u64(at).bit_xor(u64.MAX)); extend(out, ty); },
+                    true  => same(ty, Scalar.U128).match({
+                        true  => set_u128(
+                            out,
+                            load_u128(at).bit_xor(U128_ONES())
+                        ),
+                        false => { set_u64(out, load_u64(at).bit_xor(u64.MAX)); extend(out, ty); },
+                    }),
                     false => set_u64(
                         out,
                         (pointer_at(at).read(0) == 0).match({ true => 1, false => 0 })
@@ -932,7 +938,7 @@ Interp = {
                 None
             },
             Neg => float(ty).match({
-                true  => { set_f64(out, load_f64(at) * -1.0); None },
+                true  => { set_float(out, ty, float_at(at, ty) * -1.0); None },
                 false => signed(ty).match({
                     true  => (load_i64(at) == minimum(ty)).match({
                         true  => Ok(self.trap(value.span, TrapKind.Overflow)),
@@ -957,11 +963,12 @@ Interp = {
         float(ty).match({
             true  => { floating(
                 value.op,
-                load_f64(left),
-                load_f64(right),
+                ty,
+                float_at(left, ty),
+                float_at(right, ty),
                 out
             ); None },
-            false => value.op.match({
+            false => same(ty, Scalar.U128).match({ true => self.wide(value, left, right, out), false => value.op.match({
                 Add          => self.checked(value, ty, left, right, out),
                 Sub          => self.checked(value, ty, left, right, out),
                 Mul          => self.checked(value, ty, left, right, out),
@@ -1009,7 +1016,7 @@ Interp = {
                     extend(out, oty);
                     None
                 },
-            }),
+            }) }),
         })
     }
 
@@ -1081,29 +1088,45 @@ Interp = {
     }
 
     convert = (self :: @Self, index: usize, f: Func, frame: usize, value: Convert) {
-        from = slot_ty(f, value.input);
-        to   = slot_ty(f, value.out);
-        at   = self.cell(index, frame, value.input);
-        out  = self.cell(index, frame, value.out);
-        to.match({
-            Bool => set_u64(out, float(from).match({
-                true  => (load_f64(at) != 0.0).match({ true => 1, false => 0 }),
-                false => (load_u64(at) != 0).match({ true => 1, false => 0 }),
-            })),
-            F64  => float(from).match({
-                true  => set_f64(out, load_f64(at)),
-                false => set_f64(out, signed(from).match({
+        from      = slot_ty(f, value.input);
+        to        = slot_ty(f, value.out);
+        at        = self.cell(index, frame, value.input);
+        out       = self.cell(index, frame, value.out);
+        wide_from = same(from, Scalar.U128);
+        float(to).match({
+            // Integers reaching an f32 are at most 16 bits wide, so going
+            // through f64 rounds once.
+            true  => float(from).match({
+                true  => set_float(out, to, float_at(at, from)),
+                false => set_float(out, to, signed(from).match({
                     true  => load_i64(at).narrow_f64(),
                     false => load_u64(at).narrow_f64(),
                 })),
             }),
-            _    => {
-                float(from).match({
-                    true  => truncated(load_f64(at), signed(to), out),
-                    false => set_u64(out, load_u64(at)),
-                });
-                extend(out, to);
-            },
+            false => to.match({
+                Bool => set_u64(out, float(from).match({
+                    true  => (float_at(
+                        at,
+                        from
+                    ) != 0.0).match({ true => 1, false => 0 }),
+                    false => (load_u64(at) != 0 || (wide_from && load_u64(at + 8) != 0)).match({ true => 1, false => 0 }),
+                })),
+                U128 => {
+                    high = wide_from.match({
+                        true  => load_u64(at + 8),
+                        false => (signed(from) && load_i64(at) < 0).match({ true => u64.MAX, false => 0 }),
+                    });
+                    set_u64(out, load_u64(at));
+                    set_u64(out + 8, high);
+                },
+                _    => {
+                    float(from).match({
+                        true  => truncated(float_at(at, from), signed(to), out),
+                        false => set_u64(out, load_u64(at)),
+                    });
+                    extend(out, to);
+                },
+            }),
         })
     }
 
@@ -1111,6 +1134,7 @@ Interp = {
         fd = descriptor(value.stream);
         at = self.cell(index, frame, value.value);
         value.ty.match({
+            F64  => self.float(fd, load_f64(at)),
             Unit => self.emit(fd, address_of("()".ptr()), 2),
             Bool => (pointer_at(at).read(0) != 0).match({
                 true  => self.emit(fd, address_of("true".ptr()), 4),
@@ -1126,6 +1150,97 @@ Interp = {
                 }),
                 false => self.decimal(fd, load_u64(at)),
             }),
+        })
+    }
+
+    // C's `%g`, as the native runtime prints an f64 (`zr_print_f`); every
+    // NaN prints as `nan`.
+    float = (self :: @Self, fd: i32, value: f64) {
+        (value != value).match({
+            true  => self.emit(fd, address_of("nan".ptr()), 3),
+            false => (value > f64.MAX).match({
+                true  => self.emit(fd, address_of("inf".ptr()), 3),
+                false => (value < f64.MIN).match({
+                    true  => self.emit(fd, address_of("-inf".ptr()), 4),
+                    false => {
+                        self.text.clear();
+                        self.text.fmt(
+                            "{}",
+                            value
+                        ).match({ Ok => (), Err(_) => () });
+                        view = self.text.view();
+                        self.emit(fd, address_of(view.ptr()), view.len);
+                    },
+                }),
+            }),
+        })
+    }
+
+    // A 128-bit operation; shift and rotate counts are U64 words.
+    wide = (self :: @Self, value: Binary, left: usize, right: usize, out: usize)
+           Res<Outcome> {
+        a          = load_u128(left);
+        b          = load_u128(right);
+        count      = load_usize(right);
+        zero: u128 = 0;
+        value.op.match({
+            Add     => (a +% b < a).match({
+                true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                false => { set_u128(out, a +% b); None },
+            }),
+            Sub     => (a < b).match({
+                true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                false => { set_u128(out, a -% b); None },
+            }),
+            Mul     => (a != zero && (a *% b) / a != b).match({
+                true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                false => { set_u128(out, a *% b); None },
+            }),
+            Div     => (b == zero).match({
+                true  => Ok(self.trap(value.span, TrapKind.DivideByZero)),
+                false => { set_u128(out, a / b); None },
+            }),
+            Rem     => (b == zero).match({
+                true  => Ok(self.trap(value.span, TrapKind.DivideByZero)),
+                false => { set_u128(out, a % b); None },
+            }),
+            WrapAdd => { set_u128(out, a +% b); None },
+            WrapSub => { set_u128(out, a -% b); None },
+            WrapMul => { set_u128(out, a *% b); None },
+            And     => { set_u128(out, a.bit_and(b)); None },
+            Or      => { set_u128(out, a.bit_or(b)); None },
+            Xor     => { set_u128(out, a.bit_xor(b)); None },
+            Shl     => { set_u128(
+                out,
+                (count >= 128).match({ true => zero, false => a.shift_left(
+                    count
+                ) })
+            ); None },
+            Shr     => { set_u128(
+                out,
+                (count >= 128).match({ true => zero, false => a.shift_right(
+                    count
+                ) })
+            ); None },
+            Rotr    => {
+                turn = count % 128;
+                set_u128(out, (turn == 0).match({
+                    true  => a,
+                    false => a.shift_right(turn).bit_or(a.shift_left(128 - turn)),
+                }));
+                None
+            },
+            _       => {
+                set_u64(
+                    out,
+                    ordered(
+                        value.op,
+                        a < b,
+                        a == b
+                    ).match({ true => 1, false => 0 })
+                );
+                None
+            },
         })
     }
 
@@ -1507,6 +1622,37 @@ set_i64 = (at: usize, value: i64) { pointer_at(at).to<i64>().write(0, value); }
 set_usize = (at: usize, value: usize) { pointer_at(at).to<usize>().write(0, value); }
 set_f64 = (at: usize, value: f64) { pointer_at(at).to<f64>().write(0, value); }
 
+// An f32 sits in the low four bytes of its cell; f32 arithmetic is done in
+// f64 and rounded back, which for + - * / is the correctly rounded f32 result.
+float_at = (at: usize, ty: Scalar) f64 {
+    ty.match({ F32 => pointer_at(at).to<f32>().read(0).to_f64(), _ => load_f64(at) })
+}
+
+set_float = (at: usize, ty: Scalar, value: f64) {
+    ty.match({
+        F32 => {
+            set_u64(at, 0);
+            pointer_at(at).to<f32>().write(0, value.narrow_f32());
+        },
+        _   => set_f64(at, value),
+    })
+}
+
+// A u128 cell is two eight-byte words, low first.
+load_u128 = (at: usize) u128 {
+    load_u64(at + 8).to_u128().shift_left(64).bit_or(load_u64(at).to_u128())
+}
+
+set_u128 = (at: usize, value: u128) {
+    set_u64(at, value.truncate_u64());
+    set_u64(at + 8, value.shift_right(64).truncate_u64());
+}
+
+U128_ONES = () u128 {
+    zero: u128 = 0;
+    zero -% 1
+}
+
 // Word `k` of an encoded step or table.
 part = (at: usize, k: usize) usize { pointer_at(at).to<usize>().read(k) }
 part_u64 = (at: usize, k: usize) u64 { pointer_at(at).to<u64>().read(k) }
@@ -1626,12 +1772,12 @@ ordered = (op: Op, less: bool, equal: bool) bool {
     })
 }
 
-floating = (op: Op, a: f64, b: f64, out: usize) {
+floating = (op: Op, ty: Scalar, a: f64, b: f64, out: usize) {
     op.match({
-        Add          => set_f64(out, a + b),
-        Sub          => set_f64(out, a - b),
-        Mul          => set_f64(out, a * b),
-        Div          => set_f64(out, a / b),
+        Add          => set_float(out, ty, a + b),
+        Sub          => set_float(out, ty, a - b),
+        Mul          => set_float(out, ty, a * b),
+        Div          => set_float(out, ty, a / b),
         Equal        => set_u64(out, (a == b).match({ true => 1, false => 0 })),
         NotEqual     => set_u64(out, (a != b).match({ true => 1, false => 0 })),
         Less         => set_u64(out, (a < b).match({ true => 1, false => 0 })),
@@ -1639,7 +1785,7 @@ floating = (op: Op, a: f64, b: f64, out: usize) {
         Greater      => set_u64(out, (a > b).match({ true => 1, false => 0 })),
         GreaterEqual => set_u64(out, (a >= b).match({ true => 1, false => 0 })),
         // Refused before the program runs; bit operations never reach F64.
-        _            => set_f64(out, a),
+        _            => set_float(out, ty, a),
     })
 }
 

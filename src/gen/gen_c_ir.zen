@@ -12,7 +12,7 @@
 { Span } = std.source
 { Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print, Move } = gen.gen_ir
 { Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
-{ trap_message, width, signed, integer, float } = gen.gen_ir
+{ trap_message, width, signed, integer, float, same } = gen.gen_ir
 { IrFeature } = gen.gen_ir_feature
 { Sys, SysConstant, Platform, DarwinResult } = gen.gen_sys
 { linux_x86_64, linux_arm64, darwin_symbol, darwin_result, constant_value } = gen.gen_sys
@@ -1062,13 +1062,23 @@ C = {
     constant = (self :: @Self, f: Func, out: usize, value: i64)
                Res<(), AllocError> {
         self.assign(f, out).try();
-        float(slot_ty(f, out)).match({
-            true  => {
+        slot_ty(f, out).match({
+            F64  => {
                 self.out.add("zr_f64((uint64_t)").try();
                 self.out.literal(value).try();
                 self.out.add(");\n")
             },
-            false => {
+            F32  => {
+                self.out.add("zr_f32((uint32_t)").try();
+                self.out.literal(value).try();
+                self.out.add(");\n")
+            },
+            U128 => {
+                self.out.add("(zr_u128)(uint64_t)").try();
+                self.out.literal(value).try();
+                self.out.add(";\n")
+            },
+            _    => {
                 self.out.literal(value).try();
                 self.out.add(";\n")
             },
@@ -1212,11 +1222,17 @@ C = {
     wrap = (self :: @Self, f: Func, ty: Scalar, value: Binary, op: str)
            Res<(), AllocError> {
         self.assign(f, value.out).try();
+        wide = same(
+            ty,
+            Scalar.U128
+        ).match({ true => "zr_u128", false => "uint64_t" });
         self.out.fmt(
-            "((uint64_t)({})v{} {} (uint64_t)({})v{});\n",
+            "(({})({})v{} {} ({})({})v{});\n",
+            wide,
             unsigned_type(ty),
             value.left,
             op,
+            wide,
             unsigned_type(slot_ty(f, value.right)),
             value.right
         )
@@ -1231,14 +1247,22 @@ C = {
     shift = (self :: @Self, f: Func, ty: Scalar, value: Binary, helper: str)
             Res<(), AllocError> {
         self.assign(f, value.out).try();
-        self.out.fmt(
-            "{}((uint64_t)({})v{}, v{}, {}u);\n",
-            helper,
-            unsigned_type(ty),
-            value.left,
-            value.right,
-            width(ty) * 8
-        )
+        same(ty, Scalar.U128).match({
+            true  => self.out.fmt(
+                "{}128(v{}, v{});\n",
+                helper,
+                value.left,
+                value.right
+            ),
+            false => self.out.fmt(
+                "{}((uint64_t)({})v{}, v{}, {}u);\n",
+                helper,
+                unsigned_type(ty),
+                value.left,
+                value.right,
+                width(ty) * 8
+            ),
+        })
     }
 
     convert = (self :: @Self, f: Func, value: Convert) Res<(), AllocError> {
@@ -1262,6 +1286,11 @@ C = {
                 value.value
             ),
             F64  => self.out.fmt("  zr_print_f({}, v{});\n", fd, value.value),
+            F32  => self.out.fmt(
+                "  zr_print_f({}, (double)v{});\n",
+                fd,
+                value.value
+            ),
             _    => signed(value.ty).match({
                 true  => self.out.fmt(
                     "  zr_print_i({}, (int64_t)v{});\n",
@@ -1482,7 +1511,9 @@ ctype = (out :: String, ty: Scalar) Res<(), AllocError> {
         U16      => out.add("uint16_t"),
         U32      => out.add("uint32_t"),
         U64      => out.add("uint64_t"),
+        U128     => out.add("zr_u128"),
         Ptr      => out.add("uint64_t"),
+        F32      => out.add("float"),
         F64      => out.add("double"),
         _        => out.add("uint8_t"),
     })
@@ -1494,7 +1525,10 @@ unsigned_type = (ty: Scalar) str {
         true  => "uint8_t",
         false => (w == 2).match({
             true  => "uint16_t",
-            false => (w == 4).match({ true => "uint32_t", false => "uint64_t" }),
+            false => (w == 4).match({
+                true  => "uint32_t",
+                false => (w == 16).match({ true => "zr_u128", false => "uint64_t" }),
+            }),
         }),
     })
 }
@@ -1565,7 +1599,8 @@ runtime = (out :: String) Res<(), AllocError> {
     // byte-aligned spellings: a plain move even unoptimized, and still
     // defined under strict aliasing. GCC ignores may_alias on a typedef of
     // an already defined struct, so blocks keep memcpy.
-    ["int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "int64_t", "uint64_t", "double"].loop((name) {
+    out.add("typedef unsigned __int128 zr_u128;\n").try();
+    ["int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "int64_t", "uint64_t", "zr_u128", "float", "double"].loop((name) {
         out.fmt(
             "typedef {} __attribute__((may_alias, aligned(1))) za_{};\n",
             name,
@@ -1683,6 +1718,18 @@ runtime = (out :: String) Res<(), AllocError> {
     ).try();
     out.add(
         "static inline ZR_U double zr_f64(uint64_t bits) { double d; memcpy(&d, &bits, sizeof d); return d; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U float zr_f32(uint32_t bits) { float d; memcpy(&d, &bits, sizeof d); return d; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U zr_u128 zr_shl128(zr_u128 a, uint64_t c) { return c >= 128 ? 0 : a << c; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U zr_u128 zr_shr128(zr_u128 a, uint64_t c) { return c >= 128 ? 0 : a >> c; }\n"
+    ).try();
+    out.add(
+        "static inline ZR_U zr_u128 zr_rotr128(zr_u128 a, uint64_t c) { c %= 128; return c == 0 ? a : (a >> c) | (a << (128 - c)); }\n"
     ).try();
     out.add(
         "static inline ZR_U uint64_t zr_shl(uint64_t a, uint64_t c, unsigned bits) { return c >= bits ? 0 : a << c; }\n"
@@ -1915,6 +1962,8 @@ class_of = (ty: Scalar) usize {
         Ptr      => 10,
         F64      => 11,
         Block(_) => 12,
+        U128     => 13,
+        F32      => 14,
     })
 }
 

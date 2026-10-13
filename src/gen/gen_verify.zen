@@ -65,8 +65,11 @@ fits = (ty: Scalar, value: i64) bool {
         U32      => value >= 0 && value <= 4294967295,
         I64      => true,
         U64      => true,
+        // Zero-extended from 64 bits.
+        U128     => true,
         Ptr      => true,
-        // Any bit pattern is an f64 (NaNs included).
+        // Any bit pattern is a float (NaNs included); an f32's is 32 bits.
+        F32      => value >= 0 && value <= 4294967295,
         F64      => true,
         Block(_) => false,
     })

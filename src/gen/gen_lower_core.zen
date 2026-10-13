@@ -33,7 +33,7 @@
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, SysValue } = gen.gen_ir
 { SysConstant } = gen.gen_sys
-{ word, integer, same, width } = gen.gen_ir
+{ word, integer, float, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
 { to_bound, bound_of, handle_for_place, resolve } = gen.gen_lower_member
@@ -1015,7 +1015,9 @@ Lowerer* = {
             false => Ok(None),
             true  => self.check.const_int(id).match({
                 None     => Ok(None),
-                Ok(bits) => fits(bits, name).value_or(false).match({
+                // An unsigned literal past i64.MAX folds as its 64 bits, which
+                // a u128 constant zero-extends; sema refuses negative ones.
+                Ok(bits) => (fits(bits, name).value_or(false) || (name.eq("u128") && bits < 0)).match({
                     true  => Ok(Ok(self.constant(want, bits).try())),
                     false => Ok(None),
                 }),
@@ -1081,7 +1083,7 @@ Lowerer* = {
             false => {
                 from = self.class_of(value.ty).try();
                 to   = self.class_of(ty).try();
-                (integer(from) && integer(to)).match({
+                ((integer(from) && integer(to)) || (float(to) && !same(from, to) && (float(from) || integer(from)))).match({
                     true  => {
                         out = self.temp(ty).try();
                         self.add(Instruction.Cast(Convert(
@@ -1205,7 +1207,7 @@ Lowerer* = {
                 self.string(text, ty)
             },
             Float => {
-                bits = float_bits(
+                bits   = float_bits(
                     self.alloc,
                     l.text
                 ).try(LowerError.OutOfMemory)
@@ -1213,7 +1215,16 @@ Lowerer* = {
                         span,
                         "a float literal with more than 15 significant digits or a decimal exponent beyond 22"
                     )).try();
-                self.constant(ty, bits)
+                single = self.class_of(
+                    ty
+                ).try().match({ F32 => true, _ => false });
+                self.constant(ty, single.match({
+                    true  => single_bits(
+                        self.alloc,
+                        bits
+                    ).try(LowerError.OutOfMemory),
+                    false => bits,
+                }))
             },
         })
     }
@@ -2354,23 +2365,23 @@ Lowerer* = {
                 // constants are held: +-0x1.fffffffffffffp+1023.
                 "MAX"  => prim.eq("f64").match({
                     true  => Ok(9218868437227405311),
-                    false => integer.match({
+                    false => prim.eq("f32").match({ true => Ok(2139095039), false => integer.match({
                         false => None,
                         true  => is_signed.match({
                             true  => Ok(width.signed_max()),
                             false => Ok(width.unsigned_max_bits()),
                         }),
-                    }),
+                    }) }),
                 }),
                 "MIN"  => prim.eq("f64").match({
                     true  => Ok(-4503599627370497),
-                    false => integer.match({
+                    false => prim.eq("f32").match({ true => Ok(4286578687), false => (integer || prim.eq("u128")).match({
                         false => None,
                         true  => is_signed.match({
                             true  => Ok(-width.signed_max() - 1),
                             false => Ok(0),
                         }),
-                    }),
+                    }) }),
                 }),
                 _      => None,
             }),
@@ -3893,6 +3904,16 @@ float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
             Ok(Ok(cell.to<u64>().read(0).to_i64_bits()))
         },
     })
+}
+
+// The binary32 bits of the f64 whose bits are `bits`, rounded to nearest.
+single_bits = (a: Alloc, bits: i64) Res<i64, AllocError> {
+    cell = a.realloc<u64>(null_ptr<u64>(), 1).try();
+    cell.to<i64>().write(0, bits);
+    narrowed = cell.to<f64>().read(0).narrow_f32();
+    cell.write(0, 0);
+    cell.to<f32>().write(0, narrowed);
+    Ok(cell.read(0).to_i64_bits())
 }
 
 signed_max = (bits: i64) i64 {

@@ -41,7 +41,9 @@
 supports* = (feature: IrFeature) bool {
     feature.match({
         WideInt     => true,
+        Int128      => false,
         Float       => true,
+        Float32     => false,
         Memory      => true,
         Aggregates  => true,
         Conversion  => true,

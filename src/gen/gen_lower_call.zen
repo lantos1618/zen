@@ -1386,6 +1386,7 @@ machine = (
     op.match({
         // Keeping the low bits of a wider unsigned word is what `Cast` does.
         Truncate  => lo.conversion(id, sources, span),
+        MulWide   => lo.wide_product(id, sources, span),
         AddCarry  => lo.carry(id, sources, false, span),
         SubBorrow => lo.carry(id, sources, true, span),
         _         => Err(unsupported(span, machine_refusal(op))),
@@ -1435,6 +1436,31 @@ carry = (
         base: base,
         offset: 8,
         value: out_carry
+    ))).try();
+    Ok(out)
+}
+
+// The u128 product of two u64 words, which cannot overflow.
+wide_product = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    word  = lo.prim("u64").try();
+    a     = lo.expr_as(sources.source_expr(0, span).try(), word).try();
+    b     = lo.expr_as(sources.source_expr(1, span).try(), word).try();
+    left  = lo.slot_of(Scalar.U128).try();
+    right = lo.slot_of(Scalar.U128).try();
+    lo.add(Instruction.Cast(Convert(out: left, input: a.slot))).try();
+    lo.add(Instruction.Cast(Convert(out: right, input: b.slot))).try();
+    out = lo.temp(lo.type_of(id).try()).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out.slot,
+        left: left,
+        right: right,
+        op: Op.WrapMul,
+        span: span
     ))).try();
     Ok(out)
 }
@@ -1820,11 +1846,25 @@ bit_not* = (
     lo.bit_word(ty, "bit_not", span).try();
     value = lo.expr_as(operand, ty).try();
     ones  = lo.class_of(ty).try().match({
-        U8  => lo.constant(ty, 255),
-        U16 => lo.constant(ty, 65535),
-        U32 => lo.constant(ty, 4294967295),
-        U64 => lo.constant(ty, -1),
-        _   => Err(unsupported(span, bit_refusal(lo.alloc, "bit_not"))),
+        U8   => lo.constant(ty, 255),
+        U16  => lo.constant(ty, 65535),
+        U32  => lo.constant(ty, 4294967295),
+        U64  => lo.constant(ty, -1),
+        // A u128 constant is zero-extended from 64 bits: all ones is 0 - 1.
+        U128 => {
+            zero = lo.constant(ty, 0).try();
+            one  = lo.constant(ty, 1).try();
+            ones = lo.temp(ty).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: ones.slot,
+                left: zero.slot,
+                right: one.slot,
+                op: Op.WrapSub,
+                span: span
+            ))).try();
+            Ok(ones)
+        },
+        _    => Err(unsupported(span, bit_refusal(lo.alloc, "bit_not"))),
     }).try();
     out   = lo.temp(ty).try();
     lo.add(Instruction.BinaryValue(Binary(
@@ -1860,7 +1900,7 @@ bit_word = (
     span : Span
 ) Res<LowerError> {
     word = lo.prim_name(ty);
-    word.is_in(["u8", "u16", "u32", "u64", "usize"]).match({
+    word.is_in(["u8", "u16", "u32", "u64", "u128", "usize"]).match({
         true  => Ok,
         false => Err(unsupported(span, lo.alloc.String(
             "the bit operation `{}` on `{}`",
@@ -3384,10 +3424,22 @@ print_member = (
 
 print_one = (
     lo    :: Lowerer,
-    value : Value,
+    given : Value,
     to    : FmtTo,
     span  : Span
 ) Res<LowerError> {
+    // Both float widths print through f64; widening an f32 is exact.
+    value     = same(lo.class_of(given.ty).try(), Scalar.F32).match({
+        true  => {
+            wide = lo.temp(lo.prim("f64").try()).try();
+            lo.add(Instruction.Cast(Convert(
+                out: wide.slot,
+                input: given.slot
+            ))).try();
+            wide
+        },
+        false => given,
+    });
     class     = lo.class_of(value.ty).try();
     is_str    = lo.prim_name(value.ty).eq("str");
     primitive = word(class) && lo.plain_word(value.ty);

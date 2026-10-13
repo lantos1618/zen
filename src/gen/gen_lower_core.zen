@@ -1085,10 +1085,24 @@ Lowerer* = {
                 to   = self.class_of(ty).try();
                 ((integer(from) && integer(to)) || (float(to) && !same(from, to) && (float(from) || integer(from)))).match({
                     true  => {
-                        out = self.temp(ty).try();
+                        // An unsettled integer is an i64 holding a literal's
+                        // bits; one past i64.MAX is unsigned (sema refuses a
+                        // negative one here), so a u128 zero-extends it.
+                        input = (same(to, Scalar.U128) && self.prim_name(value.ty).eq("int")).match({
+                            true  => {
+                                bits = self.slot_of(Scalar.U64).try();
+                                self.add(Instruction.Cast(Convert(
+                                    out: bits,
+                                    input: value.slot
+                                ))).try();
+                                bits
+                            },
+                            false => value.slot,
+                        });
+                        out   = self.temp(ty).try();
                         self.add(Instruction.Cast(Convert(
                             out: out.slot,
-                            input: value.slot
+                            input: input
                         ))).try();
                         Ok(out)
                     },

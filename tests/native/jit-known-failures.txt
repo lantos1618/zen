@@ -8,7 +8,6 @@ tests/corpus/actor/dynamic_str_is_copied	dynamic_str_is_copied.zen:1:1: error: u
 tests/corpus/actor/safe_nested_payload_crosses_actor	safe_nested_payload_crosses_actor.zen:27:15: error: unsupported by this backend: a type sema did not settle
 tests/corpus/actor/vector_state_is_16_aligned	vector_state_is_16_aligned.zen:22:9: error: unsupported by this backend: u8x16 values
 tests/corpus/bitwise/secret_words_take_public_counts	secret_words_take_public_counts.zen:6:8: error: unsupported by this backend: a Secret parameter
-tests/corpus/bitwise/u128_words	:0:0: error: unsupported by this backend: u128 values
 tests/corpus/casts-conversions/float_narrowing_rounds_and_exact_conversions_check/main	main.zen:29:30: error: unsupported by this backend: f32 values
 tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main	main.zen:34:13: error: unsupported by this backend: this expression in a native executable
 tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main	main.zen:23:27: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i64`)
@@ -50,7 +49,6 @@ tests/corpus/own/scope_passed_inward	scope_passed_inward.zen:18:14: error: unsup
 tests/corpus/own/send_consumed_buffer	send_consumed_buffer.zen:58:38: error: unsupported by this backend: the compiler-provided operation `send_consumed_buffer.abort`
 tests/corpus/parse/impl_decl_statement	impl_decl_statement.zen:22:35: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/proc_run/creation_mask/main	std/proc/proc.zen:213:28: error: unsupported by this backend: a C macro other than a target predefine
-tests/corpus/ptr/comparisons_preserve_element_types	comparisons_preserve_element_types.zen:56:10: error: unsupported by this backend: f32 values
 tests/corpus/sema/bound_third_module/	boxy/boxy.zen:8:35: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/computed_field_read	computed_field_read.zen:31:19: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/impl_collision_bound_in_scope	impl_collision_bound_in_scope.zen:37:36: error: unsupported by this backend: a field of a value without record layout

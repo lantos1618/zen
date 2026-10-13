@@ -335,6 +335,11 @@ C = {
             UnmapPages(s)   => self.escape(s),
             SysConst(v)     => self.wrote(v.out),
             Flush           => (),
+            FormatFloat(v)  => {
+                self.wrote(v.out);
+                self.through(v.dest);
+                self.escape(v.value);
+            },
             Machine(v)      => {
                 v.outs.loop((s) { self.wrote(s); });
                 self.escapes(v.args);
@@ -919,6 +924,12 @@ C = {
             UnmapPages(slot)    => self.out.fmt("  zr_unmap(v{});\n", slot),
             SysConst(value)     => self.sys_const(f, value),
             Flush               => self.out.add("  zr_flush();\n"),
+            FormatFloat(v)      => self.out.fmt(
+                "  v{} = zr_ftext((char *)(uintptr_t)v{}, v{});\n",
+                v.out,
+                v.dest,
+                v.value
+            ),
             Machine(_)          => self.out.add("  __builtin_trap();\n"),
             AtomicLoad(value)   => {
                 self.out.fmt("  v{} = __atomic_load_n((", value.out).try();
@@ -1679,6 +1690,18 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  zr_text(fd, b, (size_t)n);\n").try();
     out.add("}\n").try();
     out.add(
+        "static inline ZR_U uint64_t zr_ftext(char *b, double v) {\n"
+    ).try();
+    out.add("  if (isnan(v)) { memcpy(b, \"nan\", 3); return 3; }\n").try();
+    out.add(
+        "  if (isinf(v)) { memcpy(b, v < 0 ? \"-inf\" : \"inf\", v < 0 ? 4u : 3u); return v < 0 ? 4u : 3u; }\n"
+    ).try();
+    out.add("  char t[32];\n").try();
+    out.add("  int n = snprintf(t, sizeof t, \"%g\", v);\n").try();
+    out.add("  memcpy(b, t, (size_t)n);\n").try();
+    out.add("  return (uint64_t)n;\n").try();
+    out.add("}\n").try();
+    out.add(
         "static inline ZR_U __attribute__((noreturn)) void zr_trap(const char *where, size_t n) {\n"
     ).try();
     out.add("  zr_flush();\n").try();
@@ -1885,6 +1908,11 @@ mentions = (instruction: Instruction, visit: (slot: usize, read: bool) ()) {
         UnmapPages(s)   => visit(s, true),
         SysConst(v)     => visit(v.out, false),
         Flush           => (),
+        FormatFloat(v)  => {
+            visit(v.out, false);
+            visit(v.dest, true);
+            visit(v.value, true);
+        },
         Machine(v)      => {
             v.outs.loop((slot) { visit(slot, false); });
             v.args.loop((slot) { visit(slot, true); });

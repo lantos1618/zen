@@ -308,6 +308,7 @@ Assembly = {
                 self.load(slot, "%rdi").try();
                 self.out.add("    call za_unmap\n")
             },
+            FormatFloat(_)      => self.out.add("    ud2\n"),
             Flush               => {
                 self.out.add("    call za_flush\n")
             },

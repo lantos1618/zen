@@ -17,7 +17,7 @@
 { Res, Ok, None, loop, Range } = std.core
 { Program, Func, BasicBlock, Instruction, Terminator, Scalar, Op, Guards } = gen.gen_ir
 { Const, Move, Unary, Binary, Invocation, Print, Convert, Address, Load, Store } = gen.gen_ir
-{ same } = gen.gen_ir
+{ same, FloatFormat } = gen.gen_ir
 { CopyMem, StaticBytes, Write, SysCall, Start, Pages, SysValue, Branch } = gen.gen_ir
 { width, word } = gen.gen_ir
 { Update, Compare, CodeRef, IndirectCall, HostCall } = gen.gen_ir
@@ -1214,6 +1214,11 @@ shift = (
             name: v.name
         )),
         Flush           => Instruction.Flush,
+        FormatFloat(v)  => Instruction.FormatFloat(FloatFormat(
+            out: base + v.out,
+            dest: base + v.dest,
+            value: base + v.value
+        )),
         AtomicLoad(v)   => Instruction.AtomicLoad(Load(
             out: base + v.out,
             base: base + v.base,

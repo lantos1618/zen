@@ -22,7 +22,7 @@
 { Printer } = sema.sema_print
 { Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes } = gen.gen_ir
-{ Write, Stream, TrapKind, Marshal, HostCall } = gen.gen_ir
+{ Write, Stream, TrapKind, Marshal, HostCall, Layout, FloatFormat } = gen.gen_ir
 { word, integer, signed, same, float } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { MachineOp, machine_op, machine_refusal } = gen.gen_ir_machine
@@ -3485,9 +3485,9 @@ print_one = (
         Into(place)     => is_str.match({
             true  => lo.write_str(place, value),
             false => primitive.match({
-                true  => {
-                    // `add_f64` has no Zen body yet (C formats with %g).
-                    (!float(class)).ensure(unsupported(span, "formatting an f64 into text")).try();
+                true  => float(class).match({
+                    true  => lo.float_into(place, value),
+                    false => {
                     sink   = lo.sink_for_place(place, span).try();
                     helper = class.match({
                         Bool => "add_bool",
@@ -3496,7 +3496,8 @@ print_one = (
                         ).match({ true => "add_i64", false => "add_u64" }),
                     });
                     lo.fmt_helper(helper, sink, value, span)
-                },
+                    },
+                }),
                 false => lo.is_unit(value.ty).match({
                     true  => lo.text("()", to),
                     false => {
@@ -3570,6 +3571,33 @@ sink_for_place = (
         true  => lo.read(place),
         false => lo.handle_for_place(place, sink_ty).try().ok_or(unsupported(span, "a String that is not a Sink")),
     })
+}
+
+// Append C's `%g` text of an f64 to the text at `place`.
+float_into = (lo :: Lowerer, place: Place, value: Value) Res<LowerError> {
+    buffer = lo.slot_of(Scalar.Block(Layout(size: 32, align: 8))).try();
+    dest   = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: dest, slot: buffer))).try();
+    len = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.FormatFloat(FloatFormat(
+        out: len,
+        dest: dest,
+        value: value.slot
+    ))).try();
+    text = lo.temp(lo.prim("str").try()).try();
+    at   = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: at, slot: text.slot))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: at,
+        offset: 0,
+        value: dest
+    ))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: at,
+        offset: 8,
+        value: len
+    ))).try();
+    lo.write_str(place, text)
 }
 
 // Append a str to the text at `place`: String.add, or Sink.write through a

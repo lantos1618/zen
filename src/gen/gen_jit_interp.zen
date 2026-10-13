@@ -29,7 +29,7 @@
 } = std.sys
 {
     Program, Func, Scalar, Instruction, Terminator, Op, Binary, Unary, Convert,
-    Print, SysCall, Load, Store, Update, Compare, TrapKind, Stream, StartValue,
+    Print, FloatFormat, SysCall, Load, Store, Update, Compare, TrapKind, Stream, StartValue,
     trap_message, width, signed, integer, float, same
 } = gen.gen_ir
 { Sys, Platform, constant_value } = gen.gen_sys
@@ -869,6 +869,11 @@ Interp = {
                 None
             },
             Flush               => { self.flush(); None },
+            FormatFloat(value)  => { self.format_float(
+                index,
+                frame,
+                value
+            ); None },
             AtomicLoad(value)   => { self.load(index, f, frame, value); None },
             AtomicStore(value)  => { self.store(index, f, frame, value); None },
             AtomicUpdate(value) => { self.update(
@@ -1156,24 +1161,38 @@ Interp = {
     // C's `%g`, as the native runtime prints an f64 (`zr_print_f`); every
     // NaN prints as `nan`.
     float = (self :: @Self, fd: i32, value: f64) {
+        text = self.float_text(value);
+        self.emit(fd, address_of(text.ptr()), text.len);
+    }
+
+    float_text = (self :: @Self, value: f64) str {
         (value != value).match({
-            true  => self.emit(fd, address_of("nan".ptr()), 3),
+            true  => "nan",
             false => (value > f64.MAX).match({
-                true  => self.emit(fd, address_of("inf".ptr()), 3),
+                true  => "inf",
                 false => (value < f64.MIN).match({
-                    true  => self.emit(fd, address_of("-inf".ptr()), 4),
+                    true  => "-inf",
                     false => {
                         self.text.clear();
                         self.text.fmt(
                             "{}",
                             value
                         ).match({ Ok => (), Err(_) => () });
-                        view = self.text.view();
-                        self.emit(fd, address_of(view.ptr()), view.len);
+                        self.text.view()
                     },
                 }),
             }),
         })
+    }
+
+    format_float = (self :: @Self, index: usize, frame: usize, value: FloatFormat) {
+        text = self.float_text(load_f64(self.cell(index, frame, value.value)));
+        move_bytes(
+            self.value(index, frame, value.dest),
+            address_of(text.ptr()),
+            text.len
+        );
+        set_usize(self.cell(index, frame, value.out), text.len);
     }
 
     // A 128-bit operation; shift and rotate counts are U64 words.

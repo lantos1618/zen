@@ -194,6 +194,11 @@ Check = {
                 self.expect(slot, Scalar.Ptr)
             },
             Flush               => Ok,
+            FormatFloat(value)  => {
+                self.expect(value.dest, Scalar.Ptr).try();
+                self.expect(value.value, Scalar.F64).try();
+                self.expect(value.out, Scalar.U64)
+            },
             Host(call)          => {
                 (call.args.len == call.marshal.len).ensure(self.fault(
                     IrReason.Arguments
@@ -404,6 +409,10 @@ Check = {
             UnmapPages(slot)    => self.initialized(flags, slot),
             SysConst(_)         => Ok,
             Flush               => Ok,
+            FormatFloat(value)  => {
+                self.initialized(flags, value.dest).try();
+                self.initialized(flags, value.value)
+            },
             Machine(call)       => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok
@@ -1064,6 +1073,7 @@ Payloads = {
             UnmapPages(_)   => (),
             SysConst(_)     => (),
             Flush           => (),
+            FormatFloat(v)  => self.forget_through(state, v.dest),
         });
     }
 
@@ -1132,6 +1142,7 @@ written = (instruction: Instruction) Res<usize> {
         WriteOut(_)     => None,
         UnmapPages(_)   => None,
         Flush           => None,
+        FormatFloat(v)  => Ok(v.out),
     })
 }
 

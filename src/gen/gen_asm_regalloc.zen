@@ -24,7 +24,7 @@
 { Func, BasicBlock, Instruction, Terminator, Scalar, same, signed } = gen.gen_ir
 { Move, Unary, Binary, Invocation, Print, Convert, Load, Store, CopyMem } = gen.gen_ir
 { Write, SysCall, Pages, Branch, Op, Const } = gen.gen_ir
-{ Update, Compare, IndirectCall, HostCall } = gen.gen_ir
+{ Update, Compare, IndirectCall, HostCall, FloatFormat } = gen.gen_ir
 TakeAddress = gen.gen_ir.Address
 { coalesce, retarget } = gen.gen_asm_coalesce
 { MachineCall } = gen.gen_ir_machine
@@ -447,6 +447,11 @@ Propagate = {
             UnmapPages(slot) => Instruction.UnmapPages(self.at(slot)),
             SysConst(_)      => instruction,
             Flush            => instruction,
+            FormatFloat(v)   => Instruction.FormatFloat(FloatFormat(
+                out: v.out,
+                dest: self.at(v.dest),
+                value: self.at(v.value)
+            )),
             AtomicLoad(v)    => Instruction.AtomicLoad(Load(
                 out: v.out,
                 base: self.at(v.base),

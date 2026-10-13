@@ -392,6 +392,7 @@ Assembly = {
                 self.load(slot, "x0").try();
                 self.out.add("    bl za_unmap\n")
             },
+            FormatFloat(_)      => self.out.add("    brk #1\n"),
             Flush               => {
                 self.out.add("    bl za_flush\n")
             },

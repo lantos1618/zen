@@ -60,6 +60,10 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<AllocError> {
         UnmapPages(slot)    => out.add(slot),
         SysConst(_)         => Ok,
         Flush               => Ok,
+        FormatFloat(value)  => {
+            out.add(value.dest).try();
+            out.add(value.value)
+        },
         AtomicLoad(value)   => out.add(value.base),
         AtomicStore(value)  => {
             out.add(value.base).try();
@@ -129,6 +133,7 @@ written* = (instruction: Instruction) Res<usize> {
         WriteOut(_)         => None,
         UnmapPages(_)       => None,
         Flush               => None,
+        FormatFloat(value)  => Ok(value.out),
         AtomicStore(_)      => None,
         // A machine primitive writes several slots, and gen_verify refuses
         // it before any machine pass runs.

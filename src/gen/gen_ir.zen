@@ -111,6 +111,10 @@ SysValue* = { out*: usize, name*: SysConstant }
 // The rest belongs to std.sys and the actor runtime (std.actor.actor_layout).
 StartValue* = { Argc | Argv | Envp | Globals }
 Start* = { out*: usize, value*: StartValue }
+// C's `%g` text of the F64 `value` (`nan`, `inf` and `-inf` for the
+// non-finite ones, as `PrintValue` writes them), written at `dest`, which has
+// room for 32 bytes; `out` is the U64 byte count.
+FloatFormat* = { out*: usize, dest*: usize, value*: usize }
 // Anonymous zeroed memory of at least `bytes` (a U64 slot) bytes, 16-byte
 // aligned; the pointer is null when the kernel refuses. `UnmapPages`
 // returns such a region by its pointer.
@@ -182,6 +186,7 @@ Instruction* = { Constant: Const
     | SysConst: SysValue
     // Write out buffered standard output now (before blocking on input).
     | Flush
+    | FormatFloat: FloatFormat
     // A validated machine primitive (gen_ir_machine). Not yet produced:
     // its operands need slot types beyond Scalar, so the verifier rejects it.
     | Machine: MachineCall

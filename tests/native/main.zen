@@ -13,6 +13,11 @@
 // (`zen build --backend jit`) instead. Only its documented refusals
 // (`refused_by_jit`) are UNSUPPORTED; a compile failure is output that must
 // match, and any FAIL, FLAKY or BROKEN test makes the runner exit 1.
+// tests/native/jit-known-failures.txt lists the IR lowering gaps the jit
+// still fails on, each with the first error line it fails with. A listed
+// test failing with exactly that line is KNOWN and does not fail the
+// target; one that passes, is refused, fails with any other line, or is no
+// longer in the corpus is a FAIL.
 //
 // [filter] keeps the tests whose path contains any of its comma-separated
 // parts. With [runs] above one, each program is built once and run that
@@ -86,6 +91,7 @@ Tally = {
     flaky :: usize = 0,
     unsupported :: usize = 0,
     broken :: usize = 0,
+    known :: usize = 0,
 }
 
 Case = { root: str, entry: str, base: str }
@@ -100,6 +106,7 @@ Runner = {
     sdk: str,
     keep_all: bool,
     runs: usize,
+    known: Vec<str>,
 
     run = (self: @Self, argv: Vec<str>) Res<ProcOutput, AllocError> {
         self.env.proc.run_argv(self.a, "", argv).match({
@@ -381,6 +388,41 @@ Runner = {
     // `command.sh` (the exact compile, assemble, link and run commands),
     // `stdout`, `stderr` and `verdict.txt`, so everything left under the work
     // root after a run is a test that did not pass.
+    // The first error line tests/native/jit-known-failures.txt says the jit
+    // run of `base` fails with, if it lists `base`.
+    listed = (self: @Self, base: str) Res<str> {
+        self.jit().match({
+            true  => known_reason(self.known, base),
+            false => None,
+        })
+    }
+
+    // A FAIL with exactly its listed error line is KNOWN; any other FAIL,
+    // listed or not, fails the target.
+    failed = (self: @Self, base: str, verdict: str, said: str, tally :: Tally) {
+        self.listed(base).match({
+            Ok(reason) => reason.eq(said).match({
+                true  => {
+                    tally.known = tally.known + 1;
+                    println("KNOWN {} :: {}", base, said);
+                },
+                false => {
+                    tally.fail = tally.fail + 1;
+                    println(
+                        "FAIL {} :: {} (tests/native/jit-known-failures.txt lists: {})",
+                        base,
+                        said,
+                        reason
+                    );
+                },
+            }),
+            None       => {
+                tally.fail = tally.fail + 1;
+                println("FAIL {} :: {}", base, verdict);
+            },
+        })
+    }
+
     case = (self: @Self, original: Case, tally :: Tally) Res<bool, AllocError> {
         dir = self.a.String(
             "{}/{}",
@@ -473,6 +515,7 @@ Runner = {
                         failed  :: usize = 0;
                         first   ::= "";
                         refusal ::= "";
+                        said    ::= "";
                         Range(0, self.runs).loop((h, run) {
                             result = self.shell(command.view()).try();
                             self.jit().then(() {
@@ -482,6 +525,7 @@ Runner = {
                             (!verdict.is_empty()).then(() {
                                 (failed == 0).then(() {
                                     first = verdict;
+                                    said  = error_line(result.out.view()).value_or(verdict);
                                     self.keep(
                                         dir.view(),
                                         c.base,
@@ -496,8 +540,24 @@ Runner = {
                             });
                         });
                         (!refusal.is_empty()).then(() {
-                            tally.unsupported = tally.unsupported + 1;
-                            println("UNSUPPORTED {} :: {}", c.base, refusal);
+                            self.listed(c.base).match({
+                                Ok(_) => {
+                                    tally.fail = tally.fail + 1;
+                                    println(
+                                        "FAIL {} :: refused ({}), but tests/native/jit-known-failures.txt lists it as failing",
+                                        c.base,
+                                        refusal
+                                    );
+                                },
+                                None  => {
+                                    tally.unsupported = tally.unsupported + 1;
+                                    println(
+                                        "UNSUPPORTED {} :: {}",
+                                        c.base,
+                                        refusal
+                                    );
+                                },
+                            });
                             self.keep(
                                 dir.view(),
                                 c.base,
@@ -509,22 +569,32 @@ Runner = {
                             );
                         });
                         (refusal.is_empty() && failed == 0).match({
-                            true  => {
-                                tally.pass = tally.pass + 1;
-                                passed     = true;
-                                println("PASS {}", c.base);
-                                (!self.keep_all).then(() {
-                                    remove ::= self.a.Vec<str>();
-                                    ["rm", "-rf", dir.view()].loop((w) { remove.add(w).try(); });
-                                    self.run(remove).try();
-                                });
-                            },
+                            true  => self.listed(c.base).match({
+                                Ok(_) => {
+                                    tally.fail = tally.fail + 1;
+                                    println(
+                                        "FAIL {} :: passes, so remove it from tests/native/jit-known-failures.txt",
+                                        c.base
+                                    );
+                                },
+                                None  => {
+                                    tally.pass = tally.pass + 1;
+                                    passed     = true;
+                                    println("PASS {}", c.base);
+                                    (!self.keep_all).then(() {
+                                        remove ::= self.a.Vec<str>();
+                                        ["rm", "-rf", dir.view()].loop((w) { remove.add(w).try(); });
+                                        self.run(remove).try();
+                                    });
+                                },
+                            }),
                             false => (!refusal.is_empty() || failed == self.runs).match({
                                 true  => refusal.is_empty().then(
-                                    () { tally.fail = tally.fail + 1; println(
-                                        "FAIL {} :: {}",
+                                    () { self.failed(
                                         c.base,
-                                        first
+                                        first,
+                                        said,
+                                        tally
                                     ); }
                                 ),
                                 false => {
@@ -762,6 +832,13 @@ main = (env: Env) Res<i32, AllocError> {
             "tests/native/required.txt"
         ).match({ Ok(s) => s.view(), Err(_) => "" })
     ).try();
+    known     = known_failures(
+        a,
+        env.fs.read(
+            a,
+            "tests/native/jit-known-failures.txt"
+        ).match({ Ok(s) => s.view(), Err(_) => "" })
+    ).try();
     runner    = Runner(
         env: env,
         a: a,
@@ -771,7 +848,8 @@ main = (env: Env) Res<i32, AllocError> {
         work: work.view(),
         sdk: sdk,
         keep_all: !keep_flag.eq("") && !keep_flag.eq("0"),
-        runs: runs.max_one()
+        runs: runs.max_one(),
+        known: known
     );
     tally  ::= Tally();
     missed ::= a.Vec<str>();
@@ -783,12 +861,32 @@ main = (env: Env) Res<i32, AllocError> {
             });
         });
     });
-    total = tally.pass + tally.fail + tally.flaky + tally.unsupported + tally.broken;
+    // An entry for a test the corpus no longer has is stale.
+    stale ::= a.Vec<str>();
+    (runner.jit() && shard == 0 && filter.is_empty()).then(() {
+        bases ::= a.Vec<str>();
+        paths.loop(
+            (path) { case_of(a, path).try().when_ok((c) { bases.add(c.base).try(); }); }
+        );
+        known.loop((entry) {
+            entry.split_once('\t').when_ok((pair) {
+                (!named(bases, pair.before)).then(() { stale.add(pair.before).try(); });
+            });
+        });
+    });
+    stale.loop((base) {
+        println(
+            "FAIL {} :: listed in tests/native/jit-known-failures.txt but not in the corpus",
+            base
+        );
+    });
+    total = tally.pass + tally.fail + tally.known + tally.flaky + tally.unsupported + tally.broken;
     println(
-        "native-corpus {}: {} pass, {} fail, {} flaky, {} unsupported, {} broken of {} ({} runs each)",
+        "native-corpus {}: {} pass, {} fail, {} known, {} flaky, {} unsupported, {} broken of {} ({} runs each)",
         target_name,
         tally.pass,
         tally.fail,
+        tally.known,
         tally.flaky,
         tally.unsupported,
         tally.broken,
@@ -823,7 +921,7 @@ main = (env: Env) Res<i32, AllocError> {
     });
     // The jit refuses only what `refused_by_jit` documents, so on it every
     // other verdict than PASS or UNSUPPORTED fails the target.
-    unpassed = tally.fail + tally.flaky + tally.broken;
+    unpassed = tally.fail + tally.flaky + tally.broken + stale.len;
     strict   = runner.jit() && unpassed > 0;
     strict.then(() {
         println(
@@ -851,4 +949,29 @@ named = (names: Vec<str>, base: str) bool {
     found ::= false;
     names.loop((h, i, n) { n.eq(base).then(() { found = true; h.break(); }); });
     found
+}
+
+// tests/native/jit-known-failures.txt: `base<TAB>first error line` per
+// line; a line starting with `#` is a comment.
+known_failures = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
+    entries ::= a.Vec<str>();
+    text.split('\n').loop((line) {
+        (!line.is_empty() && !line.starts_with("#")).then(() { entries.add(line).try(); });
+    });
+    Ok(entries)
+}
+
+known_reason = (entries: Vec<str>, base: str) Res<str> {
+    found :: Res<str> = None;
+    entries.loop((h, i, entry) {
+        entry.split_once('\t').when_ok((pair) {
+            pair.before.eq(base).then(() { found = Ok(pair.after); h.break(); });
+        });
+    });
+    found
+}
+
+// The first line of a run's output that reports an error.
+error_line = (out: str) Res<str> {
+    out.split('\n').find((line) { line.contains("error: ") })
 }

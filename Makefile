@@ -174,7 +174,9 @@ ctcheck: build
 
 ## jitcorpus: every corpus program run by the jit (`--backend jit`) under
 ## tests/native. Only the jit's documented refusals (`refused_by_jit`) are
-## UNSUPPORTED; any FAIL, FLAKY or BROKEN shard fails the target. Each test
+## UNSUPPORTED; a FAIL listed with its exact first error line in
+## tests/native/jit-known-failures.txt is KNOWN; any other FAIL, FLAKY or
+## BROKEN shard fails the target. Each test
 ## importing compiler modules needs several GB, so JIT_SHARDS stays small.
 JIT_SHARDS ?= 4
 .PHONY: jitcorpus

@@ -32,7 +32,7 @@
 { sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
 { spawn_actor, use_actor_mem } = gen.gen_lower_actor
 { bound_of, dispatch, Bound } = gen.gen_lower_member
-{ to_i64_bits } = gen.gen_lower_core
+{ to_i64_bits, slot_place, placed_value } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
 { variant_index, size_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
@@ -137,13 +137,59 @@ construction = (
 ) Res<Value, LowerError> {
     ty = lo.settled_type(id).try();
     s  = lo.shape(ty).try();
-    s.form.match({
-        Record(_) => lo.construct_named(ty, c, span),
-        _         => lo.variant_call(ty, c, name, span),
+    lo.placed(id, ty).match({
+        Ok(into) => {
+            s.form.match({
+                Record(_) => lo.construct_at(ty, c, span, into).try(),
+                _         => lo.variant_into(c, name, span, into).try(),
+            });
+            Ok(placed_value(into))
+        },
+        None     => s.form.match({
+            Record(_) => lo.construct_named(ty, c, span),
+            _         => lo.variant_call(ty, c, name, span),
+        }),
+    })
+}
+
+// A variant construction written at `into`, its payload built in place.
+variant_into = (
+    lo   :: Lowerer,
+    c    : Call,
+    name : str,
+    span : Span,
+    into : Place
+) Res<LowerError> {
+    lo.has_payloads(into.ty).try().match({
+        true  => {
+            c.args.get(0).when_ok((arg) {
+                at = lo.payload_place(into, name, span).try();
+                lo.expr_into(arg.value, at.ty, at).try();
+            });
+            lo.variant_at(into, name, None, span)
+        },
+        false => lo.write(into, lo.variant_tags(into.ty, c, name, span).try()),
     })
 }
 
 variant_call = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    c    : Call,
+    name : str,
+    span : Span
+) Res<Value, LowerError> {
+    lo.has_payloads(ty).try().match({
+        true  => {
+            out = lo.temp(ty).try();
+            lo.variant_into(c, name, span, slot_place(out)).try();
+            Ok(out)
+        },
+        false => lo.variant_tags(ty, c, name, span),
+    })
+}
+
+variant_tags = (
     lo   :: Lowerer,
     ty   : TyId,
     c    : Call,
@@ -274,19 +320,7 @@ dot_call_on = (
                         lo.invoke(id, callee, sources, c, span)
                     },
                     // `Type.Variant(payload)` or a construction through a type.
-                    None        => {
-                        ty = lo.settled_type(id).try();
-                        s  = lo.shape(ty).try();
-                        s.form.match({
-                            Record(_) => lo.construct_named(ty, c, span),
-                            _         => lo.variant_call(
-                                ty,
-                                c,
-                                a.name.text,
-                                span
-                            ),
-                        })
-                    },
+                    None        => lo.construction(id, c, a.name.text, span),
                   }),
                 }),
                 false => {
@@ -575,10 +609,7 @@ checked_invoke = (
                     sources = lo.bind_sources(f, c, recv, span).try();
                     lo.invoke(id, callee, sources, c, span)
                 },
-                Struct(_)   => {
-                    ty = lo.settled_type(id).try();
-                    lo.construct_named(ty, c, span)
-                },
+                Struct(_)   => lo.construction(id, c, "", span),
                 _           => Err(unsupported(
                     span,
                     "a call to this kind of declaration"
@@ -1053,22 +1084,13 @@ inline_call* = (lo :: Lowerer, open: Callee, sources: Vec<Source>, span: Span)
     callee.f.params.loop((h, i, p) {
         kinds.get(i).when_ok((k) { lo.bind_local(p.name.text, k).try(); });
     });
-    value   = lo.settled(ret).match({
-        true  => lo.block_want(body, ret),
-        false => lo.block(body),
-    }).try();
-    here    = lo.here();
-    coerced = lo.coerce(value, ret).try();
-    lo.add(Instruction.Copy(Move(
-        out: here.ret_slot,
-        source: coerced.slot
-    ))).try();
+    lo.body_result(body, ret).try();
+    here = lo.here();
     lo.enter(here.ret_block).try();
     lo.release_locals(mark);
     lo.shallower();
     lo.use_frame(saved);
-    result = Value(slot: here.ret_slot, ty: ret);
-    lo.copy_value(result)
+    Ok(Value(slot: here.ret_slot, ty: ret))
 }
 
 // A type parameter that only a closure's result determines (`then<T>` with
@@ -1189,45 +1211,72 @@ construct_named* = (
     span : Span
 ) Res<Value, LowerError> {
     out = lo.temp(ty).try();
+    lo.construct_at(ty, c, span, slot_place(out)).try();
+    Ok(out)
+}
+
+// A record construction written field by field at `into`.
+construct_at = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    c    : Call,
+    span : Span,
+    into : Place
+) Res<LowerError> {
+    whole = into.base.match({ InSlot(_) => into.offset == 0, Through(_) => false });
     // A record of no bytes is fully written by writing nothing.
-    lo.is_unit(ty).then(() { lo.add(Instruction.Constant(Const(out: out.slot, value: 0))).try(); });
+    (whole && lo.is_unit(ty)).then(() {
+        lo.add(Instruction.Constant(Const(
+            out: placed_value(into).slot,
+            value: 0
+        ))).try();
+    });
     s      = lo.shape(ty).try();
     fields = s.form.match({ Record(f) => Ok(f), _ => None })
         .ok_or(unsupported(
             span,
             lo.described("a construction of a non-record type", ty)
         )).try();
-    base   = lo.slot_of(Scalar.Ptr).try();
-    // Arguments evaluate in written order; omitted fields then take their
-    // defaults in declaration order.
-    given ::= lo.alloc.Vec<Res<Value>>();
-    fields.loop((_) { given.add(None).try(LowerError.OutOfMemory); });
+    // Arguments evaluate in written order, each straight into its field;
+    // omitted fields then take their defaults in declaration order.
+    given ::= lo.alloc.Vec<bool>();
+    fields.loop((_) { given.add(false).try(LowerError.OutOfMemory); });
     c.args.loop((h, i, a) {
         index = a.name.match({
             Ok(n) => field_index(fields, n.text),
             None  => Ok(i),
         }).ok_or(unsupported(a.span, "an argument naming no field")).try();
         field = fields.get(index).ok_or(unsupported(a.span, "more arguments than fields")).try();
-        given.set(index, Ok(lo.expr_as(a.value, field.ty).try()));
+        lo.expr_into(
+            a.value,
+            field.ty,
+            Place(
+                base: into.base,
+                offset: into.offset + field.offset,
+                ty: field.ty
+            )
+        ).try();
+        given.set(index, true);
     });
     fields.loop((h, i, field) {
-        value = given.get(i).value_or(None).match({
-            Ok(v) => v,
-            None  => lo.field_default(
+        (!given.get(i).value_or(false)).then(() {
+            value = lo.field_default(
                 lo.struct_decl(ty).try(),
                 ty,
                 field,
                 span
-            ).try(),
+            ).try();
+            lo.write(
+                Place(
+                    base: into.base,
+                    offset: into.offset + field.offset,
+                    ty: field.ty
+                ),
+                value
+            ).try();
         });
-        lo.add(Instruction.AddressOf(Address(out: base, slot: out.slot))).try();
-        lo.add(Instruction.StoreValue(Store(
-            base: base,
-            offset: field.offset,
-            value: value.slot
-        ))).try();
     });
-    Ok(out)
+    Ok
 }
 
 StructDecl = { id: DeclId, s: Struct }
@@ -2171,9 +2220,11 @@ loop_call = (
         span
     ).try();
     ty         = lo.loop_type(id, body).try();
-    result     = lo.temp(ty).try();
-    none       = lo.variant_value(ty, "None", None, span).try();
-    lo.add(Instruction.Copy(Move(out: result.slot, source: none.slot))).try();
+    result     = lo.placed_slot(id, ty).match({
+        Ok(v) => v,
+        None  => lo.temp(ty).try(),
+    });
+    lo.variant_at(slot_place(result), "None", None, span).try();
     body_params = lo.lambda_params(body).try();
     brk         = lo.label().try();
     next        = lo.label().try();
@@ -2260,8 +2311,7 @@ fold_loop = (
         span
     ).try();
     lo.start(exhausted);
-    done = lo.variant_value(ty, "Ok", Ok(acc), span).try();
-    lo.add(Instruction.Copy(Move(out: result.slot, source: done.slot))).try();
+    lo.variant_at(slot_place(result), "Ok", Ok(acc), span).try();
     lo.jump(brk)
 }
 
@@ -2767,16 +2817,8 @@ at_value = (
             ).try(),
         });
     });
-    value   = lo.settled(ret).match({
-        true  => lo.block_want(body, ret),
-        false => lo.block(body),
-    }).try();
-    here    = lo.here();
-    coerced = lo.coerce(value, ret).try();
-    lo.add(Instruction.Copy(Move(
-        out: here.ret_slot,
-        source: coerced.slot
-    ))).try();
+    lo.body_result(body, ret).try();
+    here = lo.here();
     lo.enter(here.ret_block).try();
     lo.release_locals(mark);
     lo.use_frame(saved);
@@ -2832,17 +2874,26 @@ handle_call = (lo :: Lowerer, loop_id: usize, name: str, c: Call, span: Span)
                     ok         = variant_index(variants, "Ok").ok_or(unsupported(span, "a loop result without Ok")).try();
                     payload_ty = variants.get(ok).ok_or(unsupported(span, "a missing variant")).try().payload.ok_or(unsupported(span, "a loop result without a payload")).try();
                     lo.break_fits(arg.value, payload_ty, span).try();
-                    value = lo.expr_as(arg.value, payload_ty).try();
-                    made  = lo.variant_value(
-                        result.ty,
-                        "Ok",
-                        Ok(value),
-                        span
-                    ).try();
-                    lo.add(Instruction.Copy(Move(
-                        out: result.slot,
-                        source: made.slot
-                    ))).try();
+                    whole = slot_place(result);
+                    lo.has_payloads(result.ty).try().match({
+                        true  => lo.expr_into(
+                            arg.value,
+                            payload_ty,
+                            lo.payload_place(whole, "Ok", span).try()
+                        ).try(),
+                        false => lo.write(
+                            whole,
+                            lo.variant_value(
+                                result.ty,
+                                "Ok",
+                                Ok(lo.expr_as(arg.value, payload_ty).try()),
+                                span
+                            ).try()
+                        ).try(),
+                    });
+                    lo.has_payloads(result.ty).try().then(() {
+                        lo.variant_at(whole, "Ok", None, span).try();
+                    });
                 });
             });
             lo.unwind(target.depth).try();

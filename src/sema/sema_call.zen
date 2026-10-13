@@ -6,12 +6,13 @@
 { Vec } = std.collections
 { str } = std.text
 { Res, Ok, None, Range } = std.core
-{ DeclId } = sema.sema_id
+{ DeclId, ImplId } = sema.sema_id
 { TyId, TyFn, TyNamed, literal_default, is_integer } = sema.sema_ty
 { Def, decl_at } = sema.sema_def
 { SemaFault, NameFault, TypeFault, PairFault, ExportFault } = sema.sema_diag
 { Checker, Ctx, CheckedCall, CallSignature, CallResolution } = sema.sema_check
 { refuse_handle_argument } = sema.sema_handle
+{ const_int, fits } = sema.sema_const
 { meta_refused } = sema.sema_meta
 { meta_member_call, MetaCall } = sema.sema_meta
 { discriminant_member_call, DiscriminantAnswer } = sema.sema_discriminant
@@ -30,7 +31,7 @@
 { check_literal } = sema.sema_trap
 { check_arms, check_arms_agree, hoist_at, one_value, tail_expr } = sema.sema_hoist
 { check_dropped_tail, note_lambda_tail } = sema.sema_effect
-{ bound_declares } = sema.sema_supply
+{ bound_declares, impl_bound_type } = sema.sema_supply
 { type_of, block_type } = sema.sema_type
 { push_tparams, module_name } = sema.sema_inst
 { param_type, type_from_ast } = sema.sema_denote
@@ -283,6 +284,12 @@ CallCheck = {
             None        => c.types.unknown(),
             Ok(applied) => {
                 self.inst = applied.inst;
+                c.widen_literal_params(
+                    self.call.args,
+                    k.params,
+                    off,
+                    self.inst
+                ).try();
                 params ::= c.alloc.Vec<TyId>();
                 c.subst_list(k.params, self.inst, params).try();
                 (c.diag_count() == mark).then(() {
@@ -665,6 +672,10 @@ CallCheck = {
                     c,
                     ac.name.text,
                     f.ty,
+                    c.is_unknown(f.bound).match({
+                        true  => f.decl_owner,
+                        false => f.bound,
+                    }),
                     vars,
                     bounds,
                     owner,
@@ -675,8 +686,8 @@ CallCheck = {
     }
 
     settled_member = (self :: @Self, c :: Checker, name: str, ty: TyId,
-                      vars: Vec<TyId>, bounds: Vec<TBound>, owner: str,
-                      off: usize)
+                      bound: TyId, vars: Vec<TyId>, bounds: Vec<TBound>,
+                      owner: str, off: usize)
                       Res<TyId, AllocError> {
         tys ::= c.alloc.Vec<TyId>();
         self.call.targs.loop((h, t) {
@@ -710,6 +721,7 @@ CallCheck = {
             ).try().match({
                 false => c.types.unknown(),
                 true  => {
+                    c.bind_suppliers(bound, name, vars, inst).try();
                     self.inst = inst;
                     Ok(settled)
                 },
@@ -1342,6 +1354,39 @@ callee_name_span = (c: Checker, call: Call) Span {
 
 // Lambda arguments are the only legal inward path for a loop handle. Other
 // arguments are checked against their settled formal types here.
+// A parameter only integer literals settle takes the literal default, i32,
+// at its instance, unless a literal argument does not fit it: then it is
+// i64, so the literal keeps its full width.
+widen_literal_params = (
+    c      :: Checker,
+    args   : Vec<Arg>,
+    params : Vec<TyId>,
+    off    : usize,
+    inst   :: Inst
+) Res<AllocError> {
+    args.loop((h, i, a) {
+        p = params.ty_at(i + off);
+        (c.literal_bound(p, inst) && c.const_int(a.value).match({
+            Ok(v) => !fits(v, "i32").value_or(true),
+            None  => false,
+        })).then(() {
+            wide = c.types.prim("i64").try();
+            inst.rebind(p, wide);
+        });
+    });
+    Ok;
+}
+
+literal_bound = (c :: Checker, p: TyId, inst: Inst) bool {
+    c.types.at(p).match({
+        Var(_) => inst.lookup(p).match({
+            Ok(t) => c.is_literal_ty(t) && c.prim_name(t).eq("int"),
+            None  => false,
+        }),
+        _      => false,
+    })
+}
+
 args_handle_check = (
     c      :: Checker,
     args   : Vec<Arg>,
@@ -2167,5 +2212,73 @@ member_edge = (
             span: at,
         )),
         _        => None,
+    })
+}
+
+// A bound member's own type arguments, also given to each impl member that
+// supplies it, so a call reaching any implementor is already instantiated.
+bind_suppliers = (
+    c     :: Checker,
+    bound : TyId,
+    name  : str,
+    vars  : Vec<TyId>,
+    inst  :: Inst
+) Res<AllocError> {
+    c.types.at(bound).match({
+        Named(n) => {
+            Range(0, c.world.count()).loop((mi) {
+                c.world.table_at(mi).match({
+                    Ok(t) => t.impls.loop((h, id) {
+                        c.bind_supplier(mi, id, n.decl, name, vars, inst).try();
+                    }),
+                    None  => (),
+                });
+            });
+            Ok
+        },
+        _        => Ok,
+    })
+}
+
+bind_supplier = (
+    c     :: Checker,
+    mi    : usize,
+    id    : ImplId,
+    bound : DeclId,
+    name  : str,
+    vars  : Vec<TyId>,
+    inst  :: Inst
+) Res<AllocError> {
+    c.world.impl_at(c.tree, id).match({
+        None   => Ok,
+        Ok(im) => {
+            supplier          = c.impl_bound_type(im, mi).try();
+            supplies          = c.types.at(supplier).match({
+                Named(b) => b.decl.eq(bound),
+                _        => false,
+            });
+            fn: Res<Function> = supplies.match({
+                false => None,
+                true  => im.members.find((m) { m.named(name) }).match({
+                    Ok(m) => m.kind.match({ Function(f) => Ok(f), _ => None }),
+                    None  => None,
+                }),
+            });
+            fn.match({
+                None  => Ok,
+                Ok(f) => {
+                    owner = c.owner_of(mi, f.name.text).try();
+                    f.tparams.loop((h, i, tp) {
+                        vars.get(i).when_ok((v) {
+                            inst.bind(
+                                c.types.var(tp.name.text, owner).try(),
+                                inst.arg_for(v)
+                            ).try();
+                        });
+                    });
+                    Ok
+                },
+            })
+        },
     })
 }

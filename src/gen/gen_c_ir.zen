@@ -48,6 +48,7 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         scattered: a.Vec<bool>(),
         target: a.Vec<usize>(),
         named: a.Vec<bool>(),
+        lent: a.Vec<bool>(),
         copies: 0
     );
     writer.program(program).try();
@@ -98,6 +99,8 @@ C = {
     scattered :: Vec<bool>,
     target :: Vec<usize>,
     named :: Vec<bool>,
+    // Block loads lent in place through a checked local address.
+    lent :: Vec<bool>,
     // `zc` copies made for borrowed arguments in the current function.
     copies :: usize,
 
@@ -229,6 +232,7 @@ C = {
         self.scattered.clear();
         self.target.clear();
         self.named.clear();
+        self.lent.clear();
         Range(0, count).loop((_) {
             self.origin.add(0).try();
             self.escaped.add(false).try();
@@ -244,6 +248,7 @@ C = {
             self.scattered.add(false).try();
             self.target.add(0).try();
             self.named.add(false).try();
+            self.lent.add(false).try();
         });
         function.blocks.loop((block) {
             block.code.loop((instruction) {
@@ -443,6 +448,69 @@ C = {
             )
     }
 
+    // A single-use block load can pass its local source to a read-only callee.
+    viewed = (self: @Self, f: Func, b: usize, k: usize, call: Invocation,
+              slot: usize) bool {
+        j = self.earliest.get(slot).value_or(0);
+        (is_block(slot_ty(f, slot)) && slot >= f.parameters
+            && self.writes.get(slot).value_or(2) == 1
+            && self.reads.get(slot).value_or(0) == 1
+            && self.target.get(slot).value_or(1) == 0
+            && !self.named.get(slot).value_or(true)
+            && !self.addressed.get(slot).value_or(true)
+            && !self.scattered.get(slot).value_or(true)
+            && self.home.get(slot).value_or(0) == b + 1
+            && self.latest.get(slot).value_or(0) == k).match({
+            true  => f.blocks.get(b).match({
+                Ok(block) => block.code.get(j).match({
+                    Ok(instruction) => instruction.match({
+                        LoadValue(load) => load.out == slot
+                            && self.lends(f, b, j, k, call, load.base),
+                        _               => false,
+                    }),
+                    None            => false,
+                }),
+                None      => false,
+            }),
+            false => false,
+        })
+    }
+
+    lends = (self: @Self, f: Func, b: usize, j: usize, k: usize,
+             call: Invocation, base: usize) bool {
+        // A `::` parameter may change through another alias during the call.
+        // Only a local AddressOf origin has storage this pass can prove stable.
+        at = self.origin.get(base).value_or(0);
+        (at > f.parameters && self.writes.get(base).value_or(0) == 1).match({
+            true  => {
+                dest = self.root(at - 1);
+                dest >= f.parameters
+                    && self.fixed(at - 1) && self.fixed(dest)
+                    && self.root(call.out) != dest
+                    && self.untouched(f, b, j + 1, k, dest)
+            },
+            false => false,
+        })
+    }
+
+    // The local place a lent load would have copied from.
+    lend = (self :: @Self, f: Func, slot: usize) Res<(), AllocError> {
+        f.blocks.get(self.home.get(slot).value_or(1) - 1).match({
+            Ok(block) => block.code.get(self.earliest.get(slot).value_or(0))
+                .match({
+                Ok(instruction) => instruction.match({
+                    LoadValue(load) => {
+                        self.out.add("(const void *)").try();
+                        self.place(load.base, load.offset, "const ")
+                    },
+                    _               => self.out.fmt("&v{}", slot),
+                }),
+                None            => self.out.fmt("&v{}", slot),
+            }),
+            None      => self.out.fmt("&v{}", slot),
+        })
+    }
+
     untouched = (self: @Self, f: Func, b: usize, from: usize, to: usize,
                  dest: usize) bool {
         clear ::= true;
@@ -611,6 +679,19 @@ C = {
                 });
             });
         });
+        function.blocks.loop((h, b, block) {
+            block.code.loop((g, k, instruction) {
+                instruction.match({
+                    Invoke(call) => call.args.loop((h, i, slot) {
+                        (self.by_pointer(call.function, i)
+                            && self.viewed(function, b, k, call, slot)).then(() {
+                            self.lent.set(slot, true);
+                        });
+                    }),
+                    _            => (),
+                });
+            });
+        });
         // A sanitizer pads every addressable local and re-marks it at every
         // label, so under one the block slots share a single frame instead.
         frame ::= false;
@@ -776,41 +857,39 @@ C = {
                 value.out,
                 value.slot
             ),
-            LoadValue(value)    => is_block(slot_ty(f, value.out)).match({
-                true  => self.out.fmt(
-                    "  memcpy(&v{}, (const void *)(uintptr_t)(v{} + {}u), sizeof v{});\n",
-                    value.out,
-                    value.base,
-                    value.offset,
-                    value.out
-                ),
-                false => {
-                    self.out.fmt("  v{} = *(const za_", value.out).try();
-                    ctype(self.out, slot_ty(f, value.out)).try();
-                    self.out.fmt(
-                        " *)(uintptr_t)(v{} + {}u);\n",
-                        value.base,
-                        value.offset
-                    )
-                },
+            LoadValue(value)    => self.lent.get(value.out).value_or(false).match({
+                true  => Ok,
+                false => is_block(slot_ty(f, value.out)).match({
+                    true  => {
+                        self.out.fmt("  memcpy(&v{}, ", value.out).try();
+                        self.place(value.base, value.offset, "const ").try();
+                        self.out.fmt(", sizeof v{});\n", value.out)
+                    },
+                    false => {
+                        self.out.fmt("  v{} = *(const za_", value.out).try();
+                        ctype(self.out, slot_ty(f, value.out)).try();
+                        self.out.add(" *)").try();
+                        self.place(value.base, value.offset, "const ").try();
+                        self.out.add(";\n")
+                    },
+                }),
             }),
             StoreValue(value)   => is_block(slot_ty(f, value.value)).match({
-                true  => self.out.fmt(
-                    "  memcpy((void *)(uintptr_t)(v{} + {}u), &v{}, sizeof v{});\n",
-                    value.base,
-                    value.offset,
-                    value.value,
-                    value.value
-                ),
+                true  => {
+                    self.out.add("  memcpy(").try();
+                    self.place(value.base, value.offset, "").try();
+                    self.out.fmt(
+                        ", &v{}, sizeof v{});\n",
+                        value.value,
+                        value.value
+                    )
+                },
                 false => {
                     self.out.add("  *(za_").try();
                     ctype(self.out, slot_ty(f, value.value)).try();
-                    self.out.fmt(
-                        " *)(uintptr_t)(v{} + {}u) = v{};\n",
-                        value.base,
-                        value.offset,
-                        value.value
-                    )
+                    self.out.add(" *)").try();
+                    self.place(value.base, value.offset, "").try();
+                    self.out.fmt(" = v{};\n", value.value)
                 },
             }),
             CopyBytes(value)    => self.out.fmt(
@@ -900,6 +979,28 @@ C = {
         })
     }
 
+    // `base + offset` as a byte pointer. A base whose one write takes a
+    // local's address names that local, so the C compiler sees which object
+    // the access reaches instead of an integer it cannot trace.
+    place = (self :: @Self, base: usize, offset: usize, qualifier: str)
+            Res<(), AllocError> {
+        at = self.origin.get(base).value_or(0);
+        (at != 0 && self.writes.get(base).value_or(0) == 1).match({
+            true  => self.out.fmt(
+                "(({}unsigned char *)&v{} + {}u)",
+                qualifier,
+                at - 1,
+                offset
+            ),
+            false => self.out.fmt(
+                "(({}unsigned char *)(uintptr_t)v{} + {}u)",
+                qualifier,
+                base,
+                offset
+            ),
+        })
+    }
+
     // A borrowed argument travels as its slot's address. A slot whose
     // address has left the frame, or that the call also writes, is copied
     // first, so the callee still reads the value it had at the call.
@@ -925,7 +1026,10 @@ C = {
                     copy = copy + 1;
                 },
                 false => self.by_pointer(call.function, i).match({
-                    true  => self.out.fmt("&v{}", slot),
+                    true  => self.lent.get(slot).value_or(false).match({
+                        true  => self.lend(f, slot),
+                        false => self.out.fmt("&v{}", slot),
+                    }),
                     false => self.out.fmt("v{}", slot),
                 }).try(),
             });
@@ -935,6 +1039,7 @@ C = {
 
     copied = (self: @Self, call: Invocation, i: usize, slot: usize) bool {
         self.by_pointer(call.function, i)
+            && !self.lent.get(slot).value_or(false)
             && (self.escaped.get(self.root(slot)).value_or(true)
                 || self.root(slot) == self.root(call.out))
     }

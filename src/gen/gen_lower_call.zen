@@ -16,10 +16,9 @@
 { literal_overflows } = sema.sema_trap
 { walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
 { nowhere } = std.source
-{ Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed } = sema.sema
+{ Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall } = sema.sema
 { subst } = sema.sema
 { pack_elem, tail_is_pack } = sema.sema
-{ Found, members_of } = sema.sema_member
 { Printer } = sema.sema_print
 { Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes } = gen.gen_ir
@@ -33,7 +32,7 @@
 { sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
 { spawn_actor, use_actor_mem } = gen.gen_lower_actor
 { bound_of, dispatch, Bound } = gen.gen_lower_member
-{ to_i64_bits } = gen.gen_lower_core
+{ to_i64_bits, slot_place, placed_value } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
 { variant_index, size_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
@@ -138,13 +137,59 @@ construction = (
 ) Res<Value, LowerError> {
     ty = lo.settled_type(id).try();
     s  = lo.shape(ty).try();
-    s.form.match({
-        Record(_) => lo.construct_named(ty, c, span),
-        _         => lo.variant_call(ty, c, name, span),
+    lo.placed(id, ty).match({
+        Ok(into) => {
+            s.form.match({
+                Record(_) => lo.construct_at(ty, c, span, into).try(),
+                _         => lo.variant_into(c, name, span, into).try(),
+            });
+            Ok(placed_value(into))
+        },
+        None     => s.form.match({
+            Record(_) => lo.construct_named(ty, c, span),
+            _         => lo.variant_call(ty, c, name, span),
+        }),
+    })
+}
+
+// A variant construction written at `into`, its payload built in place.
+variant_into = (
+    lo   :: Lowerer,
+    c    : Call,
+    name : str,
+    span : Span,
+    into : Place
+) Res<LowerError> {
+    lo.has_payloads(into.ty).try().match({
+        true  => {
+            c.args.get(0).when_ok((arg) {
+                at = lo.payload_place(into, name, span).try();
+                lo.expr_into(arg.value, at.ty, at).try();
+            });
+            lo.variant_at(into, name, None, span)
+        },
+        false => lo.write(into, lo.variant_tags(into.ty, c, name, span).try()),
     })
 }
 
 variant_call = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    c    : Call,
+    name : str,
+    span : Span
+) Res<Value, LowerError> {
+    lo.has_payloads(ty).try().match({
+        true  => {
+            out = lo.temp(ty).try();
+            lo.variant_into(c, name, span, slot_place(out)).try();
+            Ok(out)
+        },
+        false => lo.variant_tags(ty, c, name, span),
+    })
+}
+
+variant_tags = (
     lo   :: Lowerer,
     ty   : TyId,
     c    : Call,
@@ -275,19 +320,7 @@ dot_call_on = (
                         lo.invoke(id, callee, sources, c, span)
                     },
                     // `Type.Variant(payload)` or a construction through a type.
-                    None        => {
-                        ty = lo.settled_type(id).try();
-                        s  = lo.shape(ty).try();
-                        s.form.match({
-                            Record(_) => lo.construct_named(ty, c, span),
-                            _         => lo.variant_call(
-                                ty,
-                                c,
-                                a.name.text,
-                                span
-                            ),
-                        })
-                    },
+                    None        => lo.construction(id, c, a.name.text, span),
                   }),
                 }),
                 false => {
@@ -576,10 +609,7 @@ checked_invoke = (
                     sources = lo.bind_sources(f, c, recv, span).try();
                     lo.invoke(id, callee, sources, c, span)
                 },
-                Struct(_)   => {
-                    ty = lo.settled_type(id).try();
-                    lo.construct_named(ty, c, span)
-                },
+                Struct(_)   => lo.construction(id, c, "", span),
                 _           => Err(unsupported(
                     span,
                     "a call to this kind of declaration"
@@ -607,13 +637,12 @@ checked_invoke = (
 invoke* = (
     lo      :: Lowerer,
     id      : ExprId,
-    open    : Callee,
+    callee  : Callee,
     written : Vec<Source>,
     c       : Call,
     span    : Span
 )
           Res<Value, LowerError> {
-    callee  = lo.settle_range(lo.settle_params(open, written).try()).try();
     sources = callee.f.body.match({
         None  => written,
         Ok(_) => lo.in_written_order(callee, written, c).try(),
@@ -627,236 +656,8 @@ invoke* = (
     })
 }
 
-// A parameter written as a bare type parameter (`range: R`) that the
-// checked substitution left open takes its argument's checked type.
-settle_params* = (
-    lo      :: Lowerer,
-    callee  : Callee,
-    sources : Vec<Source>
-) Res<Callee, LowerError> {
-    bare = Callee(
-        f: callee.f,
-        owner: callee.owner,
-        member: callee.member,
-        module: callee.module,
-        inst: lo.alloc.Inst(),
-        self_ty: callee.self_ty,
-        generic_owner: callee.generic_owner
-    );
-    extra ::= lo.alloc.Inst();
-    callee.f.params.loop((h, i, p) {
-        p.type.when_ok((t) {
-            raw               = lo.callee_type(bare, t).try();
-            actual: Res<TyId> = sources.get(i).value_or(Source.Absent).match({
-                Given(e)    => lo.type_of(e).match({ Ok(a) => Ok(a), Err(_) => None }),
-                Computed(v) => Ok(v.ty),
-                Located(l)  => Ok(l.ty),
-                Absent      => None,
-            });
-            actual.when_ok((a) { lo.unify(raw, a, callee.inst, extra).try(); });
-        });
-    });
-    (extra.len() == 0).match({
-        true  => Ok(callee),
-        false => {
-            inst ::= lo.alloc.Inst();
-            // New bindings first: an Inst keeps the first binding of a var.
-            [extra, callee.inst].loop((part) {
-                Range(0, part.len()).loop((k) {
-                    part.var_at(k).when_ok((v) {
-                        part.arg_at(k).when_ok((a) { inst.bind(v, a).try(LowerError.OutOfMemory); });
-                    });
-                });
-            });
-            Ok(Callee(
-                f: callee.f,
-                owner: callee.owner,
-                member: callee.member,
-                module: callee.module,
-                inst: inst,
-                self_ty: callee.self_ty,
-                generic_owner: callee.generic_owner
-            ))
-        },
-    })
-}
-
-// Bind each type parameter in a parameter's written type that the checked
-// substitution left open to the matching part of the argument's type.
-unify = (
-    lo     :: Lowerer,
-    raw    : TyId,
-    actual : TyId,
-    known  : Inst,
-    extra  :: Inst
-) Res<LowerError> {
-    lo.check.types.at(raw).match({
-        Var(_)   => (!lo.settled(lo.arg_for(known, raw)) && lo.settled(actual)).then(() {
-            extra.bind(raw, actual).try(LowerError.OutOfMemory);
-        }).ignore_none(),
-        Named(r) => lo.check.types.at(actual).match({
-            Named(a) => (r.decl == a.decl).then(() {
-                r.args.loop((h, k, part) {
-                    a.args.get(k).when_ok((other) { lo.unify(part, other, known, extra).try(); });
-                });
-            }).ignore_none(),
-            _        => (),
-        }),
-        Res(r)   => lo.check.types.at(actual).match({
-            Res(a) => {
-                lo.unify(r.value, a.value, known, extra).try();
-                lo.unify(r.error, a.error, known, extra).try();
-            },
-            _      => (),
-        }),
-        Array(r) => lo.check.types.at(actual).match({
-            Array(a) => lo.unify(r.elem, a.elem, known, extra).try(),
-            _        => (),
-        }),
-        _        => (),
-    });
-}
-
-// A traversal `<R: Seq<T>, T>` whose element type sema left open takes it
-// from the range: an array's element, str's byte, a Range's bound type, or
-// the argument of the range type's Seq impl.
-settle_range = (lo :: Lowerer, callee: Callee) Res<Callee, LowerError> {
-    range_var: Res<TyId> = lo.var_named(callee.inst, "R");
-    elem_var: Res<TyId>  = lo.var_named(callee.inst, "T");
-    fix: Res<Pair>       = range_var.match({
-        None   => None,
-        Ok(rv) => elem_var.match({
-            None   => None,
-            Ok(tv) => {
-                range = lo.arg_for(callee.inst, rv);
-                elem  = lo.arg_for(callee.inst, tv);
-                (lo.settled(range) && !lo.settled(elem)).match({
-                    true  => lo.range_elem(range).try().match({
-                        Ok(e) => Ok(Pair(var: tv, ty: e)),
-                        None  => None,
-                    }),
-                    false => None,
-                })
-            },
-        }),
-    });
-    fix.match({
-        None  => Ok(callee),
-        Ok(p) => {
-            inst ::= lo.alloc.Inst();
-            inst.bind(p.var, p.ty).try(LowerError.OutOfMemory);
-            Range(0, callee.inst.len()).loop((k) {
-                callee.inst.var_at(k).when_ok((v) {
-                    callee.inst.arg_at(k).when_ok((a) { inst.bind(v, a).try(LowerError.OutOfMemory); });
-                });
-            });
-            Ok(Callee(
-                f: callee.f,
-                owner: callee.owner,
-                member: callee.member,
-                module: callee.module,
-                inst: inst,
-                self_ty: callee.self_ty,
-                generic_owner: callee.generic_owner
-            ))
-        },
-    })
-}
-
-Pair = { var: TyId, ty: TyId }
-
-var_named = (lo :: Lowerer, inst: Inst, name: str) Res<TyId> {
-    found: Res<TyId> = loop<TyId>((h) {
-        Range(0, inst.len()).loop((k) {
-            inst.var_at(k).when_ok((v) {
-                lo.check.types.at(v).match({
-                    Var(tv) => tv.name.eq(name).then(() { h.break(v); }).ignore_none(),
-                    _       => (),
-                });
-            });
-        });
-        h.break();
-    });
-    found
-}
-
-arg_for = (lo :: Lowerer, inst: Inst, var: TyId) TyId {
-    found: Res<TyId> = loop<TyId>((h) {
-        Range(0, inst.len()).loop((k) {
-            (inst.var_at(k).match({ Ok(v) => v == var, None => false })).then(() {
-                inst.arg_at(k).when_ok((a) { h.break(a); });
-            });
-        });
-        h.break();
-    });
-    found.value_or(var)
-}
-
-range_elem* = (lo :: Lowerer, range: TyId) Res<Res<TyId>, LowerError> {
-    lo.check.types.at(range).match({
-        Array(a) => Ok(Ok(a.elem)),
-        Prim(p)  => Ok(
-            p.name.eq("str").match({ true => Ok(lo.prim("u8").try()), false => None })
-        ),
-        Named(n) => lo.qualified(range).eq("std.core.range.Range").match({
-            true  => Ok(Ok(lo.range_bound(range).try())),
-            false => lo.impl_range_elem(range, n),
-        }),
-        _        => Ok(None),
-    })
-}
-
-// The type of a Range's bounds and values: the type its `start` holds.
-range_bound = (lo :: Lowerer, range: TyId) Res<TyId, LowerError> {
-    found ::= lo.alloc.Vec<Found>();
-    lo.check.members_of(range, "start", found).try(LowerError.OutOfMemory);
-    found.get(0).match({
-        Ok(f) => Ok(f.ty),
-        None  => lo.prim("usize"),
-    })
-}
-
-impl_range_elem = (
-    lo    :: Lowerer,
-    range : TyId,
-    n     : TyNamed
-) Res<Res<TyId>, LowerError> {
-    ids ::= lo.alloc.Vec<ImplId>();
-    lo.check.world.impls_named(
-        lo.tree,
-        n.name,
-        ids
-    ).try(LowerError.OutOfMemory);
-    inst             = lo.check.inst_of_named(n).try(LowerError.OutOfMemory);
-    found: Res<TyId> = loop<TyId>((h) {
-        ids.loop((id) {
-            lo.check.world.impl_at(lo.tree, id).when_ok((i) {
-                lo.check.type_memo.get(i.bound).when_ok((bound) {
-                    lo.check.types.at(bound).match({
-                        Named(b) => (b.name.eq("Seq")).then(() {
-                            b.args.get(0).when_ok((arg) {
-                                h.break(
-                                    lo.check.subst(
-                                        arg,
-                                        inst
-                                    ).try(LowerError.OutOfMemory)
-                                );
-                            });
-                        }).ignore_none(),
-                        _        => (),
-                    });
-                });
-            });
-        });
-        h.break();
-    });
-    Ok(found)
-}
-
 // The call's substitution with the caller's own parameters resolved.
-// A binding sema could not decide (Unknown: `v.eq(x)` inside a generic
-// `loop` body reached through a bound) is left out, so the arguments
-// settle the parameter instead (settle_params).
+// A binding sema left undecided is left out.
 call_inst* = (lo :: Lowerer, raw: Inst) Res<Inst, LowerError> {
     inst ::= lo.alloc.Inst();
     Range(0, raw.len()).loop((i) {
@@ -1283,22 +1084,13 @@ inline_call* = (lo :: Lowerer, open: Callee, sources: Vec<Source>, span: Span)
     callee.f.params.loop((h, i, p) {
         kinds.get(i).when_ok((k) { lo.bind_local(p.name.text, k).try(); });
     });
-    value   = lo.settled(ret).match({
-        true  => lo.block_want(body, ret),
-        false => lo.block(body),
-    }).try();
-    here    = lo.here();
-    coerced = lo.coerce(value, ret).try();
-    lo.add(Instruction.Copy(Move(
-        out: here.ret_slot,
-        source: coerced.slot
-    ))).try();
+    lo.body_result(body, ret).try();
+    here = lo.here();
     lo.enter(here.ret_block).try();
     lo.release_locals(mark);
     lo.shallower();
     lo.use_frame(saved);
-    result = Value(slot: here.ret_slot, ty: ret);
-    lo.copy_value(result)
+    Ok(Value(slot: here.ret_slot, ty: ret))
 }
 
 // A type parameter that only a closure's result determines (`then<T>` with
@@ -1419,45 +1211,72 @@ construct_named* = (
     span : Span
 ) Res<Value, LowerError> {
     out = lo.temp(ty).try();
+    lo.construct_at(ty, c, span, slot_place(out)).try();
+    Ok(out)
+}
+
+// A record construction written field by field at `into`.
+construct_at = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    c    : Call,
+    span : Span,
+    into : Place
+) Res<LowerError> {
+    whole = into.base.match({ InSlot(_) => into.offset == 0, Through(_) => false });
     // A record of no bytes is fully written by writing nothing.
-    lo.is_unit(ty).then(() { lo.add(Instruction.Constant(Const(out: out.slot, value: 0))).try(); });
+    (whole && lo.is_unit(ty)).then(() {
+        lo.add(Instruction.Constant(Const(
+            out: placed_value(into).slot,
+            value: 0
+        ))).try();
+    });
     s      = lo.shape(ty).try();
     fields = s.form.match({ Record(f) => Ok(f), _ => None })
         .ok_or(unsupported(
             span,
             lo.described("a construction of a non-record type", ty)
         )).try();
-    base   = lo.slot_of(Scalar.Ptr).try();
-    // Arguments evaluate in written order; omitted fields then take their
-    // defaults in declaration order.
-    given ::= lo.alloc.Vec<Res<Value>>();
-    fields.loop((_) { given.add(None).try(LowerError.OutOfMemory); });
+    // Arguments evaluate in written order, each straight into its field;
+    // omitted fields then take their defaults in declaration order.
+    given ::= lo.alloc.Vec<bool>();
+    fields.loop((_) { given.add(false).try(LowerError.OutOfMemory); });
     c.args.loop((h, i, a) {
         index = a.name.match({
             Ok(n) => field_index(fields, n.text),
             None  => Ok(i),
         }).ok_or(unsupported(a.span, "an argument naming no field")).try();
         field = fields.get(index).ok_or(unsupported(a.span, "more arguments than fields")).try();
-        given.set(index, Ok(lo.expr_as(a.value, field.ty).try()));
+        lo.expr_into(
+            a.value,
+            field.ty,
+            Place(
+                base: into.base,
+                offset: into.offset + field.offset,
+                ty: field.ty
+            )
+        ).try();
+        given.set(index, true);
     });
     fields.loop((h, i, field) {
-        value = given.get(i).value_or(None).match({
-            Ok(v) => v,
-            None  => lo.field_default(
+        (!given.get(i).value_or(false)).then(() {
+            value = lo.field_default(
                 lo.struct_decl(ty).try(),
                 ty,
                 field,
                 span
-            ).try(),
+            ).try();
+            lo.write(
+                Place(
+                    base: into.base,
+                    offset: into.offset + field.offset,
+                    ty: field.ty
+                ),
+                value
+            ).try();
         });
-        lo.add(Instruction.AddressOf(Address(out: base, slot: out.slot))).try();
-        lo.add(Instruction.StoreValue(Store(
-            base: base,
-            offset: field.offset,
-            value: value.slot
-        ))).try();
     });
-    Ok(out)
+    Ok
 }
 
 StructDecl = { id: DeclId, s: Struct }
@@ -2401,9 +2220,11 @@ loop_call = (
         span
     ).try();
     ty         = lo.loop_type(id, body).try();
-    result     = lo.temp(ty).try();
-    none       = lo.variant_value(ty, "None", None, span).try();
-    lo.add(Instruction.Copy(Move(out: result.slot, source: none.slot))).try();
+    result     = lo.placed_slot(id, ty).match({
+        Ok(v) => v,
+        None  => lo.temp(ty).try(),
+    });
+    lo.variant_at(slot_place(result), "None", None, span).try();
     body_params = lo.lambda_params(body).try();
     brk         = lo.label().try();
     next        = lo.label().try();
@@ -2490,8 +2311,7 @@ fold_loop = (
         span
     ).try();
     lo.start(exhausted);
-    done = lo.variant_value(ty, "Ok", Ok(acc), span).try();
-    lo.add(Instruction.Copy(Move(out: result.slot, source: done.slot))).try();
+    lo.variant_at(slot_place(result), "Ok", Ok(acc), span).try();
     lo.jump(brk)
 }
 
@@ -2997,16 +2817,8 @@ at_value = (
             ).try(),
         });
     });
-    value   = lo.settled(ret).match({
-        true  => lo.block_want(body, ret),
-        false => lo.block(body),
-    }).try();
-    here    = lo.here();
-    coerced = lo.coerce(value, ret).try();
-    lo.add(Instruction.Copy(Move(
-        out: here.ret_slot,
-        source: coerced.slot
-    ))).try();
+    lo.body_result(body, ret).try();
+    here = lo.here();
     lo.enter(here.ret_block).try();
     lo.release_locals(mark);
     lo.use_frame(saved);
@@ -3062,17 +2874,26 @@ handle_call = (lo :: Lowerer, loop_id: usize, name: str, c: Call, span: Span)
                     ok         = variant_index(variants, "Ok").ok_or(unsupported(span, "a loop result without Ok")).try();
                     payload_ty = variants.get(ok).ok_or(unsupported(span, "a missing variant")).try().payload.ok_or(unsupported(span, "a loop result without a payload")).try();
                     lo.break_fits(arg.value, payload_ty, span).try();
-                    value = lo.expr_as(arg.value, payload_ty).try();
-                    made  = lo.variant_value(
-                        result.ty,
-                        "Ok",
-                        Ok(value),
-                        span
-                    ).try();
-                    lo.add(Instruction.Copy(Move(
-                        out: result.slot,
-                        source: made.slot
-                    ))).try();
+                    whole = slot_place(result);
+                    lo.has_payloads(result.ty).try().match({
+                        true  => lo.expr_into(
+                            arg.value,
+                            payload_ty,
+                            lo.payload_place(whole, "Ok", span).try()
+                        ).try(),
+                        false => lo.write(
+                            whole,
+                            lo.variant_value(
+                                result.ty,
+                                "Ok",
+                                Ok(lo.expr_as(arg.value, payload_ty).try()),
+                                span
+                            ).try()
+                        ).try(),
+                    });
+                    lo.has_payloads(result.ty).try().then(() {
+                        lo.variant_at(whole, "Ok", None, span).try();
+                    });
                 });
             });
             lo.unwind(target.depth).try();

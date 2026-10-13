@@ -1,0 +1,30 @@
+// `join` returns only after the actor's `stopped` has run, even when it is
+// called while the actor is being finalised (its generation already bumped).
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Slow = {}
+
+Slow.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, n: u64) {}
+
+    stopped = (self :: @Self, ctx: Context) {
+        ctx.env.threads.sleep(300);
+        println("stopped ran");
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    s = env.spawn(Slow()).try();
+    s.send(1).try();
+    s.stop();
+    env.threads.sleep(50);
+    s.join();
+    println("joined");
+    Ok(0)
+}

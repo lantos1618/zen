@@ -651,6 +651,7 @@ member_body = (
 ) Res<AllocError> {
     mem.kind.match({
         Function(f) => c.check_body(f, f.body, Ok(self_ty), m, mi),
+        Const(k)    => c.const_body(k, mi),
         _           => Ok,
     })
 }

@@ -44,6 +44,11 @@
 // `Pos`, `Span` and `nowhere` live in `std.source`, which is not frontend; an
 // import of `Span` from `std.ast` is an AST import like any other.
 //
+// LOWERING READS TYPES, IT DOES NOT SOLVE THEM. Sema is the only source of
+// types: a `gen/gen_lower*` file may import sema's type data and substitution,
+// but not the helpers sema uses to work a type out (INFERENCE below). A fact
+// lowering is missing is published by sema, not re-derived beside it.
+//
 // TAINT IS TRANSITIVE WITHIN gen/. A backend may not import a gen/ module that
 // itself reaches the frontend, or a helper would launder the edge. Modules
 // outside gen/ are judged by name only: std below the AST is trusted not to
@@ -72,6 +77,7 @@
 { println } = std.io
 
 GRANDFATHERED: str = "gen/gen_c/"
+LOWERING: str = "gen/gen_lower"
 GEN_DIR: str = "gen/"
 
 // Leading argv positions before the file list.
@@ -83,6 +89,7 @@ Role = { Backend | Grandfathered | Shared }
 Edge = {
     module*: str,
     line*: usize,
+    names*: Vec<str>,  // what the module calls each imported name
 }
 
 Unit = {
@@ -182,7 +189,7 @@ judge = (
         u.role.match({
             Backend       => { bad = bad + backend_faults(u, units, taint); },
             Grandfathered => { bad = bad + unlisted(u, allowed); },
-            Shared        => (),
+            Shared        => { bad = bad + lowering_faults(u); },
         });
     });
     bad = bad + stale(units, allowed) + ratchet(allowed.len, ceiling);
@@ -253,10 +260,15 @@ imports = (a: Alloc, m: Module) Res<Vec<Edge>, AllocError> {
     edges ::= a.Vec<Edge>();
     m.decls.loop((h, d) {
         d.kind.match({
-            Import(im) => edges.add(Edge(
-                module: joined(a, im.module.segments).try(),
-                line: d.span.start.line,
-            )).try(),
+            Import(im) => {
+                names ::= a.Vec<str>();
+                im.names.loop((h2, n) { names.add(n.source.text).try(); });
+                edges.add(Edge(
+                    module: joined(a, im.module.segments).try(),
+                    line: d.span.start.line,
+                    names: names,
+                )).try();
+            },
             _          => (),
         });
     });
@@ -490,6 +502,41 @@ backend_faults = (u: Unit, units: Vec<Unit>, taint: Vec<Taint>) usize {
                     },
                 });
             },
+        });
+    });
+    n
+}
+
+// Sema's inference: what it uses to work a type out rather than to read
+// or substitute one it published.
+inference = (name: str) bool {
+    [
+        "type_of", "block_type", "lambda_type", "unify", "unify_list", "zip",
+        "instantiate", "call_inst", "infer_callback_targs", "infer_member_inst",
+        "settled_ret_literals", "typed_instance", "check_body"
+    ]
+        .find((n) { n.eq(name) }).match({ Ok(_) => true, None => false })
+}
+
+// A lowering file importing one of sema's inference helpers.
+lowering_faults = (u: Unit) usize {
+    n ::= 0;
+    u.rel.starts_with(LOWERING).then(() {
+        u.edges.loop((h, e) {
+            root_is(e.module, "sema").then(() {
+                e.names.loop((h2, name) {
+                    inference(name).then(() {
+                        n = n + 1;
+                        println(
+                            "{}:{}: lowering imports {} from {}, sema's inference. Lowering reads the types sema publishes; publish the missing fact in sema instead.",
+                            u.path,
+                            e.line,
+                            name,
+                            e.module
+                        );
+                    });
+                });
+            });
         });
     });
     n

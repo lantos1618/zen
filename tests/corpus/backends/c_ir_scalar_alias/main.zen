@@ -1,0 +1,142 @@
+// A scalar can carry an alias of a pointer parameter across a call. The C
+// renderer must copy a block read through that parameter before lending it
+// to a by-value callee. A load through an unescaped local address can lend.
+{ Program, Func, BasicBlock, Instruction, Terminator, Scalar, Layout, Const, Move, Convert, Load, Store, Invocation, Address } = gen.gen_ir
+{ verify } = gen.gen_verify
+{ emit_c } = gen.gen_c_ir
+{ Res, Ok, Err, None } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
+
+big = () Scalar { Scalar.Block(Layout(size: 24, align: 8)) }
+
+func = (
+    a          : Alloc,
+    name       : str,
+    parameters : usize,
+    slots      : Vec<Scalar>,
+    code       : Vec<Instruction>,
+    result     : usize,
+    ty         : Scalar
+)
+       Res<Func, AllocError> {
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(result))).try();
+    Ok(Func(
+        name: name,
+        parameters: parameters,
+        slots: slots,
+        blocks: blocks,
+        result: ty
+    ))
+}
+
+// reader(x: Big, encoded: u64) writes through the encoded alias, then reads x.
+reader = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(Scalar.U64).try();
+    slots.add(Scalar.Ptr).try();
+    slots.add(Scalar.U64).try();
+    slots.add(Scalar.Ptr).try();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Cast(Convert(out: 2, input: 1))).try();
+    code.add(Instruction.Constant(Const(out: 3, value: 7))).try();
+    code.add(Instruction.StoreValue(Store(base: 2, offset: 0, value: 3))).try();
+    code.add(Instruction.AddressOf(Address(out: 4, slot: 0))).try();
+    code.add(Instruction.LoadValue(Load(out: 5, base: 4, offset: 0))).try();
+    func(a, "reader", 2, slots, code, 5, Scalar.U64)
+}
+
+// The pointer and its scalar alias enter as separate parameters. No derivation
+// inside this function reveals that they can name the same caller storage.
+forward = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(Scalar.Ptr).try();
+    slots.add(Scalar.U64).try();
+    slots.add(big()).try();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.LoadValue(Load(out: 2, base: 0, offset: 0))).try();
+    args ::= a.Vec<usize>();
+    args.add(2).try();
+    args.add(1).try();
+    code.add(Instruction.Invoke(Invocation(
+        out: 3,
+        function: 0,
+        args: args
+    ))).try();
+    func(a, "forward", 2, slots, code, 3, Scalar.U64)
+}
+
+peek = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(Scalar.Ptr).try();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.AddressOf(Address(out: 1, slot: 0))).try();
+    code.add(Instruction.LoadValue(Load(out: 2, base: 1, offset: 0))).try();
+    func(a, "peek", 1, slots, code, 2, Scalar.U64)
+}
+
+local = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(big()).try();
+    slots.add(Scalar.Ptr).try();
+    slots.add(big()).try();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Copy(Move(out: 1, source: 0))).try();
+    code.add(Instruction.Copy(Move(out: 1, source: 0))).try();
+    code.add(Instruction.AddressOf(Address(out: 2, slot: 1))).try();
+    code.add(Instruction.LoadValue(Load(out: 3, base: 2, offset: 0))).try();
+    args ::= a.Vec<usize>();
+    args.add(3).try();
+    code.add(Instruction.Invoke(Invocation(
+        out: 4,
+        function: 2,
+        args: args
+    ))).try();
+    func(a, "local", 1, slots, code, 4, Scalar.U64)
+}
+
+entry = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Constant(Const(out: 0, value: 0))).try();
+    func(a, "main", 0, slots, code, 0, Scalar.U64)
+}
+
+has = (text: str, needle: str) bool {
+    text.find(needle).match({ Ok(_) => true, None => false })
+}
+
+main = (env: Env) Res<AllocError> {
+    a = env.mem.alloc();
+    functions ::= a.Vec<Func>();
+    functions.add(reader(a).try()).try();
+    functions.add(forward(a).try()).try();
+    functions.add(peek(a).try()).try();
+    functions.add(local(a).try()).try();
+    functions.add(entry(a).try()).try();
+    program = Program(functions: functions, entry: 4);
+    valid   = program.verify(a).match({ Ok(_) => true, Err(_) => false });
+    println("verified {}", valid);
+    valid.then(() {
+        code = emit_c(a, program).try();
+        text = code.view();
+        println(
+            "scalar alias copies {}",
+            has(text, "memcpy(&v2,") && has(text, "zf0(&v2, v1)")
+                && !has(text, "zf0((const void *)")
+        );
+        println("local address lends {}", has(text, "zf2((const void *)"));
+    });
+    Ok(())
+}

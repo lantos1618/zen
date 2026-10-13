@@ -16,7 +16,6 @@ tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main	main.ze
 tests/corpus/closures-capture/i_local_function_reads_the_live_frame/main	main.zen:21:5: error: unsupported by this backend: nested declarations
 tests/corpus/closures-capture/j_local_function_try_returns_from_its_writer/main	main.zen:35:5: error: unsupported by this backend: nested declarations
 tests/corpus/codegen/a_unit_try_in_tail_position_builds_its_res/main	main.zen:28:9: error: unsupported by this backend: this expression in a native executable
-tests/corpus/codegen/byte_order_reads_and_writes_round_trip	byte_order_reads_and_writes_round_trip.zen:11:22: error: unsupported by this backend: this pointer operation
 tests/corpus/codegen/c_abi_integer_spelling	c_abi_integer_spelling.zen:28:30: error: unsupported by this backend: the compiler-provided operation `c_abi_integer_spelling.abs`
 tests/corpus/codegen/native_constants_in_different_functions_keep_their_own_values	native_constants_in_different_functions_keep_their_own_values.zen:22:18: error: unsupported by this backend: a C macro other than a target predefine
 tests/corpus/codegen/unit_pointer_is_an_opaque_handle	unit_pointer_is_an_opaque_handle.zen:21:5: error: unsupported by this backend: the compiler-provided operation `unit_pointer_is_an_opaque_handle.free`

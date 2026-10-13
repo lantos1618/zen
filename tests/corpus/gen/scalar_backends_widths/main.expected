@@ -7,8 +7,8 @@ asm bool entry true
 js constant time refused true
 js split refused true
 js bitwise true
-js signed shift refused true
+js signed shift true
 asm constant time refused true
 asm split refused true
 asm bitwise true
-asm signed shift refused true
+asm signed shift true

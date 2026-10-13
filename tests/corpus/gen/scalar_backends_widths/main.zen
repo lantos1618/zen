@@ -184,19 +184,11 @@ main = (env: Env) Res<AllocError> {
             backend.stable_name(),
             run(env, b, backend, "bitwise.zen", "8\n3\n4294967283\n", 0).try()
         );
-        // The IR's shift is logical, so a signed shift_right is refused by
-        // name rather than lowered as the logical shift.
+        // A signed shift_right is the arithmetic shift on every backend.
         println(
-            "{} signed shift refused {}",
+            "{} signed shift {}",
             backend.stable_name(),
-            refused(
-                env,
-                a,
-                backend,
-                "signed_shift.zen",
-                Layout.Single,
-                "an arithmetic shift of a signed word"
-            ).try()
+            run(env, b, backend, "signed_shift.zen", "-4\n", 0).try()
         );
     });
     Ok

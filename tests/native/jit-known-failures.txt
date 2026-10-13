@@ -15,8 +15,8 @@ tests/corpus/codegen/unit_pointer_is_an_opaque_handle	unit_pointer_is_an_opaque_
 tests/corpus/env/proc_close_without_live_child	proc_close_without_live_child.zen:28:6: error: unsupported by this backend: the compiler-provided operation `proc_close_without_live_child.setpgid`
 tests/corpus/file-io/posix_stream/main	main.zen:78:6: error: unsupported by this backend: the compiler-provided operation `main.pipe`
 tests/corpus/gen_zen/bodyless_free_function_is_extern/main	main.zen:17:11: error: unsupported by this backend: the compiler-provided operation `main.isdigit`
-tests/corpus/math/power_and_rounding	std/math/math.zen:26:41: error: unsupported by this backend: a member without a body this backend can find (`f64`)
-tests/corpus/math/scalar	std/math/math.zen:19:27: error: unsupported by this backend: a member without a body this backend can find (`f64`)
+tests/corpus/math/power_and_rounding	std/math/math.zen:26:41: error: unsupported by this backend: the compiler-provided operation `std.math.math.pow`
+tests/corpus/math/scalar	std/math/math.zen:19:27: error: unsupported by this backend: the compiler-provided operation `std.math.math.cos`
 tests/corpus/net/dns_resolve/main	std/net/socket.zen:175:12: error: unsupported by this backend: a native C record
 tests/corpus/net/tcp_connect/main	std/net/socket.zen:248:27: error: unsupported by this backend: the compiler-provided operation `std.net.socket.freeaddrinfo`
 tests/corpus/net/tls_connect/main	std/net/tls.zen:261:13: error: unsupported by this backend: the compiler-provided operation `std.net.tls.SSL_shutdown`

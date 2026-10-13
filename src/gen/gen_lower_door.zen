@@ -863,7 +863,7 @@ is_spec = (lo :: Lowerer, ty: TyId) bool {
 
 // An expression written in `ty`'s declaration (a field default or a table
 // entry), evaluated in its module.
-decl_value = (
+decl_value* = (
     lo   :: Lowerer,
     e    : ExprId,
     ty   : TyId,
@@ -1091,7 +1091,7 @@ cli_checked = (
 
 // A value filled field by field or branch by branch starts zeroed, so a
 // path that writes nothing (one the engine refuses) reads defined bytes.
-blank = (lo :: Lowerer, ty: TyId) Res<Value, LowerError> {
+blank* = (lo :: Lowerer, ty: TyId) Res<Value, LowerError> {
     out = lo.temp(ty).try();
     lo.zero_fill(out, size_of(lo.class_of(ty).try())).try();
     Ok(out)

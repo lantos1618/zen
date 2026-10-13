@@ -38,5 +38,22 @@ jobs:
       - name: Install tree-sitter CLI
         run: npm install --prefix grammar --no-package-lock --no-audit --no-fund
 
+      # jitcorpus runs in its own job below: on this runner its 4 shards
+      # need more memory than the gate leaves, and it takes most of an hour.
       - name: Verify repository
-        run: make verify
+        run: make verify VERIFY_JIT=
+
+  jitcorpus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Strict jit corpus
+        run: make jitcorpus JIT_SHARDS=2

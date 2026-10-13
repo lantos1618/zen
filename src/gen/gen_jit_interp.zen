@@ -558,19 +558,19 @@ Interp = {
                 ),
                 53 => set_u64(
                     frame +% part(s, 1),
-                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) +% part(s, 3)).to<u64>().read(0)
+                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).to<u64>().read(0)
                 ),
                 54 => set_u64(
                     frame +% part(s, 1),
-                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) +% part(s, 3)).read(0).to_u64()
+                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).read(0).to_u64()
                 ),
                 55 => set_u64(
                     frame +% part(s, 1),
-                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) +% part(s, 3)).to<u32>().read(0).to_u64()
+                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).to<u32>().read(0).to_u64()
                 ),
-                56 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) +% part(s, 3)).to<u64>().write(0, load_u64(frame +% part(s, 2))),
-                57 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) +% part(s, 3)).write(0, pointer_at(frame +% part(s, 2)).read(0)),
-                58 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) +% part(s, 3)).to<u32>().write(0, pointer_at(frame +% part(s, 2)).to<u32>().read(0)),
+                56 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).to<u64>().write(0, load_u64(frame +% part(s, 2))),
+                57 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).write(0, pointer_at(frame +% part(s, 2)).read(0)),
+                58 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).to<u32>().write(0, pointer_at(frame +% part(s, 2)).to<u32>().read(0)),
                 45 => {
                     set_u64(frame +% part(s, 1), load_u64(frame +% part(s, 2)));
                     extend_code(frame +% part(s, 1), part(s, 7));

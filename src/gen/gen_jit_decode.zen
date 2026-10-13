@@ -166,17 +166,26 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
         starts.add(code.steps.len).try();
         ending = landed(f, block.exit);
         fold   :: Res<Fold> = None;
+        scale  :: Res<Scale> = None;
         skip   :: bool = false;
         test   :: Res<Test> = None;
         result :: Res<usize> = None;
         block.code.loop((h2, k, instruction) {
             next = block.code.get(k + 1);
             last = !skip && k + 1 == block.code.len;
+            scaling   :: Res<Scale> = skip.match({ true => None, false => scaled(
+                f,
+                facts,
+                instruction,
+                next,
+                block.code.get(k + 2)
+            ) });
             folding   :: Res<Fold> = skip.match({ true => None, false => fold_add(
                 f,
                 facts,
                 instruction,
-                next
+                next,
+                scale
             ) });
             target    :: Res<usize> = skip.match({ true => None, false => forwarded(
                 f,
@@ -199,6 +208,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                 Constant(v) => fixed.get(v.out).value_or(false),
                 _           => false,
             }) || folding.match({ Ok(_) => true, None => false })
+               || scaling.match({ Ok(_) => true, None => false })
                || testing.match({ Ok(_) => true, None => false })
                || returning.match({ Ok(_) => true, None => false });
             shift      = fold.match({ Ok(d) => d.by, None => 0 });
@@ -261,7 +271,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                         fold.match({ Ok(d) => d.base, None => v.base })
                     ),
                     c: v.offset + shift,
-                    n: 0,
+                    n: fold.match({ Ok(d) => d.scale.to_u64(), None => 0 }),
                     w: moved(class_of(f, v.out)),
                     ty: class_of(f, v.out),
                     index: indexed_cell(offsets, base, fold)
@@ -275,7 +285,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                     ),
                     b: cell_of(offsets, base, v.value),
                     c: v.offset + shift,
-                    n: 0,
+                    n: fold.match({ Ok(d) => d.scale.to_u64(), None => 0 }),
                     w: moved(class_of(f, v.value)),
                     ty: class_of(f, v.value),
                     index: indexed_cell(offsets, base, fold)
@@ -331,8 +341,9 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
             pinned.match({ true => (), false => { code.steps.add(
                 step
             ).try(); } });
-            fold = folding;
-            skip = target.match({ Ok(_) => true, None => false });
+            fold  = folding;
+            scale = scaling;
+            skip  = target.match({ Ok(_) => true, None => false });
             testing.match({ Ok(t) => { test = Ok(t); }, None => () });
             returning.match({ Ok(r) => { result = Ok(r); }, None => () });
         });
@@ -468,7 +479,11 @@ Facts = { fixed: Vec<bool>, sets: Vec<usize>, value: Vec<i64>, uses: Vec<usize>,
 
 // A load or store's base and offset after folding the add before it.
 // `index` is a slot plus one whose value is added too, or 0.
-Fold = { base: usize, by: usize, index: usize }
+// `scale` multiplies the index.
+Fold = { base: usize, by: usize, index: usize, scale: usize }
+
+// `out = index * by` read only by the add folded into the next step.
+Scale = { out: usize, index: usize, by: usize }
 
 // A branch on a comparison's 0 or 1 instead of on `flag == constant`.
 Test = { flag: usize, swap: bool }
@@ -496,7 +511,8 @@ fold_add = (
     f           : Func,
     facts       : Facts,
     instruction : Instruction,
-    next        : Res<Instruction>
+    next        : Res<Instruction>,
+    scale       : Res<Scale>
 ) Res<Fold> {
     instruction.match({
         BinaryValue(v) => (v.op.match({ WrapAdd => true, _ => false }) && width(class_of(
@@ -505,23 +521,102 @@ fold_add = (
         )) == 8
                            && single(facts, v.out) && based_on(next, v.out)).match({
             false => None,
-            true  => small(pinned_value(facts, v.right)).match({
-                Ok(by) => Ok(Fold(base: v.left, by: by, index: 0)),
-                None   => small(pinned_value(facts, v.left)).match({
-                    Ok(by) => Ok(Fold(base: v.right, by: by, index: 0)),
-                    None   => indexable(f, next).match({
-                        true  => Ok(Fold(
-                            base: v.left,
-                            by: 0,
-                            index: v.right + 1
-                        )),
-                        false => None,
-                    }),
+            true  => scale.match({
+                Ok(m) => (v.right == m.out).match({
+                    true  => Ok(Fold(
+                        base: v.left,
+                        by: 0,
+                        index: m.index + 1,
+                        scale: m.by
+                    )),
+                    false => Ok(Fold(
+                        base: v.right,
+                        by: 0,
+                        index: m.index + 1,
+                        scale: m.by
+                    )),
                 }),
+                None  => unscaled(f, facts, v, next),
             }),
         }),
         _              => None,
     })
+}
+
+// `out = index * constant` read only by the add after it, which folds
+// into the indexed load or store after that.
+scaled = (
+    f           : Func,
+    facts       : Facts,
+    instruction : Instruction,
+    next        : Res<Instruction>,
+    after       : Res<Instruction>
+) Res<Scale> {
+    instruction.match({
+        BinaryValue(m) => (m.op.match({ WrapMul => true, _ => false })
+                           && width(class_of(f, m.out)) == 8
+                           && single(facts, m.out)).match({
+            false => None,
+            true  => next.match({
+                Ok(i) => i.match({
+                    BinaryValue(v) => (v.op.match({ WrapAdd => true, _ => false })
+                                       && width(class_of(f, v.out)) == 8
+                                       && single(facts, v.out)
+                                       && (v.left == m.out) != (v.right == m.out)
+                                       && based_on(after, v.out)
+                                       && indexable(f, after)).match({
+                        false => None,
+                        true  => small(pinned_value(facts, m.right)).match({
+                            Ok(by) => Ok(Scale(
+                                out: m.out,
+                                index: m.left,
+                                by: by
+                            )),
+                            None   => small(pinned_value(facts, m.left)).match({
+                                Ok(by) => Ok(Scale(
+                                    out: m.out,
+                                    index: m.right,
+                                    by: by
+                                )),
+                                None   => None,
+                            }),
+                        }),
+                    }),
+                    _              => None,
+                }),
+                None  => None,
+            }),
+        }),
+        _              => None,
+    })
+}
+
+unscaled = (
+    f     : Func,
+    facts : Facts,
+    v     : Binary,
+    next  : Res<Instruction>
+) Res<Fold> {
+            small(pinned_value(facts, v.right)).match({
+                Ok(by) => Ok(Fold(base: v.left, by: by, index: 0, scale: 1)),
+                None   => small(pinned_value(facts, v.left)).match({
+                    Ok(by) => Ok(Fold(
+                        base: v.right,
+                        by: by,
+                        index: 0,
+                        scale: 1
+                    )),
+                    None   => indexable(f, next).match({
+                        true  => Ok(Fold(
+                            base: v.left,
+                            by: 0,
+                            index: v.right + 1,
+                            scale: 1
+                        )),
+                        false => None,
+                    }),
+                }),
+            })
 }
 
 // Whether `next` is a load or store whose width has an indexed step.

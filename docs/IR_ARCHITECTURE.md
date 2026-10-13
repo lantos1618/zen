@@ -425,7 +425,8 @@ renderer with no semantic work:
   image instead of by a step, and rare instructions keep a slow path through
   the original IR. A few peepholes remove steps: an add of a small constant
   that only feeds the next load or store becomes that step's offset (an
-  add of two words becomes an indexed load or store), a
+  add of two words becomes an indexed load or store, scaled when the
+  index is a constant multiple read only there), a
   branch on `flag == 0` tests the comparison that set `flag`, arithmetic
   read only by the next copy writes the copy's target, a copy read only by
   the return is returned directly, and jumps and branches are threaded to

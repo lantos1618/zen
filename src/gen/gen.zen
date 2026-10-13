@@ -22,7 +22,7 @@
 { Res, Ok, Err, None } = std.core
 { Vec } = std.collections
 { execute, refused_by_jit } = gen.gen_jit_interp
-{ prepare } = gen.gen_asm_prepare
+{ prepare, Arenas } = gen.gen_asm_prepare
 { Platform } = gen.gen_sys
 
 Layout* = { Single | Modules }
@@ -306,7 +306,10 @@ Generation* = {
                         },
                         Ok(platform) => execute(
                             self.alloc,
-                            prepare(self.alloc, self.mem, program).try(),
+                            prepare(
+                                Arenas(alloc: self.alloc, mem: self.mem),
+                                program
+                            ).try(),
                             platform,
                             argv
                         ).try().match({

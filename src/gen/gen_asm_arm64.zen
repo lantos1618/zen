@@ -30,7 +30,7 @@
 { Update, Compare, IndirectCall } = gen.gen_ir
 { Plan, Home, Pool, Address, Modes, plan } = gen.gen_asm_regalloc
 { NONE, bits, log2, low_mask, modulo, bit_width, scale_of } = gen.gen_asm_flow
-{ prepare } = gen.gen_asm_prepare
+{ prepare, Arenas } = gen.gen_asm_prepare
 { peephole, Dialect } = gen.gen_asm_peephole
 
 Arm64Os* = { Linux | Darwin }
@@ -39,7 +39,10 @@ Arm64* = { alloc*: Alloc, mem*: Mem, os*: Arm64Os }
 
 Arm64.impl(Target, {
     emit = (self: @Self, original: Program) Res<String, AllocError> {
-        program = prepare(self.alloc, self.mem, original).try();
+        program = prepare(
+            Arenas(alloc: self.alloc, mem: self.mem),
+            original
+        ).try();
         writer ::= Assembly(
             alloc: self.alloc,
             os: self.os,

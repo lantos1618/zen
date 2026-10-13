@@ -29,14 +29,18 @@
 // Callees with at most this many instructions are inlined.
 INLINE_LIMIT: usize = 48
 
-prepare* = (alloc: Alloc, mem: Mem, program: Program)
-           Res<Program, AllocError> {
+// Where prepared functions live, and where each one's scratch arena comes
+// from.
+Arenas* = { alloc*: Alloc, mem*: Mem }
+
+prepare* = (arenas: Arenas, program: Program) Res<Program, AllocError> {
     // Each function's passes run in an arena of their own: only the result
     // is kept, so preparing never holds more than one function's
     // intermediate copies.
+    alloc = arenas.alloc;
     tabled ::= alloc.Vec<Func>();
     program.functions.loop((function) {
-        scratch ::= mem.alloc();
+        scratch ::= arenas.mem.alloc();
         simple = simplify(
             scratch,
             reachable_only(scratch, function).try()
@@ -45,7 +49,7 @@ prepare* = (alloc: Alloc, mem: Mem, program: Program)
     });
     inlined ::= alloc.Vec<Func>();
     tabled.loop((h, i, _) {
-        scratch ::= mem.alloc();
+        scratch ::= arenas.mem.alloc();
         inline = inline_calls(scratch, tabled, i, program.entry).try();
         inlined.add(
             kept(

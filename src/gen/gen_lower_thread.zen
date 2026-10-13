@@ -511,6 +511,10 @@ thread_captures = (lo :: Lowerer, lambda: LambdaRef, start: usize, span: Span)
                 span,
                 "a spawned closure that calls a closure of its creator"
             )).try(),
+            Ok(Local(_))      => Err(unsupported(
+                span,
+                "a spawned closure that calls a local function of its creator"
+            )).try(),
             Ok(Handle(_))     => Err(unsupported(
                 span,
                 "a spawned closure that uses a loop handle of its creator"

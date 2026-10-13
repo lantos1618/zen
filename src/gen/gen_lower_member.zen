@@ -9,7 +9,7 @@
 { Vec, Map } = std.collections
 { String, str } = std.text
 { Res, Ok, Err, None, loop, Range } = std.core
-{ ExprId, BlockId, Function, Call, Struct, Impl, Member, Decl } = std.ast
+{ ExprId, BlockId, Function, Call, Struct, Impl, Member, Decl, Param } = std.ast
 { Span } = std.source
 { nowhere } = std.source
 { Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId } = sema.sema
@@ -19,7 +19,7 @@
 { sys_named, constant_named } = gen.gen_sys
 { TrapKind } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
-{ Lowerer, Value, Place, Base, Callee } = gen.gen_lower_core
+{ Lowerer, Value, Place, Base, Callee, LocalKind } = gen.gen_lower_core
 { to_i64_bits } = gen.gen_lower_core
 { Shape, Form, shape, size_of } = gen.gen_lower_shape
 { Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call } = gen.gen_lower_call
@@ -28,8 +28,9 @@
 { actor_of_ref, actor_member } = gen.gen_lower_actor
 { class_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
+{ impl_bound_type } = sema.sema_supply
 { name_source } = sema.sema_variant_name
-{ DiscriminantCall, represented_enum } = sema.sema_discriminant
+{ DiscriminantCall, represented_enum, is_discriminant_catch_all, has_catch_all } = sema.sema_discriminant
 { const_int } = sema.sema_const
 
 // How a member call reaches its body.
@@ -113,7 +114,7 @@ resolved_member_call = (
         Ok(kind) => lo.lower_discriminant(receiver, kind, span),
         None     => lo.check.variant_name_call_of(id).match({
             Ok(_) => lo.lower_variant_name(id, receiver, span),
-            None  => lo.bound_of(recv_ty).try().match({
+            None  => lo.dispatched(recv_ty, checked.body, span).try().match({
                 Ok(bound) => lo.dynamic_call(
                     id,
                     c,
@@ -272,6 +273,7 @@ resolve* = (
     // An open integer literal is the C path's i64, and has its methods.
     ty                 = lo.prim_name(written).eq("int").match({ true => lo.prim("i64").try(), false => written });
     owners             = lo.owners_of(ty, via).try();
+    chosen             = lo.checked_member(owners, body);
     found: Res<Callee> = loop<Callee>((h) {
         owners.loop((owner) {
             owner.members.loop((mh, index, m) {
@@ -286,7 +288,8 @@ resolve* = (
                                 Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
                                 None  => by_name,
                             }),
-                            Supply  => by_name && f.body.match({ Ok(_) => true, None => false }),
+                            Supply  => by_name && f.body.match({ Ok(_) => true, None => false })
+                                && lo.overrides(f, owner.decl, chosen),
                             Default => body.match({
                                 Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
                                 None  => by_name && f.body.match({ Ok(_) => true, None => false }),
@@ -341,6 +344,75 @@ resolve* = (
         span,
         lo.described("a member without a body this backend can find", ty)
     ))
+}
+
+// The function whose body sema checked, and the declaration it is in.
+Chosen = { f: Function, decl: DeclId }
+
+checked_member = (lo :: Lowerer, owners: Vec<Owner>, body: Res<BlockId>)
+                 Res<Chosen> {
+    body.match({
+        None  => None,
+        Ok(b) => loop<Chosen>((h) {
+            owners.loop((owner) {
+                owner.members.loop((m) {
+                    m.kind.match({
+                        Function(f) => f.body.match({
+                            Ok(own) => (own == b).then(() {
+                                h.break(Chosen(f: f, decl: owner.decl));
+                            }).ignore_none(),
+                            None    => (),
+                        }),
+                        _           => (),
+                    });
+                });
+            });
+            h.break();
+        }),
+    })
+}
+
+// An impl member stands in for the member sema checked only with its
+// parameters: a same-named overload over other types is another function.
+overrides = (lo :: Lowerer, f: Function, decl: DeclId, chosen: Res<Chosen>)
+            bool {
+    chosen.match({
+        None    => true,
+        Ok(was) => {
+            same ::= f.params.len == was.f.params.len;
+            f.params.loop((h, i, p) {
+                (i > 0).then(() {
+                    was.f.params.get(i).when_ok((q) {
+                        lo.param_ty(f, decl, p).when_ok((a) {
+                            lo.param_ty(was.f, was.decl, q).when_ok((b) {
+                                (a != b).then(() { same = false; });
+                            });
+                        });
+                    });
+                });
+            });
+            same
+        },
+    })
+}
+
+param_ty = (lo :: Lowerer, f: Function, decl: DeclId, p: Param) Res<TyId> {
+    probe = Callee(
+        f: f,
+        owner: decl,
+        member: None,
+        module: decl.module.to_usize(),
+        inst: lo.alloc.Inst(),
+        self_ty: None,
+        generic_owner: None
+    );
+    p.type.match({
+        None  => None,
+        Ok(t) => lo.callee_type(probe, t).match({
+            Ok(ty) => Ok(ty),
+            Err(_) => None,
+        }),
+    })
 }
 
 // `value.variant_name()`: the name of the alternative it holds, as a str. A
@@ -434,6 +506,133 @@ lower_discriminant = (
     lo.trap(TrapKind.Unreachable, span).try();
     lo.start(done);
     Ok(out)
+}
+
+// `Type.from_discriminant(raw)`: the variant declaring `raw`, else the
+// catch-all carrying it; an enum without a catch-all answers `None` for an
+// integer no variant declares.
+decode_discriminant* = (
+    lo   :: Lowerer,
+    id   : ExprId,
+    c    : Call,
+    ty   : TyId,
+    span : Span
+) Res<Value, LowerError> {
+    shape  = lo.check.represented_enum(ty).try(LowerError.OutOfMemory)
+        .ok_or(unsupported(
+            span,
+            "a discriminant of an enum without them"
+        )).try();
+    arg    = c.args.get(0).ok_or(unsupported(span, "a `from_discriminant` without its integer")).try();
+    raw    = lo.expr_as(arg.value, shape.repr).try();
+    result = lo.type_of(id).try();
+    open   = shape.value.has_catch_all();
+    out    = lo.temp(result).try();
+    done   = lo.label().try();
+    shape.value.variants.loop((v) {
+        v.discriminant.when_ok((e) {
+            declared = lo.constant(
+                shape.repr,
+                lo.check.const_int(e).value_or(0)
+            ).try();
+            test     = lo.slot_of(Scalar.Bool).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: test,
+                left: raw.slot,
+                right: declared.slot,
+                op: Op.Equal,
+                span: span
+            ))).try();
+            yes  = lo.label().try();
+            next = lo.label().try();
+            lo.branch_to(test, yes, next).try();
+            lo.start(yes);
+            known = lo.variant_value(ty, v.name.text, None, span).try();
+            lo.decoded(out, known, open, span).try();
+            lo.jump(done).try();
+            lo.start(next);
+        });
+    });
+    rest  = shape.value.variants.find((v) { v.is_discriminant_catch_all() });
+    other = rest.match({
+        Ok(v) => lo.variant_value(ty, v.name.text, Ok(raw), span),
+        None  => lo.variant_value(result, "None", None, span),
+    }).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: other.slot))).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// A known variant as the decoded result: itself for an enum with a
+// catch-all, `Ok` of it otherwise.
+decoded = (lo :: Lowerer, out: Value, known: Value, open: bool, span: Span)
+          Res<LowerError> {
+    answer = open.match({
+        true  => known,
+        false => lo.variant_value(out.ty, "Ok", Ok(known), span).try(),
+    });
+    lo.add(Instruction.Copy(Move(out: out.slot, source: answer.slot)))
+}
+
+// A `c.bind` namespace: its bodyless members are the C functions it names,
+// so a call through it resolves on the namespace, not on an argument.
+c_namespace* = (lo :: Lowerer, ty: TyId) bool {
+    lo.check.types.at(ty).match({
+        Named(n) => decl_at(lo.tree, n.decl).match({
+            Ok(d) => d.kind.match({
+                Struct(s) => s.native_header.match({ Ok(_) => true, None => false })
+                    && !s.native_host && !s.native_record,
+                _         => false,
+            }),
+            None  => false,
+        }),
+        _        => false,
+    })
+}
+
+// A value of a bound built from no implementor (`Apply()` for a struct of
+// methods): its tag names none and its receiver is null.
+unbound_handle* = (lo :: Lowerer, ty: TyId) Res<Value, LowerError> {
+    bound = lo.bound_of(ty).try().ok_or(unsupported(nowhere(), "a bound value of a type that is not a bound")).try();
+    out   = lo.temp(ty).try();
+    at    = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+    tag = lo.word_const(Scalar.U32, bound.implementors.len.to_i64_bits()).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: at,
+        offset: 0,
+        value: tag
+    ))).try();
+    null = lo.word_const(Scalar.Ptr, 0).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: at,
+        offset: 8,
+        value: null
+    ))).try();
+    Ok(out)
+}
+
+// The bound a member call dispatches through: none for a bound without
+// implementors whose own member sema checked, which is called directly. A
+// bodiless member of such a bound has nothing to call.
+dispatched = (lo :: Lowerer, ty: TyId, body: Res<BlockId>, span: Span)
+             Res<Res<Bound>, LowerError> {
+    lo.bound_of(ty).try().match({
+        None      => Ok(None),
+        Ok(bound) => (bound.implementors.len == 0 && !lo.page_authority(
+            bound
+        )).match({
+            false => Ok(Ok(bound)),
+            true  => body.match({
+                Ok(_) => Ok(None),
+                None  => Err(unsupported(
+                    span,
+                    "a bodiless member of a bound used as a value"
+                )),
+            }),
+        }),
+    })
 }
 
 // A std bound by name, with its program-wide implementors.
@@ -663,6 +862,122 @@ bound_decl = (lo :: Lowerer, i: Impl) Res<Res<DeclId>, LowerError> {
             _        => None,
         }),
     }))
+}
+
+// ---------------------------------------------------------------------
+// impl-supplied fields
+// ---------------------------------------------------------------------
+
+// A field an impl supplies to a type that does not store it: the impl's
+// expression, read in the impl's module with the receiver as `self`.
+Supplied* = { value*: ExprId, module*: usize }
+
+// The impl expression `value.name` reads when the receiver's type does not
+// declare `name` itself. Supplying impls are declared with the type; between
+// two, the bound sema selected decides, never declaration order.
+supplied_field* = (lo :: Lowerer, id: ExprId, rty: TyId, name: str)
+                  Res<Res<Supplied>, LowerError> {
+    lo.check.types.at(rty).match({
+        Named(n) => lo.declares_own(n.decl, name).match({
+            true  => Ok(None),
+            false => lo.pick_supplied(id, n.decl, n.name, name),
+        }),
+        _        => Ok(None),
+    })
+}
+
+declares_own = (lo :: Lowerer, decl: DeclId, name: str) bool {
+    decl_at(lo.tree, decl).match({
+        Ok(d) => d.body_members().match({
+            Ok(members) => members.find((m) { m.named(name) }).match({
+                Ok(_) => true,
+                None  => false,
+            }),
+            None        => false,
+        }),
+        None  => false,
+    })
+}
+
+pick_supplied = (
+    lo        :: Lowerer,
+    id        : ExprId,
+    decl      : DeclId,
+    type_name : str,
+    name      : str
+) Res<Res<Supplied>, LowerError> {
+    ids ::= lo.alloc.Vec<ImplId>();
+    lo.check.world.impls_named(
+        lo.tree,
+        type_name,
+        ids
+    ).try(LowerError.OutOfMemory);
+    mi = decl.module.to_usize();
+    found  ::= lo.alloc.Vec<Supplied>();
+    bounds ::= lo.alloc.Vec<TyId>();
+    ids.loop((i) {
+        (i.decl.module == decl.module).then(() {
+            lo.check.world.impl_at(lo.tree, i).when_ok((im) {
+                im.field_value(name).when_ok((v) {
+                    found.add(Supplied(
+                        value: v,
+                        module: mi
+                    )).try(LowerError.OutOfMemory);
+                    bounds.add(
+                        lo.check.impl_bound_type(
+                            im,
+                            mi
+                        ).try(LowerError.OutOfMemory)
+                    ).try(LowerError.OutOfMemory);
+                });
+            });
+        });
+    });
+    (found.len < 2).match({
+        true  => Ok(found.get(0)),
+        false => {
+            chosen = lo.supplier(id).ok_or(unsupported(nowhere(), "a computed field two impls supply")).try();
+            picked :: Res<Supplied> = None;
+            found.loop((h, i, s) {
+                bounds.get(i).when_ok((b) {
+                    b.eq(chosen).then(() { picked = Ok(s); });
+                });
+            });
+            Ok(picked)
+        },
+    })
+}
+
+// The bound sema selected for this read: this instance's answer, else the
+// template's.
+supplier = (lo :: Lowerer, id: ExprId) Res<TyId> {
+    lo.here().instance.match({
+        Ok(m) => m.supply_memo.get(id).match({
+            Ok(b) => Ok(b),
+            None  => lo.check.supply_memo.get(id),
+        }),
+        None  => lo.check.supply_memo.get(id),
+    })
+}
+
+// Read a supplied field of `receiver`, evaluated once by the caller.
+supplied_read* = (lo :: Lowerer, s: Supplied, receiver: Value, ty: TyId)
+                 Res<Value, LowerError> {
+    inst  = type_inst(lo, receiver.ty).try();
+    frame = lo.push_frame(
+        inst,
+        s.module,
+        lo.unit_ty,
+        Ok(receiver.ty),
+        None
+    ).try();
+    saved = lo.use_frame(frame);
+    mark  = lo.locals.len;
+    lo.bind_local("self", LocalKind.Direct(receiver)).try();
+    value = lo.expr_as(s.value, ty);
+    lo.release_locals(mark);
+    lo.use_frame(saved);
+    value
 }
 
 // ---------------------------------------------------------------------

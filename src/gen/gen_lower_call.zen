@@ -31,7 +31,7 @@
 { member_call, mem_call, sys_call, resolve, to_bound, handle_for_place } = gen.gen_lower_member
 { sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
 { spawn_actor, use_actor_mem } = gen.gen_lower_actor
-{ bound_of, dispatch, Bound } = gen.gen_lower_member
+{ bound_of, dispatch, Bound, decode_discriminant, c_namespace, unbound_handle } = gen.gen_lower_member
 { to_i64_bits, slot_place, placed_value } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
 { variant_index, size_of } = gen.gen_lower_shape
@@ -54,23 +54,16 @@ call* = (
     callee = lo.stripped(c.callee);
     callee.kind.match({
         Name(n)   => lo.lookup(n.text).match({
-            Ok(Closure(lambda)) => {
-                args ::= lo.alloc.Vec<LocalKind>();
-                c.args.loop((a) {
-                    handle: Res<usize> = lo.tree.expr_at(a.value).kind.match({
-                        Name(n) => lo.lookup(n.text).match({ Ok(Handle(loop_id)) => Ok(loop_id), _ => None }),
-                        _       => None,
-                    });
-                    kind               = handle.match({
-                        Ok(loop_id) => LocalKind.Handle(loop_id),
-                        None        => LocalKind.Direct(
-                            lo.copy_value(lo.expr(a.value).try()).try()
-                        ),
-                    });
-                    args.add(kind).try(LowerError.OutOfMemory);
-                });
-                lo.inline_bound(lambda, args, lo.type_of(id).try())
-            },
+            Ok(Closure(lambda)) => lo.inline_bound(
+                lambda,
+                lo.closure_args(c).try(),
+                lo.type_of(id).try()
+            ),
+            Ok(Local(local))    => lo.inline_local(
+                local,
+                lo.closure_args(c).try(),
+                lo.type_of(id).try()
+            ),
             _                   => lo.named_call(id, c, n.text, span),
         }),
         Access(a) => lo.dot_call(id, c, a, span),
@@ -141,12 +134,14 @@ construction = (
         Ok(into) => {
             s.form.match({
                 Record(_) => lo.construct_at(ty, c, span, into).try(),
+                Handle(_) => lo.write(into, lo.unbound_handle(ty).try()).try(),
                 _         => lo.variant_into(c, name, span, into).try(),
             });
             Ok(placed_value(into))
         },
         None     => s.form.match({
             Record(_) => lo.construct_named(ty, c, span),
+            Handle(_) => lo.unbound_handle(ty),
             _         => lo.variant_call(ty, c, name, span),
         }),
     })
@@ -300,9 +295,11 @@ dot_call_on = (
                         // Without a declared body the member is an impl's,
                         // found from the receiver it is called on.
                         provider = checked.member_provider.value_or(lo.unit_ty);
-                        written  = checked.body.match({
-                            Ok(_) => provider,
-                            None  => c.args.get(0).match({
+                        has_body = checked.body.match({ Ok(_) => true, None => false });
+                        through  = has_body || c_namespace(lo, provider);
+                        written  = through.match({
+                            true  => provider,
+                            false => c.args.get(0).match({
                                 Ok(arg) => lo.type_of(arg.value).try(),
                                 None    => provider,
                             }),
@@ -326,7 +323,15 @@ dot_call_on = (
                         lo.invoke(id, callee, sources, c, span)
                     },
                     // `Type.Variant(payload)` or a construction through a type.
-                    None        => lo.construction(id, c, a.name.text, span),
+                    None        => lo.check.discriminant_call_of(id).match({
+                        Ok(Decode(t)) => lo.decode_discriminant(id, c, t, span),
+                        _             => lo.construction(
+                            id,
+                            c,
+                            a.name.text,
+                            span
+                        ),
+                    }),
                   }),
                 }),
                 false => {
@@ -1174,6 +1179,26 @@ lambda_result = (lo :: Lowerer, e: ExprId) Res<Res<TyId>, LowerError> {
         },
         _         => Ok(None),
     })
+}
+
+// The arguments a closure call binds: a loop handle passes through, any
+// other value is copied.
+closure_args = (lo :: Lowerer, c: Call) Res<Vec<LocalKind>, LowerError> {
+    args ::= lo.alloc.Vec<LocalKind>();
+    c.args.loop((a) {
+        handle: Res<usize> = lo.tree.expr_at(a.value).kind.match({
+            Name(n) => lo.lookup(n.text).match({ Ok(Handle(loop_id)) => Ok(loop_id), _ => None }),
+            _       => None,
+        });
+        kind               = handle.match({
+            Ok(loop_id) => LocalKind.Handle(loop_id),
+            None        => LocalKind.Direct(
+                lo.copy_value(lo.expr(a.value).try()).try()
+            ),
+        });
+        args.add(kind).try(LowerError.OutOfMemory);
+    });
+    Ok(args)
 }
 
 is_fn_type = (lo :: Lowerer, ty: TyId) bool {

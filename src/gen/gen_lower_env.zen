@@ -1,0 +1,388 @@
+// `env.args<T>()` on the IR path. The call names its record, so its fields
+// are walked here, at the call, while argv scanning and text parsing are
+// the ordinary std.env.env_args functions, called once per field with a
+// claim mask threaded between them. See that module for the spelling
+// rules; this half decides, per field type, which of its functions to call
+// and where the answer lands. Every failure is a Res<_, ArgError> copied
+// into the answer, ending the call.
+
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, Err, None, Range } = std.core
+{ ExprId, Struct } = std.ast
+{ Span } = std.source
+{ TyId, decl_at } = sema.sema
+{ is_failure } = sema.sema_ty
+{ LowerError, unsupported } = gen.gen_lower
+{ Lowerer, Value, Place } = gen.gen_lower_core
+{ Source, real_call } = gen.gen_lower_call
+{ succeeded, ok_payload } = gen.gen_lower_thread
+{ payload_type } = gen.gen_lower_member
+{ Exit, fail_unless_ok, answer_ok, source_value } = gen.gen_lower_door
+{ module_function } = gen.gen_lower_door
+{ blank, decl_value } = gen.gen_lower_door
+
+ARGS_MODULE: str = "std.env.env_args"
+
+// The arguments of one helper call, in parameter order.
+Args = {
+    list :: Vec<Source>,
+
+    value = (self :: @Self, v: Value) Res<LowerError> {
+        self.list.add(Source.Computed(v)).try(LowerError.OutOfMemory);
+    }
+}
+
+// What one field asks of argv, decided from its type. `Num` and `OptNum`
+// carry the std parser's name for the primitive.
+Ask = { Switch | Text | OptText | Num: str | OptNum: str }
+
+// One field of the record. `raw` is the Res<str> its flag or variable
+// answered; a switch has none.
+Slot = {
+    name:    str,
+    ty:      TyId,
+    ask:     Ask,
+    raw:     Res<Place>,
+    default: Res<ExprId>,
+
+    // Text without a fallback of its own is what the command line's bare
+    // words are for; a defaulted field already has its answer.
+    positional = (self: @Self) bool {
+        (!self.name.env_only()) && self.ask.match({
+            Text    => self.default.match({ Ok(_) => false, None => true }),
+            OptText => true,
+            _       => false,
+        })
+    }
+}
+
+// What every helper call is handed again: the receiver, the claim mask,
+// the record being filled and the answer.
+Scan = {
+    env:    Value,
+    mask:   Place,
+    record: TyId,
+    whole:  Place,
+    exit:   Exit,
+    span:   Span,
+}
+
+env_args* = (lo :: Lowerer, id: ExprId, sources: Vec<Source>, span: Span)
+            Res<Value, LowerError> {
+    ret    = lo.type_of(id).try();
+    record = lo.payload_type(ret, "Ok").try();
+    fields = lo.args_record(record, span).try();
+    env    = lo.copy_value(
+        lo.source_value(sources.get(0).value_or(Source.Absent), span).try()
+    ).try();
+    zero   = lo.constant(lo.prim("u64").try(), 0).try();
+    scan   = Scan(
+        env: env,
+        mask: lo.spill(lo.copy_value(zero).try()),
+        record: record,
+        whole: lo.spill(lo.blank(record).try()),
+        exit: Exit(out: lo.temp(ret).try(), done: lo.label().try()),
+        span: span
+    );
+    slots ::= lo.alloc.Vec<Slot>();
+    fields.members.loop((member) {
+        member.kind.match({
+            Field(f) => {
+                ty = lo.field_type_of(scan, f.name.text).try();
+                slots.add(lo.args_flag(scan, f.name.text, ty, f.value).try())
+                    .try(LowerError.OutOfMemory);
+            },
+            _        => (),
+        });
+    });
+    slots.loop((slot) {
+        slot.positional().then(() { lo.args_positional(scan, slot).try(); });
+    });
+    slots.loop((slot) { lo.args_fill(scan, slot).try(); });
+    lo.args_finish(scan, slots).try();
+    lo.answer_ok(scan.exit, lo.read(scan.whole).try(), span)
+}
+
+args_record = (lo :: Lowerer, ty: TyId, span: Span)
+              Res<Struct, LowerError> {
+    refused = unsupported(span, "env.args of a type that is not a record");
+    lo.check.types.at(ty).match({
+        Named(n) => decl_at(lo.tree, n.decl).match({
+            Ok(decl) => decl.kind.match({
+                Struct(record) => Ok(record),
+                _              => Err(refused),
+            }),
+            None     => Err(refused),
+        }),
+        _        => Err(refused),
+    })
+}
+
+field_type_of = (lo :: Lowerer, scan: Scan, name: str)
+                Res<TyId, LowerError> {
+    Ok(lo.field_place(scan.whole, name, scan.span).try().ty)
+}
+
+// Pass one, per field: its flag or variable, then claim its argv slots.
+args_flag = (
+    lo      :: Lowerer,
+    scan    : Scan,
+    name    : str,
+    ty      : TyId,
+    default : Res<ExprId>
+) Res<Slot, LowerError> {
+    refused  = unsupported(scan.span, "a field env.args cannot fill");
+    ask      = lo.ask_of(ty).ok_or(refused).try();
+    flag     = lo.text_value(lo.flag_of(name).try().view()).try();
+    variable = lo.text_value(lo.var_of(name).try().view()).try();
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.value(scan.env).try();
+    args.value(flag).try();
+    args.value(variable).try();
+    raw: Res<Place> = ask.match({
+        Switch => {
+            on = lo.args_call(scan, "switch", args.list).try();
+            lo.write(
+                lo.field_place(scan.whole, name, scan.span).try(),
+                on
+            ).try();
+            None
+        },
+        _      => {
+            text = lo.args_call(scan, "text", args.list).try();
+            Ok(lo.spill(lo.copy_value(text).try()))
+        },
+    });
+    takes           = lo.constant(
+        lo.prim("bool").try(),
+        ask.match({ Switch => 0, _ => 1 })
+    ).try();
+    claim ::= Args(list: lo.alloc.Vec<Source>());
+    claim.value(scan.env).try();
+    claim.value(lo.read(scan.mask).try()).try();
+    claim.value(flag).try();
+    claim.value(takes).try();
+    lo.write(scan.mask, lo.args_call(scan, "claim", claim.list).try()).try();
+    Ok(Slot(name: name, ty: ty, ask: ask, raw: raw, default: default))
+}
+
+// Pass two: a positional field nothing filled takes the next unclaimed
+// word and claims it.
+args_positional = (lo :: Lowerer, scan: Scan, slot: Slot)
+                  Res<LowerError> {
+    raw    = lo.raw_of(scan, slot).try();
+    given  = lo.succeeded(lo.read(raw).try()).try();
+    absent = lo.label().try();
+    join   = lo.label().try();
+    lo.branch_to(given, join, absent).try();
+    lo.start(absent);
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.value(scan.env).try();
+    args.value(lo.read(scan.mask).try()).try();
+    lo.write(raw, lo.args_call(scan, "word", args.list).try()).try();
+    lo.write(scan.mask, lo.args_call(scan, "take", args.list).try()).try();
+    lo.enter(join)
+}
+
+// Pass three: every field lands in the record or the call fails by name.
+args_fill = (lo :: Lowerer, scan: Scan, slot: Slot) Res<LowerError> {
+    place = lo.field_place(scan.whole, slot.name, scan.span).try();
+    slot.ask.match({
+        Switch       => Ok,
+        OptText      => lo.write(
+            place,
+            lo.read(lo.raw_of(scan, slot).try()).try()
+        ),
+        Text         => lo.fill_word(scan, slot, place, None),
+        Num(prim)    => lo.fill_word(scan, slot, place, Ok(prim)),
+        OptNum(prim) => lo.fill_opt_num(scan, slot, place, prim),
+    })
+}
+
+// A text or number field: its default when nothing supplied it, else a
+// required word, parsed when `prim` names a parser.
+fill_word = (
+    lo    :: Lowerer,
+    scan  : Scan,
+    slot  : Slot,
+    place : Place,
+    prim  : Res<str>
+) Res<LowerError> {
+    raw = lo.raw_of(scan, slot).try();
+    slot.default.match({
+        Ok(d) => {
+            held    = lo.read(raw).try();
+            given   = lo.succeeded(held).try();
+            present = lo.label().try();
+            absent  = lo.label().try();
+            join    = lo.label().try();
+            lo.branch_to(given, present, absent).try();
+            lo.start(absent);
+            lo.write(place, lo.decl_value(d, scan.record, slot.ty).try()).try();
+            lo.jump(join).try();
+            lo.start(present);
+            text = lo.ok_payload(held).try();
+            lo.write(place, lo.parsed(scan, slot, prim, text).try()).try();
+            lo.enter(join)
+        },
+        None  => {
+            args ::= Args(list: lo.alloc.Vec<Source>());
+            args.value(lo.read(raw).try()).try();
+            args.value(lo.text_value(slot.name).try()).try();
+            got  = lo.args_checked(scan, "required", args.list).try();
+            text = lo.ok_payload(got).try();
+            lo.write(place, lo.parsed(scan, slot, prim, text).try())
+        },
+    })
+}
+
+fill_opt_num = (lo :: Lowerer, scan: Scan, slot: Slot, place: Place, prim: str)
+               Res<LowerError> {
+    held    = lo.read(lo.raw_of(scan, slot).try()).try();
+    given   = lo.succeeded(held).try();
+    present = lo.label().try();
+    absent  = lo.label().try();
+    join    = lo.label().try();
+    lo.branch_to(given, present, absent).try();
+    lo.start(absent);
+    lo.write(
+        place,
+        lo.variant_value(slot.ty, "None", None, scan.span).try()
+    ).try();
+    lo.jump(join).try();
+    lo.start(present);
+    text   = lo.ok_payload(held).try();
+    number = lo.parsed(scan, slot, Ok(prim), text).try();
+    lo.write(
+        place,
+        lo.variant_value(slot.ty, "Ok", Ok(number), scan.span).try()
+    ).try();
+    lo.enter(join)
+}
+
+// `as_<prim>(text, "field")`, failing the whole call on Parse; the text
+// itself when there is no parser.
+parsed = (lo :: Lowerer, scan: Scan, slot: Slot, prim: Res<str>, text: Value)
+         Res<Value, LowerError> {
+    prim.match({
+        None  => Ok(text),
+        Ok(p) => {
+            helper ::= lo.alloc.String("as_").try(LowerError.OutOfMemory);
+            helper.add(p).try(LowerError.OutOfMemory);
+            args ::= Args(list: lo.alloc.Vec<Source>());
+            args.value(text).try();
+            args.value(lo.text_value(slot.name).try()).try();
+            got = lo.args_checked(scan, helper.view(), args.list).try();
+            lo.ok_payload(got)
+        },
+    })
+}
+
+// Unknown flags and surplus words, named after the last positional field.
+args_finish = (lo :: Lowerer, scan: Scan, slots: Vec<Slot>) Res<LowerError> {
+    last ::= "argv";
+    slots.loop((slot) { slot.positional().then(() { last = slot.name; }); });
+    args ::= Args(list: lo.alloc.Vec<Source>());
+    args.value(scan.env).try();
+    args.value(lo.read(scan.mask).try()).try();
+    args.value(lo.text_value(last).try()).try();
+    lo.args_checked(scan, "finish", args.list).try();
+    Ok
+}
+
+raw_of = (lo :: Lowerer, scan: Scan, slot: Slot) Res<Place, LowerError> {
+    slot.raw.ok_or(unsupported(scan.span, "a switch read as text"))
+}
+
+args_call = (lo :: Lowerer, scan: Scan, name: str, args: Vec<Source>)
+            Res<Value, LowerError> {
+    lo.real_call(
+        lo.module_function(ARGS_MODULE, name, args.len, scan.span).try(),
+        args,
+        scan.span
+    )
+}
+
+// A helper answering Res<_, ArgError>; a failure ends the call.
+args_checked = (lo :: Lowerer, scan: Scan, name: str, args: Vec<Source>)
+               Res<Value, LowerError> {
+    got = lo.args_call(scan, name, args).try();
+    lo.fail_unless_ok(got, scan.exit, scan.span).try();
+    Ok(got)
+}
+
+text_value = (lo :: Lowerer, text: str) Res<Value, LowerError> {
+    lo.string(text, lo.prim("str").try())
+}
+
+// The field's ask, from its type: switches, text, numbers, and text or a
+// number wrapped in a Res<T>.
+ask_of = (lo :: Lowerer, ty: TyId) Res<Ask> {
+    lo.check.types.at(ty).match({
+        Prim(p) => p.name.match({
+            "bool"  => Ok(Switch),
+            "str"   => Ok(Text),
+            "usize" => Ok(Ask.Num("usize")),
+            "u64"   => Ok(Ask.Num("u64")),
+            "i64"   => Ok(Ask.Num("i64")),
+            _       => None,
+        }),
+        Res(r)  => is_failure(r.form).match({
+            true  => None,
+            false => lo.check.types.at(r.value).match({
+                Prim(p) => p.name.match({
+                    "str"   => Ok(OptText),
+                    "usize" => Ok(Ask.OptNum("usize")),
+                    "u64"   => Ok(Ask.OptNum("u64")),
+                    "i64"   => Ok(Ask.OptNum("i64")),
+                    _       => None,
+                }),
+                _       => None,
+            }),
+        }),
+        _       => None,
+    })
+}
+
+// `--fleet-size` for `fleet_size`; `-C` for `C`; nothing for
+// `OPENROUTER_API_KEY`, which is its variable and only that.
+flag_of = (lo :: Lowerer, field: str) Res<String, LowerError> {
+    out ::= lo.alloc.String().try(LowerError.OutOfMemory);
+    field.env_only().match({
+        true  => Ok(out),
+        false => {
+            out.add(
+                (field.len == 1).match({ true => "-", false => "--" })
+            ).try(LowerError.OutOfMemory);
+            Range(0, field.len).loop((h, i) {
+                b = field.index(i);
+                out.add(
+                    (b == '_').match({ true => '-', false => b })
+                ).try(LowerError.OutOfMemory);
+            });
+            Ok(out)
+        },
+    })
+}
+
+// An all-uppercase field name of more than one letter is an environment
+// variable spelled as itself: no flag, and never a positional.
+env_only = (field: str) bool {
+    field.len > 1 && Range(0, field.len).find((i) {
+        b = field.index(i);
+        b >= 'a' && b <= 'z'
+    }).match({ Ok(_) => false, None => true })
+}
+
+// `FLEET_SIZE` for `fleet_size`.
+var_of = (lo :: Lowerer, field: str) Res<String, LowerError> {
+    out ::= lo.alloc.String().try(LowerError.OutOfMemory);
+    Range(0, field.len).loop((h, i) {
+        b = field.index(i);
+        out.add(
+            (b >= 'a' && b <= 'z').match({ true => b - 32, false => b })
+        ).try(LowerError.OutOfMemory);
+    });
+    Ok(out)
+}

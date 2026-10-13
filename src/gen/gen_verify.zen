@@ -147,7 +147,7 @@ Check = {
                 self.expect(call.out, callee.result)
             },
             PrintValue(value)   => {
-                (word(value.ty) || same(value.ty, Scalar.Unit))
+                ((word(value.ty) && !same(value.ty, Scalar.U128)) || same(value.ty, Scalar.Unit))
                     .ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.value, value.ty)
             },

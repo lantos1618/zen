@@ -3429,7 +3429,7 @@ print_one = (
     span  : Span
 ) Res<LowerError> {
     // Both float widths print through f64; widening an f32 is exact.
-    value     = same(lo.class_of(given.ty).try(), Scalar.F32).match({
+    value = same(lo.class_of(given.ty).try(), Scalar.F32).match({
         true  => {
             wide = lo.temp(lo.prim("f64").try()).try();
             lo.add(Instruction.Cast(Convert(
@@ -3440,7 +3440,9 @@ print_one = (
         },
         false => given,
     });
-    class     = lo.class_of(value.ty).try();
+    class = lo.class_of(value.ty).try();
+    // No writer formats a u128 (the C path reports it too).
+    (!same(class, Scalar.U128)).ensure(unsupported(span, "printing a u128")).try();
     is_str    = lo.prim_name(value.ty).eq("str");
     primitive = word(class) && lo.plain_word(value.ty);
     to.match({

@@ -239,7 +239,6 @@ tests/corpus/std/simd_features # UNSUPPORTED: simd_features.zen:93:25: error: un
 tests/corpus/std/simd_sha # UNSUPPORTED: std/simd.zen:229:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_vectors # UNSUPPORTED: simd_vectors.zen:43:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements # UNSUPPORTED: std/math/math.zen:14:28: error: unsupported by this backend: alternatives of a value without them (`
-tests/corpus/std/volatile_and_inline # UNSUPPORTED: volatile_and_inline.zen:15:28: error: unsupported by this backend: this pointer operation
 tests/corpus/std/wide_integers # UNSUPPORTED: wide_integers.zen:16:15: error: unsupported by this backend: the machine primitive mul_wide (64x64 -
 tests/corpus/string-basic/a_float_fits_the_buffer/main # UNSUPPORTED: main.zen:39:25: error: unsupported by this backend: formatting an f64 into text
 tests/corpus/trait-bound/computed_fields_recompute_and_own_storage_wins/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: a field of a value without record layout

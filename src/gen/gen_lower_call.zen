@@ -2126,10 +2126,13 @@ pointer_call = (
                     ))).try();
                     Ok(out)
                 },
-                _                => Err(unsupported(
-                    span,
-                    "this pointer operation"
-                )),
+                _                => lo.byte_order(
+                    name,
+                    receiver,
+                    sources,
+                    ty,
+                    span
+                ),
             })
         },
     })
@@ -2171,6 +2174,111 @@ scaled = (lo :: Lowerer, count: usize, stride: usize) Res<usize, LowerError> {
             Ok(out)
         },
     })
+}
+
+// A fixed-width integer at a byte offset of a `Ptr<u8>`. Every target is
+// little-endian and its loads tolerate any alignment, so the little-endian
+// forms are one load or store; the big-endian forms reverse the bytes.
+ByteOrder = { word: str, big: bool, store: bool }
+
+byte_order_of = (name: str) Res<ByteOrder> {
+    name.match({
+        "read_le32"  => Ok(ByteOrder(word: "u32", big: false, store: false)),
+        "read_be32"  => Ok(ByteOrder(word: "u32", big: true, store: false)),
+        "read_le64"  => Ok(ByteOrder(word: "u64", big: false, store: false)),
+        "read_be64"  => Ok(ByteOrder(word: "u64", big: true, store: false)),
+        "write_le32" => Ok(ByteOrder(word: "u32", big: false, store: true)),
+        "write_be32" => Ok(ByteOrder(word: "u32", big: true, store: true)),
+        "write_le64" => Ok(ByteOrder(word: "u64", big: false, store: true)),
+        "write_be64" => Ok(ByteOrder(word: "u64", big: true, store: true)),
+        _            => None,
+    })
+}
+
+byte_order = (
+    lo      :: Lowerer,
+    name    : str,
+    pointer : Value,
+    sources : Vec<Source>,
+    ty      : TyId,
+    span    : Span
+)
+             Res<Value, LowerError> {
+    access = byte_order_of(name).ok_or(unsupported(span, "this pointer operation")).try();
+    word   = lo.prim(access.word).try();
+    class  = lo.class_of(word).try();
+    at     = lo.element_at(pointer, sources, 1, span).try();
+    access.store.match({
+        true  => {
+            value = lo.expr_as(sources.source_expr(2, span).try(), word).try();
+            bytes = access.big.match({
+                true  => lo.byte_swapped(value.slot, class).try(),
+                false => value.slot,
+            });
+            lo.add(Instruction.StoreValue(Store(
+                base: at,
+                offset: 0,
+                value: bytes
+            ))).try();
+            lo.unit()
+        },
+        false => {
+            loaded = lo.slot_of(class).try();
+            lo.add(Instruction.LoadValue(Load(
+                out: loaded,
+                base: at,
+                offset: 0
+            ))).try();
+            Ok(Value(
+                slot: access.big.match({
+                    true  => lo.byte_swapped(loaded, class).try(),
+                    false => loaded,
+                }),
+                ty: ty
+            ))
+        },
+    })
+}
+
+// The bytes of an unsigned word in reverse order.
+byte_swapped = (
+    lo    :: Lowerer,
+    value : usize,
+    class : Scalar
+) Res<usize, LowerError> {
+    count = size_of(class);
+    mask  = lo.word_const(class, 255).try();
+    result :: usize = lo.word_const(class, 0).try();
+    Range(0, count).loop((k) {
+        down    = lo.word_const(Scalar.U64, (k * 8).to_i64_bits()).try();
+        up      = lo.word_const(
+            Scalar.U64,
+            ((count - 1 - k) * 8).to_i64_bits()
+        ).try();
+        shifted = lo.bits(Op.Shr, value, down, class).try();
+        byte    = lo.bits(Op.And, shifted, mask, class).try();
+        placed  = lo.bits(Op.Shl, byte, up, class).try();
+        result  = lo.bits(Op.Or, result, placed, class).try();
+    });
+    Ok(result)
+}
+
+bits = (
+    lo    :: Lowerer,
+    op    : Op,
+    left  : usize,
+    right : usize,
+    class : Scalar
+) Res<usize, LowerError> {
+    out = lo.slot_of(class).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out,
+        left: left,
+        right: right,
+        op: op,
+        span: nowhere()
+    ))).try();
+    Ok(out)
 }
 
 element_at = (

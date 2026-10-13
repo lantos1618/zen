@@ -1694,8 +1694,11 @@ conversion = (
 // above the signed maximum never fits a signed one; comparing the signs of
 // source and result catches both after a round trip.
 sign_agrees = (lo :: Lowerer, from: Value, to: Value) Res<usize, LowerError> {
-    from_signed = signed(lo.class_of(from.ty).try());
-    to_signed   = signed(lo.class_of(to.ty).try());
+    // A float carries its own sign, as a signed integer does.
+    from_class  = lo.class_of(from.ty).try();
+    to_class    = lo.class_of(to.ty).try();
+    from_signed = signed(from_class) || float(from_class);
+    to_signed   = signed(to_class) || float(to_class);
     (from_signed == to_signed).match({
         true  => lo.word_const(Scalar.Bool, 1),
         false => {

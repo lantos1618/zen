@@ -5000,7 +5000,7 @@ static ZR_U zb248_8 zf4155(const zb6104_8 *zp0, zb16_8 v1);
 static ZR_U zb8_4 zu_f3_4sema9sema_drop13named_is_dropO2_t3_4sema10sema_check7Checkert3_4sema7sema_ty7TyNamed(uint64_t zu_l1c, const zb64_8 *zu_l1n);
 static ZR_U zb8_4 zu_f3_4sema8sema_def9copy_defsO2_t4_3std11collections15collections_vec3VecI1_t3_4sema8sema_def3Deft4_3std11collections15collections_vec3VecI1_t3_4sema8sema_def3Def(const zb40_8 *zu_l3src, uint64_t zu_l3out);
 static ZR_U zb80_8 zu_f3_3gen16gen_lower_member9owners_ofO3_t3_3gen14gen_lower_core7Lowerert3_4sema7sema_ty4TyIdt4_3std4core6result3ResI1_t3_4sema7sema_id6DeclId(uint64_t zu_l2lo, zb4_4 zu_l2ty, zb12_4 zu_l3via);
-static ZR_U zb240_8 zu_f3_3gen16gen_lower_member14checked_memberO3_t3_3gen14gen_lower_core7Lowerert4_3std11collections15collections_vec3VecI1_t3_3gen16gen_lower_member5Ownert4_3std4core6result3ResI1_t4_3std3ast6ast_id7BlockId(uint64_t zu_l2lo, const zb40_8 *zu_l6owners, zb8_4 zu_l4body);
+static ZR_U zb240_8 zu_f3_3gen16gen_lower_member14checked_memberO2_t4_3std11collections15collections_vec3VecI1_t3_3gen16gen_lower_member5Ownert4_3std4core6result3ResI1_t4_3std3ast6ast_id7BlockId(const zb40_8 *zu_l6owners, zb8_4 zu_l4body);
 static ZR_U uint8_t zu_f3_3gen16gen_lower_member8variadicO2_t3_3gen14gen_lower_core7Lowerert4_3std3ast8ast_node8Function(uint64_t zu_l2lo, const zb224_8 *zu_l1f);
 static ZR_U uint8_t zu_f3_3gen16gen_lower_member9overridesO4_t3_3gen14gen_lower_core7Lowerert4_3std3ast8ast_node8Functiont3_4sema7sema_id6DeclIdt4_3std4core6result3ResI1_t3_3gen16gen_lower_member6Chosen(uint64_t zu_l2lo, const zb224_8 *zu_l1f, zb8_4 zu_l4decl, const zb240_8 *zu_l6chosen);
 static ZR_U zb88_8 zu_f3_3gen16gen_lower_member6mergedO3_t3_3gen14gen_lower_core7Lowerert3_4sema9sema_inst4Instt3_4sema9sema_inst4Inst(uint64_t zu_l2lo, const zb80_8 *zu_l5first, const zb80_8 *zu_l6second);
@@ -8825,7 +8825,7 @@ static ZR_U zb80_8 zf7980(uint64_t v0, zb16_8 v1);
 static ZR_U zb80_8 zu_f3_3gen13gen_lower_env9args_callO4_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scanb3strt4_3std11collections15collections_vec3VecI1_t3_3gen14gen_lower_call6Source(uint64_t zu_l2lo, const zb160_8 *zu_l4scan, zb16_8 zu_l4name, const zb40_8 *zu_l4args);
 static ZR_U zb8_4 zf7982(uint64_t v0);
 static ZR_U uint8_t zu_f3_3gen13gen_lower_env8env_onlyO1_b3str(zb16_8 zu_l5field);
-static ZR_U zb80_8 zu_f3_3gen13gen_lower_env6raw_ofO3_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(uint64_t zu_l2lo, const zb160_8 *zu_l4scan, const zb96_8 *zu_l4slot);
+static ZR_U zb80_8 zu_f3_3gen13gen_lower_env6raw_ofO2_t3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(const zb160_8 *zu_l4scan, const zb96_8 *zu_l4slot);
 static ZR_U zb80_8 zu_f3_3gen13gen_lower_env9fill_wordO5_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slott3_3gen14gen_lower_core5Placet4_3std4core6result3ResI1_b3str(uint64_t zu_l2lo, const zb160_8 *zu_l4scan, const zb96_8 *zu_l4slot, const zb32_8 *zu_l5place, const zb24_8 *zu_l4prim);
 static ZR_U zb80_8 zu_f3_3gen13gen_lower_env12fill_opt_numO5_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slott3_3gen14gen_lower_core5Placeb3str(uint64_t zu_l2lo, const zb160_8 *zu_l4scan, const zb96_8 *zu_l4slot, const zb32_8 *zu_l5place, zb16_8 zu_l4prim);
 static ZR_U zb80_8 zu_f3_3gen13gen_lower_env12args_checkedO4_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scanb3strt4_3std11collections15collections_vec3VecI1_t3_3gen14gen_lower_call6Source(uint64_t zu_l2lo, const zb160_8 *zu_l4scan, zb16_8 zu_l4name, const zb40_8 *zu_l4args);
@@ -1065500,7 +1065500,7 @@ b17:;
   v57 = (uint64_t)(uintptr_t)&v45;
   memcpy(&v56, ((const unsigned char *)&v45 + 8u), sizeof v56);
   v59 = (uint8_t)INT64_C(0);
-  v62 = zu_f3_3gen16gen_lower_member14checked_memberO3_t3_3gen14gen_lower_core7Lowerert4_3std11collections15collections_vec3VecI1_t3_3gen16gen_lower_member5Ownert4_3std4core6result3ResI1_t4_3std3ast6ast_id7BlockId(v0, &v60, v61);
+  v62 = zu_f3_3gen16gen_lower_member14checked_memberO2_t4_3std11collections15collections_vec3VecI1_t3_3gen16gen_lower_member5Ownert4_3std4core6result3ResI1_t4_3std3ast6ast_id7BlockId(&v60, v61);
   v64 = (uint8_t)INT64_C(0);
   v66 = (uint32_t)INT64_C(1);
   v67 = (uint64_t)(uintptr_t)&v65;
@@ -1289808,271 +1289808,270 @@ b231:;
 #undef v506
 #undef v511
 #undef v513
-static ZR_U zb240_8 zu_f3_3gen16gen_lower_member14checked_memberO3_t3_3gen14gen_lower_core7Lowerert4_3std11collections15collections_vec3VecI1_t3_3gen16gen_lower_member5Ownert4_3std4core6result3ResI1_t4_3std3ast6ast_id7BlockId(uint64_t zu_l2lo, const zb40_8 *zu_l6owners, zb8_4 zu_l4body) {
-#define v0 zu_l2lo
-#define v1 (*zu_l6owners)
-#define v2 zu_l4body
-#define v5 v2
-#define v25 v23
-#define v30 v1
-#define v31 v30
-#define v36 v31
-#define v46 v36
-#define v49 v47
-#define v58 v47
-#define v83 v81
-#define v85 v83
-#define v86 v85
-#define v90 v88
-#define v95 v90
-#define v105 v95
-#define v108 v106
-#define v117 v106
-#define v142 v140
-#define v144 v142
-#define v145 v144
-#define v156 v154
-#define v165 v163
-#define v166 v165
-#define v167 v25
-#define v169 v168
-#define v173 v169
-#define v177 v156
-#define v16 v11
-#define v55 v45
-#define v74 v69
-#define v114 v104
-#define v133 v128
+static ZR_U zb240_8 zu_f3_3gen16gen_lower_member14checked_memberO2_t4_3std11collections15collections_vec3VecI1_t3_3gen16gen_lower_member5Ownert4_3std4core6result3ResI1_t4_3std3ast6ast_id7BlockId(const zb40_8 *zu_l6owners, zb8_4 zu_l4body) {
+#define v0 (*zu_l6owners)
+#define v1 zu_l4body
+#define v4 v1
+#define v24 v22
+#define v29 v0
+#define v30 v29
+#define v35 v30
+#define v45 v35
+#define v48 v46
+#define v57 v46
+#define v82 v80
+#define v84 v82
+#define v85 v84
+#define v89 v87
+#define v94 v89
+#define v104 v94
+#define v107 v105
+#define v116 v105
+#define v141 v139
+#define v143 v141
+#define v144 v143
+#define v155 v153
+#define v164 v162
+#define v165 v164
+#define v166 v24
+#define v168 v167
+#define v172 v168
+#define v176 v155
+#define v15 v10
+#define v54 v44
+#define v73 v68
+#define v113 v103
+#define v132 v127
 #ifdef ZR_ASAN
-  ZR_U struct { zb240_8 v3; zb240_8 v11; zb4_4 v23; zb152_8 v32; zb152_8 v45; zb144_8 v62; zb152_8 v69; zb144_8 v81; zb40_8 v88; zb320_8 v91; zb320_8 v104; zb312_8 v121; zb320_8 v128; zb312_8 v140; zb232_8 v148; zb224_8 v154; zb8_4 v157; zb4_4 v163; zb8_4 v179; } *const zr_fr = __builtin_alloca_with_align(sizeof *zr_fr, 8 * __alignof__(*zr_fr));
-#define v3 zr_fr->v3
-#define v11 zr_fr->v11
-#define v23 zr_fr->v23
-#define v32 zr_fr->v32
-#define v45 zr_fr->v45
-#define v62 zr_fr->v62
-#define v69 zr_fr->v69
-#define v81 zr_fr->v81
-#define v88 zr_fr->v88
-#define v91 zr_fr->v91
-#define v104 zr_fr->v104
-#define v121 zr_fr->v121
-#define v128 zr_fr->v128
-#define v140 zr_fr->v140
-#define v148 zr_fr->v148
-#define v154 zr_fr->v154
-#define v157 zr_fr->v157
-#define v163 zr_fr->v163
-#define v179 zr_fr->v179
+  ZR_U struct { zb240_8 v2; zb240_8 v10; zb4_4 v22; zb152_8 v31; zb152_8 v44; zb144_8 v61; zb152_8 v68; zb144_8 v80; zb40_8 v87; zb320_8 v90; zb320_8 v103; zb312_8 v120; zb320_8 v127; zb312_8 v139; zb232_8 v147; zb224_8 v153; zb8_4 v156; zb4_4 v162; zb8_4 v178; } *const zr_fr = __builtin_alloca_with_align(sizeof *zr_fr, 8 * __alignof__(*zr_fr));
+#define v2 zr_fr->v2
+#define v10 zr_fr->v10
+#define v22 zr_fr->v22
+#define v31 zr_fr->v31
+#define v44 zr_fr->v44
+#define v61 zr_fr->v61
+#define v68 zr_fr->v68
+#define v80 zr_fr->v80
+#define v87 zr_fr->v87
+#define v90 zr_fr->v90
+#define v103 zr_fr->v103
+#define v120 zr_fr->v120
+#define v127 zr_fr->v127
+#define v139 zr_fr->v139
+#define v147 zr_fr->v147
+#define v153 zr_fr->v153
+#define v156 zr_fr->v156
+#define v162 zr_fr->v162
+#define v178 zr_fr->v178
 #else
-  ZR_U zb240_8 v3;
-  ZR_U zb240_8 v11;
-  ZR_U zb4_4 v23;
-  ZR_U zb152_8 v32;
-  ZR_U zb152_8 v45;
-  ZR_U zb144_8 v62;
-  ZR_U zb152_8 v69;
-  ZR_U zb144_8 v81;
-  ZR_U zb40_8 v88;
-  ZR_U zb320_8 v91;
-  ZR_U zb320_8 v104;
-  ZR_U zb312_8 v121;
-  ZR_U zb320_8 v128;
-  ZR_U zb312_8 v140;
-  ZR_U zb232_8 v148;
-  ZR_U zb224_8 v154;
-  ZR_U zb8_4 v157;
-  ZR_U zb4_4 v163;
-  ZR_U zb8_4 v179;
+  ZR_U zb240_8 v2;
+  ZR_U zb240_8 v10;
+  ZR_U zb4_4 v22;
+  ZR_U zb152_8 v31;
+  ZR_U zb152_8 v44;
+  ZR_U zb144_8 v61;
+  ZR_U zb152_8 v68;
+  ZR_U zb144_8 v80;
+  ZR_U zb40_8 v87;
+  ZR_U zb320_8 v90;
+  ZR_U zb320_8 v103;
+  ZR_U zb312_8 v120;
+  ZR_U zb320_8 v127;
+  ZR_U zb312_8 v139;
+  ZR_U zb232_8 v147;
+  ZR_U zb224_8 v153;
+  ZR_U zb8_4 v156;
+  ZR_U zb4_4 v162;
+  ZR_U zb8_4 v178;
 #endif
-  ZR_U uint8_t v4 ZR_Z;
-  ZR_U uint64_t v6 ZR_Z;
+  ZR_U uint8_t v3 ZR_Z;
+  ZR_U uint64_t v5 ZR_Z;
+  ZR_U uint32_t v6 ZR_Z;
   ZR_U uint32_t v7 ZR_Z;
-  ZR_U uint32_t v8 ZR_Z;
-  ZR_U uint8_t v9 ZR_Z;
-  ZR_U uint32_t v10 ZR_Z;
-  ZR_U uint32_t v12 ZR_Z;
-  ZR_U uint8_t v13 ZR_Z;
-  ZR_U uint32_t v14 ZR_Z;
-  ZR_U uint8_t v15 ZR_Z;
-  ZR_U uint32_t v17 ZR_Z;
+  ZR_U uint8_t v8 ZR_Z;
+  ZR_U uint32_t v9 ZR_Z;
+  ZR_U uint32_t v11 ZR_Z;
+  ZR_U uint8_t v12 ZR_Z;
+  ZR_U uint32_t v13 ZR_Z;
+  ZR_U uint8_t v14 ZR_Z;
+  ZR_U uint32_t v16 ZR_Z;
+  ZR_U uint64_t v17 ZR_Z;
   ZR_U uint64_t v18 ZR_Z;
-  ZR_U uint64_t v19 ZR_Z;
+  ZR_U uint32_t v19 ZR_Z;
   ZR_U uint32_t v20 ZR_Z;
-  ZR_U uint32_t v21 ZR_Z;
-  ZR_U uint8_t v22 ZR_Z;
-  ZR_U uint64_t v24 ZR_Z;
-  ZR_U uint32_t v26 ZR_Z;
+  ZR_U uint8_t v21 ZR_Z;
+  ZR_U uint64_t v23 ZR_Z;
+  ZR_U uint32_t v25 ZR_Z;
+  ZR_U uint64_t v26 ZR_Z;
   ZR_U uint64_t v27 ZR_Z;
-  ZR_U uint64_t v28 ZR_Z;
-  ZR_U uint8_t v29 ZR_Z;
-  ZR_U uint8_t v33 ZR_Z;
-  ZR_U uint32_t v34 ZR_Z;
-  ZR_U uint64_t v35 ZR_Z;
-  ZR_U uint8_t v37 ZR_Z;
+  ZR_U uint8_t v28 ZR_Z;
+  ZR_U uint8_t v32 ZR_Z;
+  ZR_U uint32_t v33 ZR_Z;
+  ZR_U uint64_t v34 ZR_Z;
+  ZR_U uint8_t v36 ZR_Z;
+  ZR_U uint64_t v37 ZR_Z;
   ZR_U uint64_t v38 ZR_Z;
   ZR_U uint64_t v39 ZR_Z;
   ZR_U uint64_t v40 ZR_Z;
   ZR_U uint64_t v41 ZR_Z;
   ZR_U uint64_t v42 ZR_Z;
-  ZR_U uint64_t v43 ZR_Z;
-  ZR_U uint8_t v44 ZR_Z;
-  ZR_U uint64_t v47 ZR_Z;
-  ZR_U uint8_t v48 ZR_Z;
+  ZR_U uint8_t v43 ZR_Z;
+  ZR_U uint64_t v46 ZR_Z;
+  ZR_U uint8_t v47 ZR_Z;
+  ZR_U uint64_t v49 ZR_Z;
   ZR_U uint64_t v50 ZR_Z;
-  ZR_U uint64_t v51 ZR_Z;
+  ZR_U uint8_t v51 ZR_Z;
   ZR_U uint8_t v52 ZR_Z;
   ZR_U uint8_t v53 ZR_Z;
-  ZR_U uint8_t v54 ZR_Z;
+  ZR_U uint64_t v55 ZR_Z;
   ZR_U uint64_t v56 ZR_Z;
-  ZR_U uint64_t v57 ZR_Z;
+  ZR_U uint64_t v58 ZR_Z;
   ZR_U uint64_t v59 ZR_Z;
   ZR_U uint64_t v60 ZR_Z;
-  ZR_U uint64_t v61 ZR_Z;
-  ZR_U uint64_t v63 ZR_Z;
-  ZR_U uint32_t v64 ZR_Z;
-  ZR_U uint64_t v65 ZR_Z;
+  ZR_U uint64_t v62 ZR_Z;
+  ZR_U uint32_t v63 ZR_Z;
+  ZR_U uint64_t v64 ZR_Z;
+  ZR_U uint8_t v65 ZR_Z;
   ZR_U uint8_t v66 ZR_Z;
-  ZR_U uint8_t v67 ZR_Z;
-  ZR_U uint32_t v68 ZR_Z;
-  ZR_U uint32_t v70 ZR_Z;
-  ZR_U uint8_t v71 ZR_Z;
-  ZR_U uint32_t v72 ZR_Z;
-  ZR_U uint8_t v73 ZR_Z;
-  ZR_U uint32_t v75 ZR_Z;
+  ZR_U uint32_t v67 ZR_Z;
+  ZR_U uint32_t v69 ZR_Z;
+  ZR_U uint8_t v70 ZR_Z;
+  ZR_U uint32_t v71 ZR_Z;
+  ZR_U uint8_t v72 ZR_Z;
+  ZR_U uint32_t v74 ZR_Z;
+  ZR_U uint64_t v75 ZR_Z;
   ZR_U uint64_t v76 ZR_Z;
-  ZR_U uint64_t v77 ZR_Z;
+  ZR_U uint32_t v77 ZR_Z;
   ZR_U uint32_t v78 ZR_Z;
-  ZR_U uint32_t v79 ZR_Z;
-  ZR_U uint8_t v80 ZR_Z;
-  ZR_U uint64_t v82 ZR_Z;
-  ZR_U uint8_t v84 ZR_Z;
-  ZR_U uint8_t v87 ZR_Z;
-  ZR_U uint64_t v89 ZR_Z;
-  ZR_U uint8_t v92 ZR_Z;
-  ZR_U uint32_t v93 ZR_Z;
-  ZR_U uint64_t v94 ZR_Z;
-  ZR_U uint8_t v96 ZR_Z;
+  ZR_U uint8_t v79 ZR_Z;
+  ZR_U uint64_t v81 ZR_Z;
+  ZR_U uint8_t v83 ZR_Z;
+  ZR_U uint8_t v86 ZR_Z;
+  ZR_U uint64_t v88 ZR_Z;
+  ZR_U uint8_t v91 ZR_Z;
+  ZR_U uint32_t v92 ZR_Z;
+  ZR_U uint64_t v93 ZR_Z;
+  ZR_U uint8_t v95 ZR_Z;
+  ZR_U uint64_t v96 ZR_Z;
   ZR_U uint64_t v97 ZR_Z;
   ZR_U uint64_t v98 ZR_Z;
   ZR_U uint64_t v99 ZR_Z;
   ZR_U uint64_t v100 ZR_Z;
   ZR_U uint64_t v101 ZR_Z;
-  ZR_U uint64_t v102 ZR_Z;
-  ZR_U uint8_t v103 ZR_Z;
-  ZR_U uint64_t v106 ZR_Z;
-  ZR_U uint8_t v107 ZR_Z;
+  ZR_U uint8_t v102 ZR_Z;
+  ZR_U uint64_t v105 ZR_Z;
+  ZR_U uint8_t v106 ZR_Z;
+  ZR_U uint64_t v108 ZR_Z;
   ZR_U uint64_t v109 ZR_Z;
-  ZR_U uint64_t v110 ZR_Z;
+  ZR_U uint8_t v110 ZR_Z;
   ZR_U uint8_t v111 ZR_Z;
   ZR_U uint8_t v112 ZR_Z;
-  ZR_U uint8_t v113 ZR_Z;
+  ZR_U uint64_t v114 ZR_Z;
   ZR_U uint64_t v115 ZR_Z;
-  ZR_U uint64_t v116 ZR_Z;
+  ZR_U uint64_t v117 ZR_Z;
   ZR_U uint64_t v118 ZR_Z;
   ZR_U uint64_t v119 ZR_Z;
-  ZR_U uint64_t v120 ZR_Z;
-  ZR_U uint64_t v122 ZR_Z;
-  ZR_U uint32_t v123 ZR_Z;
-  ZR_U uint64_t v124 ZR_Z;
+  ZR_U uint64_t v121 ZR_Z;
+  ZR_U uint32_t v122 ZR_Z;
+  ZR_U uint64_t v123 ZR_Z;
+  ZR_U uint8_t v124 ZR_Z;
   ZR_U uint8_t v125 ZR_Z;
-  ZR_U uint8_t v126 ZR_Z;
-  ZR_U uint32_t v127 ZR_Z;
-  ZR_U uint32_t v129 ZR_Z;
-  ZR_U uint8_t v130 ZR_Z;
-  ZR_U uint32_t v131 ZR_Z;
-  ZR_U uint8_t v132 ZR_Z;
-  ZR_U uint32_t v134 ZR_Z;
+  ZR_U uint32_t v126 ZR_Z;
+  ZR_U uint32_t v128 ZR_Z;
+  ZR_U uint8_t v129 ZR_Z;
+  ZR_U uint32_t v130 ZR_Z;
+  ZR_U uint8_t v131 ZR_Z;
+  ZR_U uint32_t v133 ZR_Z;
+  ZR_U uint64_t v134 ZR_Z;
   ZR_U uint64_t v135 ZR_Z;
-  ZR_U uint64_t v136 ZR_Z;
+  ZR_U uint32_t v136 ZR_Z;
   ZR_U uint32_t v137 ZR_Z;
-  ZR_U uint32_t v138 ZR_Z;
-  ZR_U uint8_t v139 ZR_Z;
-  ZR_U uint64_t v141 ZR_Z;
-  ZR_U uint8_t v143 ZR_Z;
+  ZR_U uint8_t v138 ZR_Z;
+  ZR_U uint64_t v140 ZR_Z;
+  ZR_U uint8_t v142 ZR_Z;
+  ZR_U uint8_t v145 ZR_Z;
   ZR_U uint8_t v146 ZR_Z;
-  ZR_U uint8_t v147 ZR_Z;
+  ZR_U uint64_t v148 ZR_Z;
   ZR_U uint64_t v149 ZR_Z;
-  ZR_U uint64_t v150 ZR_Z;
+  ZR_U uint32_t v150 ZR_Z;
   ZR_U uint32_t v151 ZR_Z;
-  ZR_U uint32_t v152 ZR_Z;
-  ZR_U uint8_t v153 ZR_Z;
-  ZR_U uint64_t v155 ZR_Z;
+  ZR_U uint8_t v152 ZR_Z;
+  ZR_U uint64_t v154 ZR_Z;
+  ZR_U uint64_t v157 ZR_Z;
   ZR_U uint64_t v158 ZR_Z;
-  ZR_U uint64_t v159 ZR_Z;
+  ZR_U uint32_t v159 ZR_Z;
   ZR_U uint32_t v160 ZR_Z;
-  ZR_U uint32_t v161 ZR_Z;
-  ZR_U uint8_t v162 ZR_Z;
-  ZR_U uint64_t v164 ZR_Z;
-  ZR_U uint8_t v168 ZR_Z;
-  ZR_U uint32_t v170 ZR_Z;
-  ZR_U uint8_t v171 ZR_Z;
-  ZR_U uint32_t v172 ZR_Z;
+  ZR_U uint8_t v161 ZR_Z;
+  ZR_U uint64_t v163 ZR_Z;
+  ZR_U uint8_t v167 ZR_Z;
+  ZR_U uint32_t v169 ZR_Z;
+  ZR_U uint8_t v170 ZR_Z;
+  ZR_U uint32_t v171 ZR_Z;
+  ZR_U uint8_t v173 ZR_Z;
   ZR_U uint8_t v174 ZR_Z;
   ZR_U uint8_t v175 ZR_Z;
-  ZR_U uint8_t v176 ZR_Z;
-  ZR_U uint64_t v178 ZR_Z;
+  ZR_U uint64_t v177 ZR_Z;
+  ZR_U uint64_t v179 ZR_Z;
   ZR_U uint64_t v180 ZR_Z;
-  ZR_U uint64_t v181 ZR_Z;
-  ZR_U uint32_t v182 ZR_Z;
-  ZR_U uint64_t v183 ZR_Z;
-  ZR_U uint8_t v184 ZR_Z;
+  ZR_U uint32_t v181 ZR_Z;
+  ZR_U uint64_t v182 ZR_Z;
+  ZR_U uint8_t v183 ZR_Z;
+  ZR_U uint32_t v184 ZR_Z;
   ZR_U uint32_t v185 ZR_Z;
-  ZR_U uint32_t v186 ZR_Z;
+  ZR_U uint8_t v186 ZR_Z;
   ZR_U uint8_t v187 ZR_Z;
-  ZR_U uint8_t v188 ZR_Z;
+  ZR_U uint32_t v188 ZR_Z;
   ZR_U uint32_t v189 ZR_Z;
-  ZR_U uint32_t v190 ZR_Z;
-  ZR_U uint8_t v191 ZR_Z;
-  ZR_U uint64_t v192 ZR_Z;
+  ZR_U uint8_t v190 ZR_Z;
+  ZR_U uint64_t v191 ZR_Z;
+  ZR_U uint32_t v192 ZR_Z;
   ZR_U uint32_t v193 ZR_Z;
-  ZR_U uint32_t v194 ZR_Z;
+  ZR_U uint8_t v194 ZR_Z;
   ZR_U uint8_t v195 ZR_Z;
   ZR_U uint8_t v196 ZR_Z;
-  ZR_U uint8_t v197 ZR_Z;
-  ZR_U uint64_t v198 ZR_Z;
-  ZR_U uint8_t v199 ZR_Z;
-  ZR_U uint64_t v200 ZR_Z;
+  ZR_U uint64_t v197 ZR_Z;
+  ZR_U uint8_t v198 ZR_Z;
+  ZR_U uint64_t v199 ZR_Z;
+  ZR_U uint8_t v200 ZR_Z;
   ZR_U uint8_t v201 ZR_Z;
-  ZR_U uint8_t v202 ZR_Z;
-  ZR_U uint64_t v203 ZR_Z;
-  v4 = (uint8_t)INT64_C(0);
-  v6 = (uint64_t)(uintptr_t)&v5;
-  v7 = *(const za_uint32_t *)((const unsigned char *)&v5 + 0u);
-  v8 = (uint32_t)INT64_C(1);
-  v9 = v7 == v8;
-  if (v9) goto b5; else goto b4;
+  ZR_U uint64_t v202 ZR_Z;
+  v3 = (uint8_t)INT64_C(0);
+  v5 = (uint64_t)(uintptr_t)&v4;
+  v6 = *(const za_uint32_t *)((const unsigned char *)&v4 + 0u);
+  v7 = (uint32_t)INT64_C(1);
+  v8 = v6 == v7;
+  if (v8) goto b5; else goto b4;
 b2:;
-  return v3;
+  return v2;
 b3:;
   goto b2;
 b4:;
-  v19 = (uint64_t)(uintptr_t)&v5;
-  v20 = *(const za_uint32_t *)((const unsigned char *)&v5 + 0u);
-  v21 = (uint32_t)INT64_C(0);
-  v22 = v20 == v21;
-  if (v22) goto b19; else goto b18;
+  v18 = (uint64_t)(uintptr_t)&v4;
+  v19 = *(const za_uint32_t *)((const unsigned char *)&v4 + 0u);
+  v20 = (uint32_t)INT64_C(0);
+  v21 = v19 == v20;
+  if (v21) goto b19; else goto b18;
 b5:;
-  v10 = (uint32_t)INT64_C(1);
-  v12 = (uint32_t)INT64_C(0);
-  v13 = v10 == v12;
-  if (v13) goto b8; else goto b9;
+  v9 = (uint32_t)INT64_C(1);
+  v11 = (uint32_t)INT64_C(0);
+  v12 = v9 == v11;
+  if (v12) goto b8; else goto b9;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b7:;
-  v3 = v11;
+  v2 = v10;
   goto b3;
 b8:;
   zr_trap(":0:0: trap: unreachable match arm\012", 34);
 b9:;
-  v14 = (uint32_t)INT64_C(1);
-  v15 = v10 == v14;
-  if (v15) goto b12; else goto b13;
+  v13 = (uint32_t)INT64_C(1);
+  v14 = v9 == v13;
+  if (v14) goto b12; else goto b13;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b12:;
-  v17 = (uint32_t)INT64_C(1);
-  v18 = (uint64_t)(uintptr_t)&v16;
-  *(za_uint32_t *)((unsigned char *)&v16 + 0u) = v17;
+  v16 = (uint32_t)INT64_C(1);
+  v17 = (uint64_t)(uintptr_t)&v15;
+  *(za_uint32_t *)((unsigned char *)&v15 + 0u) = v16;
   goto b7;
 b13:;
   zr_trap(":0:0: trap: unreachable match arm\012", 34);
@@ -1290083,107 +1290082,107 @@ b13:;
 b18:;
   zr_trap("gen/gen_lower_member.zen:354:5: trap: unreachable match arm\012", 60);
 b19:;
-  v24 = (uint64_t)(uintptr_t)&v5;
-  memcpy(&v23, ((const unsigned char *)&v5 + 4u), sizeof v23);
-  v26 = (uint32_t)INT64_C(1);
-  v27 = (uint64_t)(uintptr_t)&v3;
-  *(za_uint32_t *)((unsigned char *)&v3 + 0u) = v26;
-  v28 = (uint64_t)INT64_C(0);
+  v23 = (uint64_t)(uintptr_t)&v4;
+  memcpy(&v22, ((const unsigned char *)&v4 + 4u), sizeof v22);
+  v25 = (uint32_t)INT64_C(1);
+  v26 = (uint64_t)(uintptr_t)&v2;
+  *(za_uint32_t *)((unsigned char *)&v2 + 0u) = v25;
+  v27 = (uint64_t)INT64_C(0);
   goto b23;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b21:;
   goto b3;
 b22:;
-  v203 = (uint64_t)INT64_C(1);
-  v28 = (uint64_t)((uint64_t)(uint64_t)v28 + (uint64_t)(uint64_t)v203);
+  v202 = (uint64_t)INT64_C(1);
+  v27 = (uint64_t)((uint64_t)(uint64_t)v27 + (uint64_t)(uint64_t)v202);
 b23:;
-  v29 = (uint8_t)INT64_C(0);
-  v33 = (uint8_t)INT64_C(0);
-  v34 = (uint32_t)INT64_C(1);
-  v35 = (uint64_t)(uintptr_t)&v32;
-  *(za_uint32_t *)((unsigned char *)&v32 + 0u) = v34;
-  v38 = (uint64_t)INT64_C(0);
-  v40 = (uint64_t)(uintptr_t)&v36;
-  v39 = *(const za_uint64_t *)((const unsigned char *)&v36 + 8u);
-  v41 = v38;
-  v42 = (uint64_t)INT64_C(1);
-  v43 = (uint64_t)INT64_C(0);
+  v28 = (uint8_t)INT64_C(0);
+  v32 = (uint8_t)INT64_C(0);
+  v33 = (uint32_t)INT64_C(1);
+  v34 = (uint64_t)(uintptr_t)&v31;
+  *(za_uint32_t *)((unsigned char *)&v31 + 0u) = v33;
+  v37 = (uint64_t)INT64_C(0);
+  v39 = (uint64_t)(uintptr_t)&v35;
+  v38 = *(const za_uint64_t *)((const unsigned char *)&v35 + 8u);
+  v40 = v37;
+  v41 = (uint64_t)INT64_C(1);
+  v42 = (uint64_t)INT64_C(0);
   goto b28;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b25:;
-  v201 = (uint8_t)INT64_C(0);
+  v200 = (uint8_t)INT64_C(0);
   goto b21;
 b26:;
   goto b25;
 b27:;
-  v200 = (uint64_t)INT64_C(1);
-  v41 = (uint64_t)((uint64_t)(uint64_t)v41 + (uint64_t)(uint64_t)v42);
-  v43 = (uint64_t)((uint64_t)(uint64_t)v43 + (uint64_t)(uint64_t)v200);
+  v199 = (uint64_t)INT64_C(1);
+  v40 = (uint64_t)((uint64_t)(uint64_t)v40 + (uint64_t)(uint64_t)v41);
+  v42 = (uint64_t)((uint64_t)(uint64_t)v42 + (uint64_t)(uint64_t)v199);
 b28:;
-  v44 = v41 < v39;
-  if (v44) goto b30; else goto b26;
+  v43 = v40 < v38;
+  if (v43) goto b30; else goto b26;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b30:;
-  v47 = v41;
-  v48 = (uint8_t)INT64_C(0);
-  v51 = (uint64_t)(uintptr_t)&v46;
-  v50 = *(const za_uint64_t *)((const unsigned char *)&v46 + 8u);
-  v52 = v49 < v50;
-  v53 = (uint8_t)INT64_C(1);
-  v54 = v52 == v53;
-  if (v54) goto b36; else goto b35;
+  v46 = v40;
+  v47 = (uint8_t)INT64_C(0);
+  v50 = (uint64_t)(uintptr_t)&v45;
+  v49 = *(const za_uint64_t *)((const unsigned char *)&v45 + 8u);
+  v51 = v48 < v49;
+  v52 = (uint8_t)INT64_C(1);
+  v53 = v51 == v52;
+  if (v53) goto b36; else goto b35;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b33:;
-  v77 = (uint64_t)(uintptr_t)&v45;
-  v78 = *(const za_uint32_t *)((const unsigned char *)&v45 + 0u);
-  v79 = (uint32_t)INT64_C(0);
-  v80 = v78 == v79;
-  if (v80) goto b55; else goto b26;
+  v76 = (uint64_t)(uintptr_t)&v44;
+  v77 = *(const za_uint32_t *)((const unsigned char *)&v44 + 0u);
+  v78 = (uint32_t)INT64_C(0);
+  v79 = v77 == v78;
+  if (v79) goto b55; else goto b26;
 b34:;
   goto b33;
 b35:;
-  v66 = (uint8_t)INT64_C(0);
-  v67 = v52 == v66;
-  if (v67) goto b40; else goto b39;
+  v65 = (uint8_t)INT64_C(0);
+  v66 = v51 == v65;
+  if (v66) goto b40; else goto b39;
 b36:;
-  v57 = (uint64_t)(uintptr_t)&v46;
-  v56 = *(const za_uint64_t *)((const unsigned char *)&v46 + 0u);
-  v59 = (uint64_t)INT64_C(144);
-  v60 = (uint64_t)((uint64_t)(uint64_t)v58 * (uint64_t)(uint64_t)v59);
-  v61 = (uint64_t)((uint64_t)(uint64_t)v56 + (uint64_t)(uint64_t)v60);
-  memcpy(&v62, ((const unsigned char *)(uintptr_t)v61 + 0u), sizeof v62);
-  v63 = (uint64_t)(uintptr_t)&v55;
-  memcpy(((unsigned char *)&v55 + 8u), &v62, sizeof v62);
-  v64 = (uint32_t)INT64_C(0);
-  v65 = (uint64_t)(uintptr_t)&v55;
-  *(za_uint32_t *)((unsigned char *)&v55 + 0u) = v64;
+  v56 = (uint64_t)(uintptr_t)&v45;
+  v55 = *(const za_uint64_t *)((const unsigned char *)&v45 + 0u);
+  v58 = (uint64_t)INT64_C(144);
+  v59 = (uint64_t)((uint64_t)(uint64_t)v57 * (uint64_t)(uint64_t)v58);
+  v60 = (uint64_t)((uint64_t)(uint64_t)v55 + (uint64_t)(uint64_t)v59);
+  memcpy(&v61, ((const unsigned char *)(uintptr_t)v60 + 0u), sizeof v61);
+  v62 = (uint64_t)(uintptr_t)&v54;
+  memcpy(((unsigned char *)&v54 + 8u), &v61, sizeof v61);
+  v63 = (uint32_t)INT64_C(0);
+  v64 = (uint64_t)(uintptr_t)&v54;
+  *(za_uint32_t *)((unsigned char *)&v54 + 0u) = v63;
   goto b34;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b39:;
   zr_trap("std/collections/collections_vec.zen:137:9: trap: unreachable match arm\012", 71);
 b40:;
-  v68 = (uint32_t)INT64_C(1);
-  v70 = (uint32_t)INT64_C(0);
-  v71 = v68 == v70;
-  if (v71) goto b43; else goto b44;
+  v67 = (uint32_t)INT64_C(1);
+  v69 = (uint32_t)INT64_C(0);
+  v70 = v67 == v69;
+  if (v70) goto b43; else goto b44;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b42:;
-  v45 = v69;
+  v44 = v68;
   goto b34;
 b43:;
   zr_trap(":0:0: trap: unreachable match arm\012", 34);
 b44:;
-  v72 = (uint32_t)INT64_C(1);
-  v73 = v68 == v72;
-  if (v73) goto b47; else goto b48;
+  v71 = (uint32_t)INT64_C(1);
+  v72 = v67 == v71;
+  if (v72) goto b47; else goto b48;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b47:;
-  v75 = (uint32_t)INT64_C(1);
-  v76 = (uint64_t)(uintptr_t)&v74;
-  *(za_uint32_t *)((unsigned char *)&v74 + 0u) = v75;
+  v74 = (uint32_t)INT64_C(1);
+  v75 = (uint64_t)(uintptr_t)&v73;
+  *(za_uint32_t *)((unsigned char *)&v73 + 0u) = v74;
   goto b42;
 b48:;
   zr_trap(":0:0: trap: unreachable match arm\012", 34);
@@ -1290194,98 +1290193,98 @@ b48:;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b55:;
-  v82 = (uint64_t)(uintptr_t)&v45;
-  memcpy(&v81, ((const unsigned char *)&v45 + 8u), sizeof v81);
-  v84 = (uint8_t)INT64_C(0);
-  v87 = (uint8_t)INT64_C(0);
-  v89 = (uint64_t)(uintptr_t)&v86;
-  memcpy(&v88, ((const unsigned char *)&v86 + 8u), sizeof v88);
-  v92 = (uint8_t)INT64_C(0);
-  v93 = (uint32_t)INT64_C(1);
-  v94 = (uint64_t)(uintptr_t)&v91;
-  *(za_uint32_t *)((unsigned char *)&v91 + 0u) = v93;
-  v97 = (uint64_t)INT64_C(0);
-  v99 = (uint64_t)(uintptr_t)&v95;
-  v98 = *(const za_uint64_t *)((const unsigned char *)&v95 + 8u);
-  v100 = v97;
-  v101 = (uint64_t)INT64_C(1);
-  v102 = (uint64_t)INT64_C(0);
+  v81 = (uint64_t)(uintptr_t)&v44;
+  memcpy(&v80, ((const unsigned char *)&v44 + 8u), sizeof v80);
+  v83 = (uint8_t)INT64_C(0);
+  v86 = (uint8_t)INT64_C(0);
+  v88 = (uint64_t)(uintptr_t)&v85;
+  memcpy(&v87, ((const unsigned char *)&v85 + 8u), sizeof v87);
+  v91 = (uint8_t)INT64_C(0);
+  v92 = (uint32_t)INT64_C(1);
+  v93 = (uint64_t)(uintptr_t)&v90;
+  *(za_uint32_t *)((unsigned char *)&v90 + 0u) = v92;
+  v96 = (uint64_t)INT64_C(0);
+  v98 = (uint64_t)(uintptr_t)&v94;
+  v97 = *(const za_uint64_t *)((const unsigned char *)&v94 + 8u);
+  v99 = v96;
+  v100 = (uint64_t)INT64_C(1);
+  v101 = (uint64_t)INT64_C(0);
   goto b60;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b57:;
-  v199 = (uint8_t)INT64_C(0);
+  v198 = (uint8_t)INT64_C(0);
   goto b27;
 b58:;
   goto b57;
 b59:;
-  v198 = (uint64_t)INT64_C(1);
-  v100 = (uint64_t)((uint64_t)(uint64_t)v100 + (uint64_t)(uint64_t)v101);
-  v102 = (uint64_t)((uint64_t)(uint64_t)v102 + (uint64_t)(uint64_t)v198);
+  v197 = (uint64_t)INT64_C(1);
+  v99 = (uint64_t)((uint64_t)(uint64_t)v99 + (uint64_t)(uint64_t)v100);
+  v101 = (uint64_t)((uint64_t)(uint64_t)v101 + (uint64_t)(uint64_t)v197);
 b60:;
-  v103 = v100 < v98;
-  if (v103) goto b62; else goto b58;
+  v102 = v99 < v97;
+  if (v102) goto b62; else goto b58;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b62:;
-  v106 = v100;
-  v107 = (uint8_t)INT64_C(0);
-  v110 = (uint64_t)(uintptr_t)&v105;
-  v109 = *(const za_uint64_t *)((const unsigned char *)&v105 + 8u);
-  v111 = v108 < v109;
-  v112 = (uint8_t)INT64_C(1);
-  v113 = v111 == v112;
-  if (v113) goto b68; else goto b67;
+  v105 = v99;
+  v106 = (uint8_t)INT64_C(0);
+  v109 = (uint64_t)(uintptr_t)&v104;
+  v108 = *(const za_uint64_t *)((const unsigned char *)&v104 + 8u);
+  v110 = v107 < v108;
+  v111 = (uint8_t)INT64_C(1);
+  v112 = v110 == v111;
+  if (v112) goto b68; else goto b67;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b65:;
-  v136 = (uint64_t)(uintptr_t)&v104;
-  v137 = *(const za_uint32_t *)((const unsigned char *)&v104 + 0u);
-  v138 = (uint32_t)INT64_C(0);
-  v139 = v137 == v138;
-  if (v139) goto b87; else goto b58;
+  v135 = (uint64_t)(uintptr_t)&v103;
+  v136 = *(const za_uint32_t *)((const unsigned char *)&v103 + 0u);
+  v137 = (uint32_t)INT64_C(0);
+  v138 = v136 == v137;
+  if (v138) goto b87; else goto b58;
 b66:;
   goto b65;
 b67:;
-  v125 = (uint8_t)INT64_C(0);
-  v126 = v111 == v125;
-  if (v126) goto b72; else goto b71;
+  v124 = (uint8_t)INT64_C(0);
+  v125 = v110 == v124;
+  if (v125) goto b72; else goto b71;
 b68:;
-  v116 = (uint64_t)(uintptr_t)&v105;
-  v115 = *(const za_uint64_t *)((const unsigned char *)&v105 + 0u);
-  v118 = (uint64_t)INT64_C(312);
-  v119 = (uint64_t)((uint64_t)(uint64_t)v117 * (uint64_t)(uint64_t)v118);
-  v120 = (uint64_t)((uint64_t)(uint64_t)v115 + (uint64_t)(uint64_t)v119);
-  memcpy(&v121, ((const unsigned char *)(uintptr_t)v120 + 0u), sizeof v121);
-  v122 = (uint64_t)(uintptr_t)&v114;
-  memcpy(((unsigned char *)&v114 + 8u), &v121, sizeof v121);
-  v123 = (uint32_t)INT64_C(0);
-  v124 = (uint64_t)(uintptr_t)&v114;
-  *(za_uint32_t *)((unsigned char *)&v114 + 0u) = v123;
+  v115 = (uint64_t)(uintptr_t)&v104;
+  v114 = *(const za_uint64_t *)((const unsigned char *)&v104 + 0u);
+  v117 = (uint64_t)INT64_C(312);
+  v118 = (uint64_t)((uint64_t)(uint64_t)v116 * (uint64_t)(uint64_t)v117);
+  v119 = (uint64_t)((uint64_t)(uint64_t)v114 + (uint64_t)(uint64_t)v118);
+  memcpy(&v120, ((const unsigned char *)(uintptr_t)v119 + 0u), sizeof v120);
+  v121 = (uint64_t)(uintptr_t)&v113;
+  memcpy(((unsigned char *)&v113 + 8u), &v120, sizeof v120);
+  v122 = (uint32_t)INT64_C(0);
+  v123 = (uint64_t)(uintptr_t)&v113;
+  *(za_uint32_t *)((unsigned char *)&v113 + 0u) = v122;
   goto b66;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b71:;
   zr_trap("std/collections/collections_vec.zen:137:9: trap: unreachable match arm\012", 71);
 b72:;
-  v127 = (uint32_t)INT64_C(1);
-  v129 = (uint32_t)INT64_C(0);
-  v130 = v127 == v129;
-  if (v130) goto b75; else goto b76;
+  v126 = (uint32_t)INT64_C(1);
+  v128 = (uint32_t)INT64_C(0);
+  v129 = v126 == v128;
+  if (v129) goto b75; else goto b76;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b74:;
-  v104 = v128;
+  v103 = v127;
   goto b66;
 b75:;
   zr_trap(":0:0: trap: unreachable match arm\012", 34);
 b76:;
-  v131 = (uint32_t)INT64_C(1);
-  v132 = v127 == v131;
-  if (v132) goto b79; else goto b80;
+  v130 = (uint32_t)INT64_C(1);
+  v131 = v126 == v130;
+  if (v131) goto b79; else goto b80;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b79:;
-  v134 = (uint32_t)INT64_C(1);
-  v135 = (uint64_t)(uintptr_t)&v133;
-  *(za_uint32_t *)((unsigned char *)&v133 + 0u) = v134;
+  v133 = (uint32_t)INT64_C(1);
+  v134 = (uint64_t)(uintptr_t)&v132;
+  *(za_uint32_t *)((unsigned char *)&v132 + 0u) = v133;
   goto b74;
 b80:;
   zr_trap(":0:0: trap: unreachable match arm\012", 34);
@@ -1290296,86 +1290295,86 @@ b80:;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b87:;
-  v141 = (uint64_t)(uintptr_t)&v104;
-  memcpy(&v140, ((const unsigned char *)&v104 + 8u), sizeof v140);
-  v143 = (uint8_t)INT64_C(0);
-  v146 = (uint8_t)INT64_C(0);
-  v149 = (uint64_t)(uintptr_t)&v145;
-  memcpy(&v148, ((const unsigned char *)&v145 + 0u), sizeof v148);
-  v150 = (uint64_t)(uintptr_t)&v148;
-  v151 = *(const za_uint32_t *)((const unsigned char *)&v148 + 0u);
-  v152 = (uint32_t)INT64_C(2);
-  v153 = v151 == v152;
-  if (v153) goto b91; else goto b90;
+  v140 = (uint64_t)(uintptr_t)&v103;
+  memcpy(&v139, ((const unsigned char *)&v103 + 8u), sizeof v139);
+  v142 = (uint8_t)INT64_C(0);
+  v145 = (uint8_t)INT64_C(0);
+  v148 = (uint64_t)(uintptr_t)&v144;
+  memcpy(&v147, ((const unsigned char *)&v144 + 0u), sizeof v147);
+  v149 = (uint64_t)(uintptr_t)&v147;
+  v150 = *(const za_uint32_t *)((const unsigned char *)&v147 + 0u);
+  v151 = (uint32_t)INT64_C(2);
+  v152 = v150 == v151;
+  if (v152) goto b91; else goto b90;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b89:;
   goto b59;
 b90:;
   goto b118;
 b91:;
-  v155 = (uint64_t)(uintptr_t)&v148;
-  memcpy(&v154, ((const unsigned char *)&v148 + 8u), sizeof v154);
+  v154 = (uint64_t)(uintptr_t)&v147;
+  memcpy(&v153, ((const unsigned char *)&v147 + 8u), sizeof v153);
+  v157 = (uint64_t)(uintptr_t)&v155;
+  memcpy(&v156, ((const unsigned char *)&v155 + 208u), sizeof v156);
   v158 = (uint64_t)(uintptr_t)&v156;
-  memcpy(&v157, ((const unsigned char *)&v156 + 208u), sizeof v157);
-  v159 = (uint64_t)(uintptr_t)&v157;
-  v160 = *(const za_uint32_t *)((const unsigned char *)&v157 + 0u);
-  v161 = (uint32_t)INT64_C(0);
-  v162 = v160 == v161;
-  if (v162) goto b95; else goto b94;
+  v159 = *(const za_uint32_t *)((const unsigned char *)&v156 + 0u);
+  v160 = (uint32_t)INT64_C(0);
+  v161 = v159 == v160;
+  if (v161) goto b95; else goto b94;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b93:;
   goto b89;
 b94:;
-  v192 = (uint64_t)(uintptr_t)&v157;
-  v193 = *(const za_uint32_t *)((const unsigned char *)&v157 + 0u);
-  v194 = (uint32_t)INT64_C(1);
-  v195 = v193 == v194;
-  if (v195) goto b112; else goto b111;
+  v191 = (uint64_t)(uintptr_t)&v156;
+  v192 = *(const za_uint32_t *)((const unsigned char *)&v156 + 0u);
+  v193 = (uint32_t)INT64_C(1);
+  v194 = v192 == v193;
+  if (v194) goto b112; else goto b111;
 b95:;
-  v164 = (uint64_t)(uintptr_t)&v157;
-  memcpy(&v163, ((const unsigned char *)&v157 + 4u), sizeof v163);
-  v168 = zf1126(v166, v167);
-  v171 = (uint8_t)INT64_C(0);
-  v174 = (uint8_t)INT64_C(1);
-  v175 = v173 == v174;
-  if (v175) goto b100; else goto b99;
+  v163 = (uint64_t)(uintptr_t)&v156;
+  memcpy(&v162, ((const unsigned char *)&v156 + 4u), sizeof v162);
+  v167 = zf1126(v165, v166);
+  v170 = (uint8_t)INT64_C(0);
+  v173 = (uint8_t)INT64_C(1);
+  v174 = v172 == v173;
+  if (v174) goto b100; else goto b99;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b97:;
-  v191 = zu_f3_3gen16gen_lower_member11ignore_noneO1_t4_3std4core6result3ResI1_zI1_z(v170);
-  v147 = v191;
+  v190 = zu_f3_3gen16gen_lower_member11ignore_noneO1_t4_3std4core6result3ResI1_zI1_z(v169);
+  v146 = v190;
   goto b93;
 b98:;
-  v170 = v172;
+  v169 = v171;
   goto b97;
 b99:;
-  v187 = (uint8_t)INT64_C(0);
-  v188 = v173 == v187;
-  if (v188) goto b105; else goto b104;
+  v186 = (uint8_t)INT64_C(0);
+  v187 = v172 == v186;
+  if (v187) goto b105; else goto b104;
 b100:;
-  v176 = (uint8_t)INT64_C(0);
-  v178 = (uint64_t)(uintptr_t)&v3;
-  memcpy(((unsigned char *)&v3 + 8u), &v177, sizeof v177);
-  v180 = (uint64_t)(uintptr_t)&v86;
-  memcpy(&v179, ((const unsigned char *)&v86 + 0u), sizeof v179);
-  v181 = (uint64_t)(uintptr_t)&v3;
-  memcpy(((unsigned char *)&v3 + 232u), &v179, sizeof v179);
-  v182 = (uint32_t)INT64_C(0);
-  v183 = (uint64_t)(uintptr_t)&v3;
-  *(za_uint32_t *)((unsigned char *)&v3 + 0u) = v182;
+  v175 = (uint8_t)INT64_C(0);
+  v177 = (uint64_t)(uintptr_t)&v2;
+  memcpy(((unsigned char *)&v2 + 8u), &v176, sizeof v176);
+  v179 = (uint64_t)(uintptr_t)&v85;
+  memcpy(&v178, ((const unsigned char *)&v85 + 0u), sizeof v178);
+  v180 = (uint64_t)(uintptr_t)&v2;
+  memcpy(((unsigned char *)&v2 + 232u), &v178, sizeof v178);
+  v181 = (uint32_t)INT64_C(0);
+  v182 = (uint64_t)(uintptr_t)&v2;
+  *(za_uint32_t *)((unsigned char *)&v2 + 0u) = v181;
   goto b21;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
-  v184 = (uint8_t)INT64_C(0);
-  v185 = (uint32_t)INT64_C(0);
-  v186 = (uint32_t)v185;
-  v172 = v186;
+  v183 = (uint8_t)INT64_C(0);
+  v184 = (uint32_t)INT64_C(0);
+  v185 = (uint32_t)v184;
+  v171 = v185;
   goto b98;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
 b104:;
   zr_trap("std/core/bool.zen:10:5: trap: unreachable match arm\012", 52);
 b105:;
-  v189 = (uint32_t)INT64_C(1);
-  v190 = (uint32_t)v189;
-  v172 = v190;
+  v188 = (uint32_t)INT64_C(1);
+  v189 = (uint32_t)v188;
+  v171 = v189;
   goto b98;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
@@ -1290385,8 +1290384,8 @@ b105:;
 b111:;
   zr_trap("gen/gen_lower_member.zen:360:40: trap: unreachable match arm\012", 61);
 b112:;
-  v196 = (uint8_t)INT64_C(0);
-  v147 = v196;
+  v195 = (uint8_t)INT64_C(0);
+  v146 = v195;
   goto b93;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
@@ -1290394,8 +1290393,8 @@ b112:;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:359:21: trap: unreachable match arm\012", 61);
 b118:;
-  v197 = (uint8_t)INT64_C(0);
-  v147 = v197;
+  v196 = (uint8_t)INT64_C(0);
+  v146 = v196;
   goto b89;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
@@ -1290406,7 +1290405,7 @@ b118:;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
-  v202 = (uint8_t)INT64_C(0);
+  v201 = (uint8_t)INT64_C(0);
   goto b22;
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
   zr_trap("gen/gen_lower_member.zen:352:1: trap: unreachable match arm\012", 60);
@@ -1290418,56 +1290417,55 @@ b118:;
 #undef v0
 #undef v1
 #undef v2
-#undef v3
-#undef v5
-#undef v11
-#undef v16
-#undef v23
-#undef v25
+#undef v4
+#undef v10
+#undef v15
+#undef v22
+#undef v24
+#undef v29
 #undef v30
 #undef v31
-#undef v32
-#undef v36
+#undef v35
+#undef v44
 #undef v45
-#undef v46
-#undef v49
-#undef v55
-#undef v58
-#undef v62
-#undef v69
-#undef v74
-#undef v81
-#undef v83
+#undef v48
+#undef v54
+#undef v57
+#undef v61
+#undef v68
+#undef v73
+#undef v80
+#undef v82
+#undef v84
 #undef v85
-#undef v86
-#undef v88
+#undef v87
+#undef v89
 #undef v90
-#undef v91
-#undef v95
+#undef v94
+#undef v103
 #undef v104
-#undef v105
-#undef v108
-#undef v114
-#undef v117
-#undef v121
-#undef v128
-#undef v133
-#undef v140
-#undef v142
+#undef v107
+#undef v113
+#undef v116
+#undef v120
+#undef v127
+#undef v132
+#undef v139
+#undef v141
+#undef v143
 #undef v144
-#undef v145
-#undef v148
-#undef v154
+#undef v147
+#undef v153
+#undef v155
 #undef v156
-#undef v157
-#undef v163
+#undef v162
+#undef v164
 #undef v165
 #undef v166
-#undef v167
-#undef v169
-#undef v173
-#undef v177
-#undef v179
+#undef v168
+#undef v172
+#undef v176
+#undef v178
 static ZR_U uint8_t zu_f3_3gen16gen_lower_member8variadicO2_t3_3gen14gen_lower_core7Lowerert4_3std3ast8ast_node8Function(uint64_t zu_l2lo, const zb224_8 *zu_l1f) {
 #define v0 zu_l2lo
 #define v1 (*zu_l1f)
@@ -2215691,7 +2215689,7 @@ static ZR_U zb80_8 zu_f3_3gen13gen_lower_env15args_positionalO3_t3_3gen14gen_low
   ZR_U uint64_t v220 ZR_Z;
   ZR_U uint8_t v221 ZR_Z;
   v4 = (uint8_t)INT64_C(0);
-  v7 = zu_f3_3gen13gen_lower_env6raw_ofO3_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(v0, &v5, &v6);
+  v7 = zu_f3_3gen13gen_lower_env6raw_ofO2_t3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(&v5, &v6);
   v8 = (uint64_t)(uintptr_t)&v7;
   v9 = *(const za_uint32_t *)((const unsigned char *)&v7 + 0u);
   v10 = (uint32_t)INT64_C(0);
@@ -2216297,7 +2216295,7 @@ b22:;
   v80 = v78 == v79;
   if (v80) goto b35; else goto b34;
 b23:;
-  v50 = zu_f3_3gen13gen_lower_env6raw_ofO3_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(v0, &v48, &v49);
+  v50 = zu_f3_3gen13gen_lower_env6raw_ofO2_t3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(&v48, &v49);
   v51 = (uint64_t)(uintptr_t)&v50;
   v52 = *(const za_uint32_t *)((const unsigned char *)&v50 + 0u);
   v53 = (uint32_t)INT64_C(0);
@@ -2260339,56 +2260337,54 @@ b39:;
 #undef v44
 #undef v51
 #undef v55
-static ZR_U zb80_8 zu_f3_3gen13gen_lower_env6raw_ofO3_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(uint64_t zu_l2lo, const zb160_8 *zu_l4scan, const zb96_8 *zu_l4slot) {
-#define v0 zu_l2lo
-#define v1 (*zu_l4scan)
-#define v2 (*zu_l4slot)
-#define v3 v14
+static ZR_U zb80_8 zu_f3_3gen13gen_lower_env6raw_ofO2_t3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(const zb160_8 *zu_l4scan, const zb96_8 *zu_l4slot) {
+#define v0 (*zu_l4scan)
+#define v1 (*zu_l4slot)
+#define v2 v13
 #ifdef ZR_ASAN
-  ZR_U struct { zb40_8 v5; zb48_8 v7; zb16_8 v9; zb72_8 v13; zb80_8 v14; } *const zr_fr = __builtin_alloca_with_align(sizeof *zr_fr, 8 * __alignof__(*zr_fr));
-#define v5 zr_fr->v5
-#define v7 zr_fr->v7
-#define v9 zr_fr->v9
+  ZR_U struct { zb40_8 v4; zb48_8 v6; zb16_8 v8; zb72_8 v12; zb80_8 v13; } *const zr_fr = __builtin_alloca_with_align(sizeof *zr_fr, 8 * __alignof__(*zr_fr));
+#define v4 zr_fr->v4
+#define v6 zr_fr->v6
+#define v8 zr_fr->v8
+#define v12 zr_fr->v12
 #define v13 zr_fr->v13
-#define v14 zr_fr->v14
 #else
-  ZR_U zb40_8 v5;
-  ZR_U zb48_8 v7;
-  ZR_U zb16_8 v9;
-  ZR_U zb72_8 v13;
-  ZR_U zb80_8 v14;
+  ZR_U zb40_8 v4;
+  ZR_U zb48_8 v6;
+  ZR_U zb16_8 v8;
+  ZR_U zb72_8 v12;
+  ZR_U zb80_8 v13;
 #endif
-  ZR_U uint8_t v4 ZR_Z;
-  ZR_U uint64_t v6 ZR_Z;
-  ZR_U uint64_t v8 ZR_Z;
+  ZR_U uint8_t v3 ZR_Z;
+  ZR_U uint64_t v5 ZR_Z;
+  ZR_U uint64_t v7 ZR_Z;
+  ZR_U uint64_t v9 ZR_Z;
   ZR_U uint64_t v10 ZR_Z;
   ZR_U uint64_t v11 ZR_Z;
-  ZR_U uint64_t v12 ZR_Z;
-  v4 = (uint8_t)INT64_C(0);
-  v6 = (uint64_t)(uintptr_t)&v2;
-  memcpy(&v5, ((const unsigned char *)&v2 + 48u), sizeof v5);
-  v8 = (uint64_t)(uintptr_t)&v1;
-  memcpy(&v7, ((const unsigned char *)&v1 + 112u), sizeof v7);
-  v10 = (uint64_t)(uintptr_t)"a switch read as text";
-  v11 = (uint64_t)INT64_C(21);
-  v12 = (uint64_t)(uintptr_t)&v9;
-  *(za_uint64_t *)((unsigned char *)&v9 + 0u) = v10;
-  *(za_uint64_t *)((unsigned char *)&v9 + 8u) = v11;
-  v13 = zu_f3_3gen9gen_lower11unsupportedO2_t3_3std6source4Spanb3str(&v7, v9);
-  v14 = zu_f4_3std4core6result5ok_orO2_t4_3std4core6result3ResI1_t3_3gen14gen_lower_core5Placet3_3gen9gen_lower10LowerErrorI2_t3_3gen14gen_lower_core5Placet3_3gen9gen_lower10LowerError(&v5, &v13);
-  return v3;
+  v3 = (uint8_t)INT64_C(0);
+  v5 = (uint64_t)(uintptr_t)&v1;
+  memcpy(&v4, ((const unsigned char *)&v1 + 48u), sizeof v4);
+  v7 = (uint64_t)(uintptr_t)&v0;
+  memcpy(&v6, ((const unsigned char *)&v0 + 112u), sizeof v6);
+  v9 = (uint64_t)(uintptr_t)"a switch read as text";
+  v10 = (uint64_t)INT64_C(21);
+  v11 = (uint64_t)(uintptr_t)&v8;
+  *(za_uint64_t *)((unsigned char *)&v8 + 0u) = v9;
+  *(za_uint64_t *)((unsigned char *)&v8 + 8u) = v10;
+  v12 = zu_f3_3gen9gen_lower11unsupportedO2_t3_3std6source4Spanb3str(&v6, v8);
+  v13 = zu_f4_3std4core6result5ok_orO2_t4_3std4core6result3ResI1_t3_3gen14gen_lower_core5Placet3_3gen9gen_lower10LowerErrorI2_t3_3gen14gen_lower_core5Placet3_3gen9gen_lower10LowerError(&v4, &v12);
+  return v2;
   zr_trap("gen/gen_lower_env.zen:294:1: trap: unreachable match arm\012", 57);
   zr_trap("gen/gen_lower_env.zen:294:1: trap: unreachable match arm\012", 57);
 }
 #undef v0
 #undef v1
 #undef v2
-#undef v3
-#undef v5
-#undef v7
-#undef v9
+#undef v4
+#undef v6
+#undef v8
+#undef v12
 #undef v13
-#undef v14
 static ZR_U zb80_8 zu_f3_3gen13gen_lower_env9fill_wordO5_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slott3_3gen14gen_lower_core5Placet4_3std4core6result3ResI1_b3str(uint64_t zu_l2lo, const zb160_8 *zu_l4scan, const zb96_8 *zu_l4slot, const zb32_8 *zu_l5place, const zb24_8 *zu_l4prim) {
 #define v0 zu_l2lo
 #define v1 (*zu_l4scan)
@@ -2260813,7 +2260809,7 @@ static ZR_U zb80_8 zu_f3_3gen13gen_lower_env9fill_wordO5_t3_3gen14gen_lower_core
   ZR_U uint64_t v353 ZR_Z;
   ZR_U uint64_t v355 ZR_Z;
   v6 = (uint8_t)INT64_C(0);
-  v9 = zu_f3_3gen13gen_lower_env6raw_ofO3_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(v0, &v7, &v8);
+  v9 = zu_f3_3gen13gen_lower_env6raw_ofO2_t3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(&v7, &v8);
   v10 = (uint64_t)(uintptr_t)&v9;
   v11 = *(const za_uint32_t *)((const unsigned char *)&v9 + 0u);
   v12 = (uint32_t)INT64_C(0);
@@ -2261726,7 +2261722,7 @@ static ZR_U zb80_8 zu_f3_3gen13gen_lower_env12fill_opt_numO5_t3_3gen14gen_lower_
   ZR_U uint64_t v259 ZR_Z;
   ZR_U uint8_t v260 ZR_Z;
   v6 = (uint8_t)INT64_C(0);
-  v9 = zu_f3_3gen13gen_lower_env6raw_ofO3_t3_3gen14gen_lower_core7Lowerert3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(v0, &v7, &v8);
+  v9 = zu_f3_3gen13gen_lower_env6raw_ofO2_t3_3gen13gen_lower_env4Scant3_3gen13gen_lower_env4Slot(&v7, &v8);
   v10 = (uint64_t)(uintptr_t)&v9;
   v11 = *(const za_uint32_t *)((const unsigned char *)&v9 + 0u);
   v12 = (uint32_t)INT64_C(0);

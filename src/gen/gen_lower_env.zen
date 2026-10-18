@@ -171,7 +171,7 @@ args_flag = (
 // word and claims it.
 args_positional = (lo :: Lowerer, scan: Scan, slot: Slot)
                   Res<LowerError> {
-    raw    = lo.raw_of(scan, slot).try();
+    raw    = raw_of(scan, slot).try();
     given  = lo.succeeded(lo.read(raw).try()).try();
     absent = lo.label().try();
     join   = lo.label().try();
@@ -192,7 +192,7 @@ args_fill = (lo :: Lowerer, scan: Scan, slot: Slot) Res<LowerError> {
         Switch       => Ok,
         OptText      => lo.write(
             place,
-            lo.read(lo.raw_of(scan, slot).try()).try()
+            lo.read(raw_of(scan, slot).try()).try()
         ),
         Text         => lo.fill_word(scan, slot, place, None),
         Num(prim)    => lo.fill_word(scan, slot, place, Ok(prim)),
@@ -209,7 +209,7 @@ fill_word = (
     place : Place,
     prim  : Res<str>
 ) Res<LowerError> {
-    raw = lo.raw_of(scan, slot).try();
+    raw = raw_of(scan, slot).try();
     slot.default.match({
         Ok(d) => {
             held    = lo.read(raw).try();
@@ -239,7 +239,7 @@ fill_word = (
 
 fill_opt_num = (lo :: Lowerer, scan: Scan, slot: Slot, place: Place, prim: str)
                Res<LowerError> {
-    held    = lo.read(lo.raw_of(scan, slot).try()).try();
+    held    = lo.read(raw_of(scan, slot).try()).try();
     given   = lo.succeeded(held).try();
     present = lo.label().try();
     absent  = lo.label().try();
@@ -291,7 +291,7 @@ args_finish = (lo :: Lowerer, scan: Scan, slots: Vec<Slot>) Res<LowerError> {
     Ok
 }
 
-raw_of = (lo :: Lowerer, scan: Scan, slot: Slot) Res<Place, LowerError> {
+raw_of = (scan: Scan, slot: Slot) Res<Place, LowerError> {
     slot.raw.ok_or(unsupported(scan.span, "a switch read as text"))
 }
 

@@ -273,7 +273,7 @@ resolve* = (
     // An open integer literal is the C path's i64, and has its methods.
     ty                 = lo.prim_name(written).eq("int").match({ true => lo.prim("i64").try(), false => written });
     owners             = lo.owners_of(ty, via).try();
-    chosen             = lo.checked_member(owners, body);
+    chosen             = checked_member(owners, body);
     found: Res<Callee> = loop<Callee>((h) {
         owners.loop((owner) {
             owner.members.loop((mh, index, m) {
@@ -349,7 +349,7 @@ resolve* = (
 // The function whose body sema checked, and the declaration it is in.
 Chosen = { f: Function, decl: DeclId }
 
-checked_member = (lo :: Lowerer, owners: Vec<Owner>, body: Res<BlockId>)
+checked_member = (owners: Vec<Owner>, body: Res<BlockId>)
                  Res<Chosen> {
     body.match({
         None  => None,

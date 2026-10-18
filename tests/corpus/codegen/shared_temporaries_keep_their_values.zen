@@ -1,0 +1,62 @@
+{ println } = std.io
+{ Range, loop } = std.core
+
+// IR-C lets struct temporaries whose live ranges never meet share one
+// stack slot. A value live across a loop's back edge, or across a branch,
+// must keep its own bytes while temporaries made beside it come and go.
+Q = { a :: u64, b :: u64, c :: u64, d :: u64 }
+W = { p :: Q, q :: Q, r :: Q, s :: Q }
+X = { p :: W, q :: W, r :: W, s :: W }
+Y = { p :: X, q :: X, r :: X, s :: X }
+
+q_of = (n: u64) Q { Q(a: n, b: n * 3, c: n * 5, d: n * 7) }
+w_of = (n: u64) W { W(
+    p: q_of(n),
+    q: q_of(n + 1),
+    r: q_of(n + 2),
+    s: q_of(n + 3)
+) }
+x_of = (n: u64) X { X(
+    p: w_of(n),
+    q: w_of(n + 4),
+    r: w_of(n + 8),
+    s: w_of(n + 12)
+) }
+y_of = (n: u64) Y { Y(
+    p: x_of(n),
+    q: x_of(n + 16),
+    r: x_of(n + 32),
+    s: x_of(n + 48)
+) }
+
+q_sum = (v: Q) u64 { v.a + v.b * 2 + v.c * 3 + v.d * 4 }
+w_sum = (v: W) u64 { q_sum(v.p) + q_sum(v.q) * 5 + q_sum(v.r) * 7 + q_sum(v.s) * 11 }
+x_sum = (v: X) u64 { w_sum(v.p) + w_sum(v.q) * 13 + w_sum(v.r) * 17 + w_sum(v.s) * 19 }
+y_sum = (v: Y) u64 { x_sum(v.p) + x_sum(v.q) * 23 + x_sum(v.r) * 29 + x_sum(v.s) * 31 }
+
+// The first argument's bytes survive while the second is built.
+mix = (keep: Y, fresh: Y) Y {
+    Y(p: keep.q, q: fresh.p, r: keep.s, s: fresh.r)
+}
+
+main = () {
+    carried ::= y_of(1);
+    total   :: u64 = 0;
+    n       :: u64 = 0;
+    Range(0, 6).loop((_) {
+        fresh   = y_of(100 + n * 64);
+        other   = y_of(900 + n);
+        n       = n + 1;
+        total   = total + y_sum(other);
+        carried = mix(carried, fresh);
+    });
+    println("carried {}", y_sum(carried));
+    println("total {}", total);
+    early = y_of(7);
+    late  = y_of(11);
+    (total % 2 == 0).match({
+        true  => println("branch {}", y_sum(early)),
+        false => println("branch {}", y_sum(late)),
+    });
+    println("after {}", y_sum(early) + y_sum(late));
+}

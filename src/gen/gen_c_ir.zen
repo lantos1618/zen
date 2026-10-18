@@ -8,7 +8,7 @@
 { Alloc, AllocError } = std.mem
 { String, str } = std.text
 { Vec } = std.collections
-{ Res, Ok, loop, Range } = std.core
+{ Res, Ok, None, loop, Range } = std.core
 { Span } = std.source
 { Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print, Move } = gen.gen_ir
 { Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
@@ -52,6 +52,21 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         pure: a.Vec<bool>(),
         dirty: a.Vec<bool>(),
         calls: a.Vec<usize>(),
+        pool: a.Vec<usize>(),
+        compact: a.Vec<usize>(),
+        members: a.Vec<usize>(),
+        blocked: a.Vec<bool>(),
+        gen: a.Vec<bool>(),
+        kill: a.Vec<bool>(),
+        live_in: a.Vec<bool>(),
+        live_out: a.Vec<bool>(),
+        lo: a.Vec<usize>(),
+        hi: a.Vec<usize>(),
+        heads: a.Vec<usize>(),
+        chain: a.Vec<usize>(),
+        ends: a.Vec<usize>(),
+        sizes: a.Vec<usize>(),
+        next: a.Vec<usize>(),
         copies: 0
     );
     writer.program(program).try();
@@ -114,6 +129,27 @@ C = {
     named :: Vec<bool>,
     // Block loads lent in place through a checked local address.
     lent :: Vec<bool>,
+    // From `share`, per slot: the union (plus one) a block local shares
+    // with others whose live ranges never meet it, zero for its own storage.
+    pool :: Vec<usize>,
+    // Scratch for `share`: each candidate's index (plus one) and slot, the
+    // roots ruled out, per-block liveness over candidates, each candidate's
+    // live range, a bucket list ordering them by start, and per union the
+    // end of its last member's range and its largest member's size.
+    compact :: Vec<usize>,
+    members :: Vec<usize>,
+    blocked :: Vec<bool>,
+    gen :: Vec<bool>,
+    kill :: Vec<bool>,
+    live_in :: Vec<bool>,
+    live_out :: Vec<bool>,
+    lo :: Vec<usize>,
+    hi :: Vec<usize>,
+    heads :: Vec<usize>,
+    chain :: Vec<usize>,
+    ends :: Vec<usize>,
+    sizes :: Vec<usize>,
+    next :: Vec<usize>,
     // `zc` copies made for borrowed arguments in the current function.
     copies :: usize,
 
@@ -865,13 +901,14 @@ C = {
                 });
             });
         });
+        self.share(function).try();
         // A sanitizer pads every addressable local and re-marks it at every
         // label, so under one the block slots share a single frame instead.
         frame ::= false;
         Range(function.parameters, function.slots.len).loop((i) {
             ty = slot_ty(function, i);
             self.need(ty).try();
-            self.framed(function, i).then(() {
+            self.own_storage(function, i).then(() {
                 (!frame).then(() {
                     self.out.add("#ifdef ZR_ASAN\n  ZR_U struct {").try();
                 });
@@ -886,13 +923,13 @@ C = {
                 " } *const zr_fr = __builtin_alloca_with_align(sizeof *zr_fr, 8 * __alignof__(*zr_fr));\n"
             ).try();
             Range(function.parameters, function.slots.len).loop((i) {
-                self.framed(function, i).then(() {
+                self.own_storage(function, i).then(() {
                     self.out.fmt("#define v{} zr_fr->v{}\n", i, i).try();
                 });
             });
             self.out.add("#else\n").try();
             Range(function.parameters, function.slots.len).loop((i) {
-                self.framed(function, i).then(() {
+                self.own_storage(function, i).then(() {
                     self.out.add("  ZR_U ").try();
                     self.out.ctype(slot_ty(function, i)).try();
                     self.out.fmt(" v{};\n", i).try();
@@ -953,6 +990,305 @@ C = {
 
     framed = (self: @Self, f: Func, slot: usize) bool {
         self.target.get(slot).value_or(0) == 0 && is_block(slot_ty(f, slot))
+    }
+
+    own_storage = (self: @Self, f: Func, slot: usize) bool {
+        self.framed(f, slot) && self.pool.get(slot).value_or(0) == 0
+    }
+
+    // A block local whose address the IR never takes is a plain value: its
+    // only C address is one lent to a call for that call alone. Two such
+    // locals whose live ranges never meet share one union's storage, which
+    // keeps a function's frame near its widest point instead of the sum of
+    // every temporary. A range spans every position its local is live at,
+    // so it covers the true live set and sharing never overlaps values.
+    share = (self :: @Self, f: Func) Res<(), AllocError> {
+        count = f.slots.len;
+        self.pool.clear();
+        self.compact.clear();
+        self.members.clear();
+        self.blocked.clear();
+        Range(0, count).loop((_) {
+            self.pool.add(0).try();
+            self.compact.add(0).try();
+            self.blocked.add(false).try();
+        });
+        Range(0, count).loop((s) {
+            (s < f.parameters || self.escaped.get(s).value_or(true)
+                || self.lent.get(s).value_or(true)).then(() {
+                self.blocked.set(self.root(s), true);
+            });
+        });
+        // A lent load reads its local at the call, not where it loads.
+        f.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    LoadValue(v) => (self.lent.get(v.out).value_or(false)
+                        && self.origin.get(v.base).value_or(0) != 0).then(() {
+                        at = self.origin.get(v.base).value_or(0) - 1;
+                        self.blocked.set(self.root(at), true);
+                    }),
+                    _            => (),
+                });
+            });
+        });
+        // Small values stay apart: the C compiler keeps those in registers,
+        // which it cannot do for one member of a union.
+        Range(f.parameters, count).loop((s) {
+            (self.framed(f, s) && block_size(slot_ty(f, s)) > SHARED_FROM
+                && !self.blocked.get(s).value_or(true)).then(() {
+                self.members.add(s).try();
+                self.compact.set(s, self.members.len);
+            });
+        });
+        k = self.members.len;
+        bytes :: usize = 0;
+        self.members.loop(
+            (slot) { bytes = bytes + block_size(slot_ty(f, slot)); }
+        );
+        // Sharing costs a liveness pass; a frame this small is not worth it.
+        (k >= 2 && bytes >= SHARED_FRAME).then(() {
+            self.liveness(f, k).try();
+            self.ranges(f, k).try();
+            self.pack(f, k).try();
+            self.declare_pools(f).try();
+        });
+        Ok
+    }
+
+    // The candidate index (plus one) a slot's storage belongs to.
+    candidate = (self: @Self, slot: usize) usize {
+        self.compact.get(self.root(slot)).value_or(0)
+    }
+
+    // The candidate a mention reaches: the slot's own, or the one an
+    // address slot points at, whose address only ever loads or stores, so
+    // every access to that local is a mention of one of the two.
+    reached = (self: @Self, slot: usize) usize {
+        c  = self.candidate(slot);
+        at = self.origin.get(slot).value_or(0);
+        (c == 0 && at != 0).match({
+            true  => self.candidate(at - 1),
+            false => c,
+        })
+    }
+
+    liveness = (self :: @Self, f: Func, k: usize) Res<(), AllocError> {
+        blocks = f.blocks.len;
+        self.gen.clear();
+        self.kill.clear();
+        self.live_in.clear();
+        self.live_out.clear();
+        self.gen.reserve(blocks * k).try();
+        self.kill.reserve(blocks * k).try();
+        self.live_in.reserve(blocks * k).try();
+        self.live_out.reserve(blocks * k).try();
+        Range(0, blocks * k).loop((_) {
+            self.gen.add(false).try();
+            self.kill.add(false).try();
+            self.live_in.add(false).try();
+            self.live_out.add(false).try();
+        });
+        f.blocks.loop((h, b, block) {
+            base = b * k;
+            exit_value(block.exit).when_ok((r) {
+                c = self.reached(r);
+                (c != 0).then(() { self.gen.set(base + c - 1, true); });
+            });
+            n = block.code.len;
+            Range(0, n).loop((i) {
+                instruction = block.code.get(n - 1 - i).value_or(Instruction.Flush);
+                whole       = replaces(instruction);
+                mentions(instruction, (slot, read) {
+                    c = self.candidate(slot);
+                    (!read && whole && c != 0).then(() {
+                        self.kill.set(base + c - 1, true);
+                        self.gen.set(base + c - 1, false);
+                    });
+                });
+                mentions(instruction, (slot, read) {
+                    c   = self.reached(slot);
+                    own = self.candidate(slot) != 0;
+                    ((read || !own || !whole) && c != 0).then(() {
+                        self.gen.set(base + c - 1, true);
+                    });
+                });
+            });
+        });
+        changed ::= true;
+        loop(() { changed }, (h) {
+            changed = false;
+            Range(0, blocks).loop((j) {
+                b = blocks - 1 - j;
+                self.next.clear();
+                f.blocks.get(b).when_ok((block) {
+                    block.exit.match({
+                        Jump(to)       => { self.next.add(to).try(); },
+                        Branch(branch) => {
+                            self.next.add(branch.yes).try();
+                            self.next.add(branch.no).try();
+                        },
+                        _              => (),
+                    });
+                });
+                Range(0, k).loop((s) {
+                    out ::= false;
+                    self.next.loop((x) {
+                        self.live_in.get(x * k + s).value_or(false)
+                            .then(() { out = true; });
+                    });
+                    self.live_out.set(b * k + s, out);
+                    into = self.gen.get(b * k + s).value_or(false)
+                        || (out && !self.kill.get(b * k + s).value_or(false));
+                    (into != self.live_in.get(b * k + s).value_or(false)).then(() {
+                        self.live_in.set(b * k + s, into);
+                        changed = true;
+                    });
+                });
+            });
+        });
+        Ok
+    }
+
+    // Positions number each block's instructions and then its exit, block
+    // after block.
+    ranges = (self :: @Self, f: Func, k: usize) Res<(), AllocError> {
+        total :: usize = 0;
+        f.blocks.loop((block) { total = total + block.code.len + 1; });
+        self.lo.clear();
+        self.hi.clear();
+        Range(0, k).loop((_) {
+            self.lo.add(total).try();
+            self.hi.add(0).try();
+        });
+        at :: usize = 0;
+        f.blocks.loop((h, b, block) {
+            start = at;
+            end   = at + block.code.len;
+            Range(0, k).loop((s) {
+                self.live_in.get(b * k + s).value_or(false)
+                    .then(() { self.cover(s, start); });
+                self.live_out.get(b * k + s).value_or(false)
+                    .then(() { self.cover(s, end); });
+            });
+            block.code.loop((g, i, instruction) {
+                mentions(instruction, (slot, read) {
+                    c = self.reached(slot);
+                    (c != 0).then(() { self.cover(c - 1, start + i); });
+                });
+            });
+            exit_value(block.exit).when_ok((r) {
+                c = self.reached(r);
+                (c != 0).then(() { self.cover(c - 1, end); });
+            });
+            at = end + 1;
+        });
+        self.heads.clear();
+        Range(0, total + 1).loop((_) { self.heads.add(0).try(); });
+        self.chain.clear();
+        Range(0, k).loop((s) {
+            first = self.lo.get(s).value_or(total);
+            self.chain.add(self.heads.get(first).value_or(0)).try();
+            self.heads.set(first, s + 1);
+        });
+        Ok
+    }
+
+    cover = (self :: @Self, s: usize, position: usize) {
+        (position < self.lo.get(s).value_or(0)).then(() { self.lo.set(s, position); });
+        (position > self.hi.get(s).value_or(0)).then(() { self.hi.set(s, position); });
+    }
+
+    // Candidates in order of where their ranges start each join a union
+    // whose last range has ended: the smallest one at least their size, or
+    // else the largest, so a union grows as little as it can.
+    pack = (self :: @Self, f: Func, k: usize) Res<(), AllocError> {
+        self.ends.clear();
+        self.sizes.clear();
+        total = self.heads.len - 1;
+        Range(0, total).loop((p) {
+            s ::= self.heads.get(p).value_or(0);
+            loop(() { s != 0 }, (h) {
+                c    = s - 1;
+                slot = self.members.get(c).value_or(0);
+                size = block_size(slot_ty(f, slot));
+                best :: usize = 0;
+                fits ::= false;
+                Range(0, self.ends.len).loop((j) {
+                    (self.ends.get(j).value_or(total) < p).then(() {
+                        have   = self.sizes.get(j).value_or(0);
+                        better = (best == 0).match({
+                            true  => true,
+                            false => {
+                                held = self.sizes.get(best - 1).value_or(0);
+                                (have >= size).match({
+                                    true  => !fits || have < held,
+                                    false => !fits && have > held,
+                                })
+                            },
+                        });
+                        better.then(() {
+                            best = j + 1;
+                            fits = have >= size;
+                        });
+                    });
+                });
+                (best == 0).then(() {
+                    self.ends.add(0).try();
+                    self.sizes.add(0).try();
+                    best = self.ends.len;
+                });
+                self.pool.set(slot, best);
+                self.ends.set(best - 1, self.hi.get(c).value_or(total));
+                (size > self.sizes.get(best - 1).value_or(0)).then(() {
+                    self.sizes.set(best - 1, size);
+                });
+                s = self.chain.get(c).value_or(0);
+            });
+        });
+        Ok
+    }
+
+    // A union of one member is just that local: it keeps its own storage.
+    declare_pools = (self :: @Self, f: Func) Res<(), AllocError> {
+        self.ends.clear();
+        Range(0, self.sizes.len).loop((_) { self.ends.add(0).try(); });
+        self.members.loop((slot) {
+            j = self.pool.get(slot).value_or(0);
+            (j != 0).then(() {
+                self.ends.set(j - 1, self.ends.get(j - 1).value_or(0) + 1);
+            });
+        });
+        self.members.loop((slot) {
+            j = self.pool.get(slot).value_or(0);
+            (j != 0 && self.ends.get(j - 1).value_or(0) < 2).then(() {
+                self.pool.set(slot, 0);
+            });
+        });
+        Range(0, self.sizes.len).loop((j) {
+            (self.ends.get(j).value_or(0) >= 2).then(() {
+                self.out.add("  ZR_U union {").try();
+                self.members.loop((slot) {
+                    (self.pool.get(slot).value_or(0) == j + 1).then(() {
+                        self.out.add(" ").try();
+                        self.out.ctype(slot_ty(f, slot)).try();
+                        self.out.fmt(" m{};", slot).try();
+                    });
+                });
+                self.out.fmt(" }} zs{};\n", j).try();
+                self.members.loop((slot) {
+                    (self.pool.get(slot).value_or(0) == j + 1).then(() {
+                        self.out.fmt(
+                            "#define v{} zs{}.m{}\n",
+                            slot,
+                            j,
+                            slot
+                        ).try();
+                    });
+                });
+            });
+        });
+        Ok
     }
 
     // `next` is the block rendered after this one; a jump to it falls through.
@@ -2047,6 +2383,28 @@ mentions = (instruction: Instruction, visit: (slot: usize, read: bool) ()) {
         },
     })
 }
+
+// A named write replaces the whole value; taking an address and writing
+// through one change nothing or only part of it.
+replaces = (instruction: Instruction) bool {
+    instruction.match({ AddressOf(_) => false, _ => true })
+}
+
+exit_value = (exit: Terminator) Res<usize> {
+    exit.match({
+        Return(slot)   => Ok(slot),
+        Branch(branch) => Ok(branch.value),
+        _              => None,
+    })
+}
+
+// Bytes above which a block local may share storage.
+SHARED_FROM: usize = 64
+
+// Bytes of such locals below which a function keeps them all apart.
+SHARED_FRAME: usize = 8192
+
+block_size = (ty: Scalar) usize { ty.match({ Block(l) => l.size, _ => 0 }) }
 
 returns = (f: Func, exit: Terminator, slot: usize) bool {
     exit.match({

@@ -1050,7 +1050,7 @@ C = {
         (k >= 2 && bytes >= SHARED_FRAME).then(() {
             self.liveness(f, k).try();
             self.ranges(f, k).try();
-            self.pack(f, k).try();
+            self.pack(f).try();
             self.declare_pools(f).try();
         });
         Ok
@@ -1202,7 +1202,7 @@ C = {
     // Candidates in order of where their ranges start each join a union
     // whose last range has ended: the smallest one at least their size, or
     // else the largest, so a union grows as little as it can.
-    pack = (self :: @Self, f: Func, k: usize) Res<(), AllocError> {
+    pack = (self :: @Self, f: Func) Res<(), AllocError> {
         self.ends.clear();
         self.sizes.clear();
         total = self.heads.len - 1;

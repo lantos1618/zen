@@ -28,7 +28,7 @@ run = (
         check.render_diags(report).try();
         println("frontend {}", report.view());
     });
-    source_path = backend.match({ C => "candidate.c", Js => "candidate.js", Asm => "candidate.s" });
+    source_path = backend.match({ C => "candidate.c", Js => "candidate.js", Asm => "candidate.s", Jit => "candidate.ir" });
     host        = host_target();
     generation  = Generation(
         alloc: a,

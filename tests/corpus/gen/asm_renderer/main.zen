@@ -1,7 +1,7 @@
 // Exercise the renderer directly so ABI and trap behavior cannot be hidden by
 // the source lowerer. Each executable is built for the host with the system
 // assembler and linker only: no C compiler and no libc.
-{ Alloc, AllocError } = std.mem
+{ Alloc, AllocError, Mem } = std.mem
 { Env, FsError } = std.env
 { ProcError, ProcOutput } = std.proc
 { Span, Pos } = std.source
@@ -267,11 +267,11 @@ emit_with = <T: Target>(target: T, program: Program)
 }
 
 // The host's renderer, reached through the generic Target contract.
-render = (host: Host, a: Alloc, program: Program)
+render = (host: Host, a: Alloc, mem: Mem, program: Program)
          Res<String, AllocError> {
     host.arm64().match({
-        false => emit_with(X86_64Linux(alloc: a), program),
-        true  => emit_with(Arm64(alloc: a, os: host.darwin().match({
+        false => emit_with(X86_64Linux(alloc: a, mem: mem), program),
+        true  => emit_with(Arm64(alloc: a, mem: mem, os: host.darwin().match({
             true  => Arm64Os.Darwin,
             false => Arm64Os.Linux,
         })), program),
@@ -314,7 +314,7 @@ run = (host: Host, env: Env, a: Alloc, name: str, program: Program)
           | VerifyError> {
     program.verify(a).try();
     source   = a.String("{}.s", name).try();
-    assembly = probed(a, host, render(host, a, program).try()).try();
+    assembly = probed(a, host, render(host, a, env.mem, program).try()).try();
     env.fs.write(source.view(), assembly.view()).try();
     built = host.link(env, a, source.view(), name).try();
     built.ensure(BuildFault.Compile).try();

@@ -3,5 +3,8 @@ c file
 c directory
 js stdout
 asm stdout
-usage invalid value `unknown` for `--backend`: expected c, js or asm
+jit stdout
+usage `-o` writes output, but `--backend jit` runs the program and emits nothing
+usage `--emit-c-dir` writes output, but `--backend jit` runs the program and emits nothing
+usage invalid value `unknown` for `--backend`: expected c, js, asm or jit
 usage option `--backend` requires a value

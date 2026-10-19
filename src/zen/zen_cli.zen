@@ -92,6 +92,8 @@ BuildLine = {
     symbol_map :: Res<str>,
     repeat :: Res<usize>,
     permute :: Res<Permutation>,
+    argv0 :: Res<str>,
+    args :: Vec<str>,
 }
 
 BuildLine.impl(Cli, {
@@ -122,6 +124,8 @@ BuildLine.impl(Cli, {
     symbol_map: Spec(value: "FILE", help: "Write the generated symbol map"),
     repeat: Spec(hidden: true),
     permute: Spec(hidden: true),
+    argv0: Spec(hidden: true),
+    args: Spec(trailing: true),
 })
 
 RunLine = {
@@ -400,6 +404,16 @@ source_job = (
                         profiled
                     ).try()
                 ),
+                true  => (jit_output(b) == "").match({
+                false => refused(
+                    env,
+                    a,
+                    "build",
+                    a.String(
+                        "`{}` writes output, but `--backend jit` runs the program and emits nothing",
+                        jit_output(b)
+                    ).try()
+                ),
                 true  => Ok(Job.Build(BuildArgs(
                     root: root,
                     emission: emission,
@@ -410,11 +424,50 @@ source_job = (
                     ffi: b.ffi,
                     repeat: b.repeat.match({ Ok(n) => (n == 0).match({ true => 1, false => n }), None => 1 }),
                     permute: b.permute.value_or(Permutation.Natural),
-                    target: b.target.value_or("")
+                    target: b.target.value_or(""),
+                    run_args: b.backend.match({
+                        Ok(Jit) => Ok(command_line(a, root, b).try()),
+                        _       => None,
+                    })
                 ))),
+            }),
             }),
         }),
     })
+}
+
+// The output option a jit build was given, or "" when none: the jit
+// backend runs the program, so there is nothing to write.
+jit_output = (b: BuildLine) str {
+    b.backend.match({
+        Ok(Jit) => b.output.match({
+            Ok(_) => "-o",
+            None  => b.emit_c_dir.match({
+                Ok(_) => "--emit-c-dir",
+                None  => b.emit_c.match({
+                    true  => "--emit-c",
+                    false => b.symbol_map.match({ Ok(_) => "--symbol-map", None => "" }),
+                }),
+            }),
+        }),
+        _       => "",
+    })
+}
+
+// The jit backend's program command line: named by its entry file unless
+// `--argv0` names it, then the words after `--`.
+command_line = (a: Alloc, root: str, b: BuildLine) Res<Vec<str>, AllocError> {
+    words ::= a.Vec<str>();
+    name = b.argv0.match({
+        Ok(given) => a.String("{}", given).try(),
+        None      => b.entry.match({
+            Ok(entry) => a.String("{}/{}", root, entry).try(),
+            None      => a.String("{}", root).try(),
+        }),
+    });
+    words.add(name.view()).try();
+    b.args.loop((word) { words.add(word).try(); });
+    Ok(words)
 }
 
 // A project command's positional words, in order.

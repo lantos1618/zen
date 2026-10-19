@@ -21,9 +21,12 @@ Layout* = { size*: usize, align*: usize }
 
 // A slot's machine class. Integer slots hold their value extended to the
 // full machine word (signed types sign-extend, unsigned types, `Bool` and
-// `Ptr` zero-extend). `F64` is an IEEE-754 binary64 value; a `Constant`
-// into an `F64` slot holds its bit pattern. `Block` is an aggregate stored
-// in frame memory; it is copied by value and never held in a register.
+// `Ptr` zero-extend). `U128` is a 128-bit unsigned word; a `Constant` into
+// one holds the value zero-extended from the constant's 64 bits. `F64` is an
+// IEEE-754 binary64 value and `F32` a binary32 one; a `Constant` into either
+// holds its bit pattern (an `F32`'s in the low 32 bits). `Block` is an
+// aggregate stored in frame memory; it is copied by value and never held in
+// a register.
 Scalar* = { I32
     | Bool
     | Unit
@@ -34,12 +37,15 @@ Scalar* = { I32
     | U32
     | I64
     | U64
+    | U128
     | Ptr
+    | F32
     | F64
     | Block: Layout }
 
 // Arithmetic `Add`/`Sub`/`Mul`/`Div`/`Rem` and unary `Neg` trap on overflow
-// and on a zero divisor; on `F64` they are IEEE operations and never trap
+// and on a zero divisor; on `F32`/`F64` they are IEEE operations rounded to
+// the operand's format and never trap
 // (`Rem` is C's fmod). `Wrap*` operations wrap at the slot width. Bit
 // operations act on unsigned words; a shift or rotate count is a `U64`
 // operand. Comparisons are signed or unsigned according to the operands.
@@ -105,6 +111,10 @@ SysValue* = { out*: usize, name*: SysConstant }
 // The rest belongs to std.sys and the actor runtime (std.actor.actor_layout).
 StartValue* = { Argc | Argv | Envp | Globals }
 Start* = { out*: usize, value*: StartValue }
+// C's `%g` text of the F64 `value` (`nan`, `inf` and `-inf` for the
+// non-finite ones, as `PrintValue` writes them), written at `dest`, which has
+// room for 32 bytes; `out` is the U64 byte count.
+FloatFormat* = { out*: usize, dest*: usize, value*: usize }
 // Anonymous zeroed memory of at least `bytes` (a U64 slot) bytes, 16-byte
 // aligned; the pointer is null when the kernel refuses. `UnmapPages`
 // returns such a region by its pointer.
@@ -176,6 +186,12 @@ Instruction* = { Constant: Const
     | SysConst: SysValue
     // Write out buffered standard output now (before blocking on input).
     | Flush
+    | FormatFloat: FloatFormat
+    // One access each, performed exactly once and in order with every other
+    // volatile access; `Barrier` keeps memory accesses from moving across it.
+    | VolatileLoad: Load
+    | VolatileStore: Store
+    | Barrier
     // A validated machine primitive (gen_ir_machine). Not yet produced:
     // its operands need slot types beyond Scalar, so the verifier rejects it.
     | Machine: MachineCall
@@ -195,7 +211,8 @@ TrapKind* = { Overflow
     | DivideByZero
     | OutOfBounds
     | Unreachable
-    | OutOfMemory }
+    | OutOfMemory
+    | DeferLimit }
 Fault* = { what*: TrapKind, span*: Span }
 
 Terminator* = { Return: usize | Jump: usize | Branch: Branch | Trap: Fault }
@@ -252,6 +269,7 @@ trap_message* = (what: TrapKind) str {
         OutOfBounds  => "index out of bounds",
         Unreachable  => "unreachable match arm",
         OutOfMemory  => "out of memory",
+        DeferLimit   => "too many deferred closures on one block",
     })
 }
 
@@ -268,7 +286,9 @@ width* = (ty: Scalar) usize {
         U32      => 4,
         I64      => 8,
         U64      => 8,
+        U128     => 16,
         Ptr      => 8,
+        F32      => 4,
         F64      => 8,
         Unit     => 0,
         Block(l) => l.size,
@@ -282,14 +302,16 @@ signed* = (ty: Scalar) bool {
 integer* = (ty: Scalar) bool {
     ty.match({
         I8 => true, U8 => true, I16 => true, U16 => true, I32 => true,
-        U32 => true, I64 => true, U64 => true, _ => false,
+        U32 => true, I64 => true, U64 => true, U128 => true, _ => false,
     })
 }
 
 // Floating-point classes.
-float* = (ty: Scalar) bool { ty.match({ F64 => true, _ => false }) }
+float* = (
+    ty : Scalar
+) bool { ty.match({ F32 => true, F64 => true, _ => false }) }
 
-// Machine word classes: integers, Bool, Ptr and F64.
+// Machine word classes: integers, Bool, Ptr and floats.
 word* = (ty: Scalar) bool {
     ty.match({ Unit => false, Block(_) => false, _ => true })
 }
@@ -306,7 +328,9 @@ same* = (left: Scalar, right: Scalar) bool {
         U32      => right.match({ U32 => true, _ => false }),
         I64      => right.match({ I64 => true, _ => false }),
         U64      => right.match({ U64 => true, _ => false }),
+        U128     => right.match({ U128 => true, _ => false }),
         Ptr      => right.match({ Ptr => true, _ => false }),
+        F32      => right.match({ F32 => true, _ => false }),
         F64      => right.match({ F64 => true, _ => false }),
         Block(l) => right.match({
             Block(r) => l.size == r.size && l.align == r.align,

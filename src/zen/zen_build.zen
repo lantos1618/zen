@@ -86,6 +86,8 @@ Build* = {
 
     faults* :: usize = 0,
     units* :: usize = 0,
+    // The exit status of a program the jit backend ran; None otherwise.
+    status* :: Res<i32> = None,
 
     ffi :: bool = false,
 
@@ -850,6 +852,7 @@ Build* = {
                     true  => host_target(),
                     false => target_named(job.target),
                 }),
+                Jit => host_target(),
                 _   => None,
             });
             // `--backend js --target js-browser -o DIR` writes the page
@@ -889,15 +892,29 @@ Build* = {
                 symbol_map: job.symbol_map
             );
             report ::= self.alloc.String().try();
-            faults      = generation.emit(report, (artifact) {
-                publisher.write(artifact)
-            }).try();
+            faults      = job.run_args.match({
+                None     => generation.emit(report, (artifact) {
+                    publisher.write(artifact)
+                }).try(),
+                Ok(argv) => self.run_jit(generation, argv, report).try(),
+            });
             self.faults = self.faults + faults;
             (!report.view().is_empty()).then(
                 () { println("{}", report.view()); }
             );
         });
         Ok
+    }
+
+    // The jit backend's run; the program's status becomes the build's exit
+    // code.
+    run_jit = (self :: @Self, generation: Generation, argv: Vec<str>,
+               report :: String) Res<usize, AllocError> {
+        self.env.out.flush().ignore();
+        generation.run(report, argv).try().match({
+            None       => Ok(1),
+            Ok(status) => { self.status = Ok(status); Ok(0) },
+        })
     }
 
     // -----------------------------------------------------------------
@@ -916,7 +933,7 @@ Build* = {
     // 0 when clean, 1 otherwise: one code answers "did this produce a program".
     code* = (self: @Self) i32 {
         (self.faults == 0).match({
-            true  => 0,
+            true  => self.status.value_or(0),
             false => 1,
         })
     }

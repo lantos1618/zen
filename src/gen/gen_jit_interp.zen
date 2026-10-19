@@ -1,0 +1,1935 @@
+// Tier 0 of the JIT (docs/IR_ARCHITECTURE.md §JIT): run a verified IR
+// program inside the compiler, with no C compiler, assembler or linker.
+//
+// Every slot lives in host memory: a frame is a run of cells on a mapped
+// stack, each integer cell holding its value extended to 64 bits as the IR
+// prescribes, so `AddressOf`, loads and stores use real addresses and the
+// program's pages come from the kernel. System calls go through std.sys,
+// whose operations follow the same -errno convention as the IR's `System`.
+// Output, traps, exit statuses and the exit hook follow the C backend's
+// runtime (gen_c_ir), so a program behaves as its native build does.
+//
+// One thread only: a program that starts threads is refused before it runs.
+
+{ Alloc, AllocError, Ptr } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Span } = std.source
+{ Res, Ok, None, Range } = std.core
+{
+    read, write, openat, close, mmap, munmap, clock_gettime, getrandom,
+    socket, bind, listen, accept4, connect, epoll_create1, epoll_ctl,
+    epoll_pwait, kqueue, kevent, futex, nanosleep, mprotect, madvise, flock,
+    getcwd, mkdirat, unlinkat, renameat, pipe2, fork, execve, dup3, chdir,
+    wait4, kill, ppoll, poll, ioctl, thread_self, pthread_mutex_init,
+    pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy,
+    pthread_cond_init, pthread_cond_wait, pthread_cond_signal,
+    pthread_cond_broadcast, pthread_cond_destroy, sched_getaffinity, sysconf,
+    pointer_at, address_of, envp
+} = std.sys
+{
+    Program, Func, Scalar, Instruction, Terminator, Op, Binary, Unary, Convert,
+    Print, FloatFormat, SysCall, Load, Store, Update, Compare, TrapKind, Stream, StartValue,
+    trap_message, width, signed, integer, float, same
+} = gen.gen_ir
+{ Sys, Platform, constant_value } = gen.gen_sys
+{ Code, decode, encode, size_of, minimum, maximum, ceiling } = gen.gen_jit_decode
+
+// How a run ended. `Returned` continues the caller; the others unwind to
+// the outermost call (or to a guarded call, for a trap).
+Outcome = { Returned | Exited: i32 | Trapped }
+
+// What a program uses that the interpreter does not run.
+JitRefusal* = { function*: str, what*: str }
+
+// The first construct the interpreter refuses, in function and block
+// order, or None when it can run the whole program.
+refused_by_jit* = (program: Program) Res<JitRefusal> {
+    found :: Res<JitRefusal> = None;
+    program.functions.loop((fh, f) {
+        f.blocks.loop((bh, block) {
+            block.code.loop((ih, instruction) {
+                need(f, instruction).when_ok((what) {
+                    found = Ok(JitRefusal(function: f.name, what: what));
+                    ih.break();
+                });
+            });
+            found.match({ Ok(_) => bh.break(), None => () });
+        });
+        found.match({ Ok(_) => fh.break(), None => () });
+    });
+    found
+}
+
+need = (f: Func, instruction: Instruction) Res<str> {
+    instruction.match({
+        Host(_)            => Ok("JavaScript host calls"),
+        Wait(_)            => Ok("JavaScript event waits"),
+        Machine(_)         => Ok("machine instructions"),
+        BinaryValue(value) => (value.op.match({ Rem => true, _ => false })
+            && float(slot_ty(f, value.left))).match({
+            true  => Ok("floating-point remainder"),
+            false => None,
+        }),
+        System(call)       => call.call.match({
+            Clone        => Ok("threads"),
+            CloneThread  => Ok("threads"),
+            PthreadStart => Ok("threads"),
+            PthreadJoin  => Ok("threads"),
+            _            => None,
+        }),
+        _                  => None,
+    })
+}
+
+slot_ty = (f: Func, slot: usize) Scalar { f.slots.get(slot).value_or(Scalar.Unit) }
+
+// Bytes a slot's cell occupies.
+cell_size = (ty: Scalar) usize {
+    ty.match({ Unit => 0, Block(l) => l.size, U128 => 16, _ => 8 })
+}
+
+// Run `program` to completion with `argv` as its command line. The result
+// is the process status a native build would exit with: the entry's
+// result, an `exit_group` status, or 134 after a trap. None when the
+// interpreter's own memory cannot be mapped.
+execute* = (a: Alloc, program: Program, platform: Platform, argv: Vec<str>)
+           Res<Res<i32>, AllocError> {
+    bases   ::= a.Vec<usize>();
+    offsets ::= a.Vec<usize>();
+    frames  ::= a.Vec<usize>();
+    program.functions.loop((f) {
+        bases.add(offsets.len).try();
+        size :: usize = 0;
+        f.slots.loop((ty) {
+            align = ty.match({ Block(l) => (l.align > 8).match({ true => 16, false => 8 }), _ => 8 });
+            size  = round_up(size, align);
+            offsets.add(size).try();
+            size = size + (cell_size(ty) > 8).match({ true => round_up(cell_size(ty), 8), false => 8 });
+        });
+        frames.add(round_up(size, 16)).try();
+    });
+    anonymous = platform.match({ Darwin => 4098, _ => 16418 });
+    stack     = mapped(mmap(0, STACK, 3, anonymous, -1, 0));
+    data      = mapped(mmap(0, DATA, 3, anonymous, -1, 0));
+    vector    = argv_block(argv, anonymous);
+    (stack == 0 || data == 0 || vector == 0).match({
+        true  => Ok(None),
+        false => {
+            codes ::= a.Vec<Code>();
+            program.functions.loop((h, i, f) {
+                codes.add(
+                    decode(
+                        a,
+                        f,
+                        offsets,
+                        bases.get(i).value_or(0),
+                        data + BUFFER + 256
+                    ).try()
+                ).try();
+            });
+            // Every function's (table, frame size, parameters, count), then
+            // the encoded functions themselves, in one mapping.
+            total :: usize = program.functions.len * 32;
+            codes.loop((c) { total = total + size_of(c); });
+            info = mapped(mmap(0, round_up(total, 4096), 3, anonymous, -1, 0));
+            at :: usize = info + program.functions.len * 32;
+            (info != 0).then(() {
+                codes.loop((h, i, c) {
+                    entry = pointer_at(info + i * 32).to<usize>();
+                    entry.write(0, at);
+                    entry.write(1, frames.get(i).value_or(0));
+                    entry.write(2, encode(c, at));
+                    entry.write(3, c.params.len);
+                    at = at + size_of(c);
+                });
+            });
+            vm ::= Interp(
+                info: info,
+                codes: codes,
+                program: program,
+                platform: platform,
+                anonymous: anonymous,
+                bases: bases,
+                offsets: offsets,
+                frames: frames,
+                top: stack,
+                limit: stack + STACK,
+                buffer: data,
+                globals: data + BUFFER,
+                scratch: data + BUFFER + 256,
+                digits: data + BUFFER + 320,
+                argc: argv.len,
+                argv: vector,
+                env: address_of(envp().to<u8>()),
+                held: 0,
+                word: 0,
+                text: a.String().try()
+            );
+            (info == 0).match({ true => Ok(None), false => Ok(Ok(vm.main())) })
+        },
+    })
+}
+
+STACK: usize = 268435456
+BUFFER: usize = 65536
+DATA: usize = 69632
+
+// A mapping's address, or 0 for a -errno result.
+mapped = (result: i64) usize { result.to_usize().value_or(0) }
+
+round_up = (n: usize, to: usize) usize { (n + to - 1) / to * to }
+
+// The C argument vector: argc pointers, a null, then the NUL-terminated
+// words themselves.
+argv_block = (argv: Vec<str>, anonymous: i32) usize {
+    bytes ::= (argv.len + 1) * 8;
+    argv.loop((word) { bytes = bytes + word.len + 1; });
+    at = mapped(mmap(0, bytes, 3, anonymous, -1, 0));
+    (at != 0).then(() {
+        text ::= at + (argv.len + 1) * 8;
+        argv.loop((h, i, word) {
+            set_usize(at + i * 8, text);
+            move_bytes(text, address_of(word.ptr()), word.len);
+            pointer_at(text + word.len).write(0, 0);
+            text = text + word.len + 1;
+        });
+        set_usize(at + argv.len * 8, 0);
+    });
+    at
+}
+
+// Code addresses are function numbers above this base: `InvokeAt` and the
+// guarded call map them back, and no host code is ever entered.
+CODE_BASE: usize = 1152921504606846976
+
+Interp = {
+    program: Program,
+    platform: Platform,
+    anonymous: i32,
+    // Each function's first entry in `offsets`, one cell offset per slot,
+    // and each frame's size.
+    bases: Vec<usize>,
+    offsets: Vec<usize>,
+    frames: Vec<usize>,
+    top :: usize,
+    limit: usize,
+    // Standard output is held here, as the C runtime's 64 KiB buffer is.
+    buffer: usize,
+    globals: usize,
+    scratch: usize,
+    digits: usize,
+    argc: usize,
+    argv: usize,
+    env: usize,
+    held :: usize,
+    word :: usize,
+    // Where a float is formatted before it is printed.
+    text :: String,
+    // Each function decoded once (gen_jit_decode).
+    codes: Vec<Code>,
+    // gen_jit_decode `encode`d functions, through a table of four words per
+    // function: steps, frame size, parameter pairs, parameter count.
+    info: usize,
+
+    // The entry's result, then the exit hook a program may install in its
+    // first process word, as `zr_exit` runs it.
+    main = (self :: @Self) i32 {
+        entry    = self.program.entry;
+        result   = self.top;
+        self.top = self.top + 16;
+        self.invoke_at(CODE_BASE + entry, 0, 0, 0, result).match({
+            Trapped   => 134,
+            Exited(n) => n,
+            Returned  => {
+                unit   = self.program.functions.get(entry).match({
+                    Ok(f) => f.result.match({ Unit => true, _ => false }),
+                    None  => true,
+                });
+                status = unit.match({ true => 0, false => int(result) });
+                hook   = load_usize(self.globals);
+                ended  = (hook == 0).match({
+                    true  => Outcome.Returned,
+                    false => self.invoke_at(hook, 0, 0, 0, result),
+                });
+                ended.match({
+                    Trapped   => 134,
+                    Exited(n) => n,
+                    Returned  => { self.flush(); status },
+                })
+            },
+        })
+    }
+
+    // The address of `slot` in function `index`'s frame at `frame`.
+    cell = (self: @Self, index: usize, frame: usize, slot: usize) usize {
+        frame + self.offsets.get(self.bases.get(index).value_or(0) + slot).value_or(0)
+    }
+
+    // A new frame above the current top, or 0 when the stack is spent.
+    push = (self :: @Self, index: usize) usize {
+        frame = self.top;
+        size  = self.frames.get(index).value_or(0);
+        (frame + size > self.limit).match({
+            true  => 0,
+            false => { self.top = frame + size; frame },
+        })
+    }
+
+    // A direct call: the callee's parameters are copied from the caller's
+    // argument slots, aggregates by value.
+    invoke = (self :: @Self, caller: usize, frame: usize, callee: usize,
+              args: Vec<usize>, out: usize) Outcome {
+        self.program.functions.get(callee).match({
+            None  => self.fault("a call to a function that does not exist"),
+            Ok(f) => {
+                saved = self.top;
+                inner = self.push(callee);
+                (inner == 0).match({
+                    true  => self.overflowed(),
+                    false => {
+                        args.loop((h, i, slot) {
+                            move_bytes(
+                                self.cell(callee, inner, i),
+                                self.cell(caller, frame, slot),
+                                cell_size(slot_ty(f, i))
+                            );
+                        });
+                        ended    = self.perform(callee, inner, out);
+                        self.top = saved;
+                        ended
+                    },
+                })
+            },
+        })
+    }
+
+    // A call through a code address with up to two word arguments.
+    invoke_at = (self :: @Self, code: usize, count: usize, first: usize,
+                 second: usize, out: usize) Outcome {
+        (code < CODE_BASE).match({
+            true  => self.fault(
+                "a call through an address that is not a function"
+            ),
+            false => self.program.functions.get(code - CODE_BASE).match({
+                None  => self.fault(
+                    "a call through an address that is not a function"
+                ),
+                Ok(_) => {
+                    index = code - CODE_BASE;
+                    saved = self.top;
+                    inner = self.push(index);
+                    (inner == 0).match({
+                        true  => self.overflowed(),
+                        false => {
+                            (count > 0).then(
+                                () { set_usize(
+                                    self.cell(index, inner, 0),
+                                    first
+                                ); }
+                            );
+                            (count > 1).then(
+                                () { set_usize(
+                                    self.cell(index, inner, 1),
+                                    second
+                                ); }
+                            );
+                            ended    = self.perform(index, inner, out);
+                            self.top = saved;
+                            ended
+                        },
+                    })
+                },
+            }),
+        })
+    }
+
+    // The encoded steps of function `index` (gen_jit_decode `encode`).
+    perform = (self :: @Self, index: usize, frame: usize, out: usize)
+              Outcome {
+        table = part(self.info +% index *% 32, 0);
+        image = part(self.info +% index *% 32, 2) +% part(self.info +% index *% 32, 3) *% 16;
+        Range(0, part(image, 0)).loop((i) {
+            set_u64(
+                frame +% part(image, 1 +% 2 *% i),
+                part_u64(image, 2 +% 2 *% i)
+            );
+        });
+        pc    :: usize = 0;
+        ended :: Outcome = Outcome.Returned;
+        going ::= true;
+        going.loop((h) {
+            s = table +% pc *% 64;
+            next :: usize = pc +% 1;
+            stop :: Res<Outcome> = None;
+            part(s, 0).match({
+                1  => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2))
+                ),
+                0  => set_u64(frame +% part(s, 1), part_u64(s, 4)),
+                4  => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% part(s, 3)).to<u64>().read(0)
+                ),
+                6  => pointer_at(load_usize(frame +% part(s, 1)) +% part(s, 3))
+                    .to<u64>()
+                    .write(0, load_u64(frame +% part(s, 2))),
+                26 => {
+                    left  = load_i64(frame +% part(s, 2));
+                    right = load_i64(frame +% part(s, 3));
+                    holds = ordered_code(
+                        part(s, 5),
+                        left < right,
+                        left == right
+                    );
+                    set_u64(frame +% part(s, 1), truth(holds));
+                    next = holds.match({ true => part(s, 4), false => part(s, 7) });
+                },
+                27 => {
+                    left  = load_u64(frame +% part(s, 2));
+                    right = load_u64(frame +% part(s, 3));
+                    holds = ordered_code(
+                        part(s, 5),
+                        left < right,
+                        left == right
+                    );
+                    set_u64(frame +% part(s, 1), truth(holds));
+                    next = holds.match({ true => part(s, 4), false => part(s, 7) });
+                },
+                21 => { next = part(s, 1); },
+                22 => {
+                    next = (pointer_at(frame +% part(s, 1)).read(0) != 0).match({
+                        true  => part(s, 2),
+                        false => part(s, 3),
+                    });
+                },
+                8  => { stop = self.wide_signed(index, frame, s, Op.Add); },
+                9  => { stop = self.wide_signed(index, frame, s, Op.Sub); },
+                10 => { stop = self.wide_signed(index, frame, s, Op.Mul); },
+                11 => { stop = self.narrow_signed(index, frame, s, Op.Add); },
+                12 => { stop = self.narrow_signed(index, frame, s, Op.Sub); },
+                13 => { stop = self.narrow_signed(index, frame, s, Op.Mul); },
+                14 => {
+                    a   = load_u64(frame +% part(s, 2));
+                    sum = a +% load_u64(frame +% part(s, 3));
+                    (sum < a || sum > part_u64(s, 4)).match({
+                        true  => { stop = self.cold(
+                            index,
+                            frame,
+                            part(s, 6)
+                        ); },
+                        false => set_u64(frame +% part(s, 1), sum),
+                    });
+                },
+                15 => {
+                    a = load_u64(frame +% part(s, 2));
+                    b = load_u64(frame +% part(s, 3));
+                    (a < b || a - b > part_u64(s, 4)).match({
+                        true  => { stop = self.cold(
+                            index,
+                            frame,
+                            part(s, 6)
+                        ); },
+                        false => set_u64(frame +% part(s, 1), a - b),
+                    });
+                },
+                16 => { stop = self.unsigned(index, frame, s, Op.Mul); },
+                28 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_and(load_u64(frame +% part(s, 3)))
+                ),
+                29 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_or(load_u64(frame +% part(s, 3)))
+                ),
+                30 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_xor(load_u64(frame +% part(s, 3)))
+                ),
+                31 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)) +% load_u64(frame +% part(s, 3))
+                ),
+                32 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)) -% load_u64(frame +% part(s, 3))
+                ),
+                33 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)) *% load_u64(frame +% part(s, 3))
+                ),
+                34 => set_u64(frame +% part(s, 1), shifted(s, frame, true)),
+                35 => set_u64(frame +% part(s, 1), shifted(s, frame, false)),
+                36 => {
+                    a    = load_u64(frame +% part(s, 2));
+                    turn = load_usize(frame +% part(s, 3)) % 64;
+                    set_u64(frame +% part(s, 1), (turn == 0).match({
+                        true  => a,
+                        false => a.shift_right(turn).bit_or(a.shift_left(64 - turn)),
+                    }));
+                },
+                37 => set_u64(
+                    frame +% part(s, 1),
+                    (load_u64(frame +% part(s, 2)) +% load_u64(frame +% part(s, 3)))
+                        .bit_and(4294967295)
+                ),
+                38 => set_u64(
+                    frame +% part(s, 1),
+                    (load_u64(frame +% part(s, 2)) -% load_u64(frame +% part(s, 3)))
+                        .bit_and(4294967295)
+                ),
+                39 => set_u64(
+                    frame +% part(s, 1),
+                    (load_u64(frame +% part(s, 2)) *% load_u64(frame +% part(s, 3)))
+                        .bit_and(4294967295)
+                ),
+                40 => set_u64(frame +% part(s, 1), shifted32(s, frame, true)),
+                41 => set_u64(frame +% part(s, 1), shifted32(s, frame, false)),
+                42 => {
+                    a    = load_u64(frame +% part(s, 2)).bit_and(4294967295);
+                    turn = load_usize(frame +% part(s, 3)) % 32;
+                    set_u64(frame +% part(s, 1), (turn == 0).match({
+                        true  => a,
+                        false => a.shift_right(turn).bit_or(a.shift_left(32 - turn))
+                            .bit_and(4294967295),
+                    }));
+                },
+                43 => {
+                    r = load_u64(frame +% part(s, 3));
+                    (r == 0).match({
+                        true  => { stop = self.cold(
+                            index,
+                            frame,
+                            part(s, 6)
+                        ); },
+                        false => { set_u64(
+                            frame +% part(s, 1),
+                            load_u64(frame +% part(s, 2)) / r
+                        ); },
+                    });
+                },
+                44 => {
+                    r = load_u64(frame +% part(s, 3));
+                    (r == 0).match({
+                        true  => { stop = self.cold(
+                            index,
+                            frame,
+                            part(s, 6)
+                        ); },
+                        false => { set_u64(
+                            frame +% part(s, 1),
+                            load_u64(frame +% part(s, 2)) % r
+                        ); },
+                    });
+                },
+                47 => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% part(s, 3)).read(0).to_u64()
+                ),
+                48 => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% part(s, 3))
+                        .to<u32>()
+                        .read(0)
+                        .to_u64()
+                ),
+                49 => pointer_at(load_usize(frame +% part(s, 1)) +% part(s, 3))
+                    .write(0, pointer_at(frame +% part(s, 2)).read(0)),
+                50 => pointer_at(load_usize(frame +% part(s, 1)) +% part(s, 3))
+                    .to<u32>()
+                    .write(
+                        0,
+                        pointer_at(frame +% part(s, 2)).to<u32>().read(0)
+                    ),
+                51 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_and(4294967295)
+                ),
+                52 => set_u64(
+                    frame +% part(s, 1),
+                    load_u64(frame +% part(s, 2)).bit_and(255)
+                ),
+                53 => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).to<u64>().read(0)
+                ),
+                54 => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).read(0).to_u64()
+                ),
+                55 => set_u64(
+                    frame +% part(s, 1),
+                    pointer_at(load_usize(frame +% part(s, 2)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).to<u32>().read(0).to_u64()
+                ),
+                56 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).to<u64>().write(0, load_u64(frame +% part(s, 2))),
+                57 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).write(0, pointer_at(frame +% part(s, 2)).read(0)),
+                58 => pointer_at(load_usize(frame +% part(s, 1)) +% load_usize(frame +% part(s, 7)) *% part(s, 4) +% part(s, 3)).to<u32>().write(0, pointer_at(frame +% part(s, 2)).to<u32>().read(0)),
+                45 => {
+                    set_u64(frame +% part(s, 1), load_u64(frame +% part(s, 2)));
+                    extend_code(frame +% part(s, 1), part(s, 7));
+                },
+                46 => set_u64(
+                    frame +% part(s, 1),
+                    (load_u64(frame +% part(
+                        s,
+                        2
+                    )) != 0).match({ true => 1, false => 0 })
+                ),
+                19 => {
+                    n     = part(s, 4);
+                    left  = load_u64(frame +% part(s, 2));
+                    right = load_u64(frame +% part(s, 3));
+                    set_u64(
+                        frame +% part(s, 1),
+                        bits(
+                            op_of(part(s, 5)),
+                            low(left, n),
+                            low(right, n),
+                            left,
+                            right,
+                            n * 8
+                        )
+                    );
+                    extend_code(frame +% part(s, 1), part(s, 7));
+                },
+                17 => {
+                    left  = load_i64(frame +% part(s, 2));
+                    right = load_i64(frame +% part(s, 3));
+                    set_u64(
+                        frame +% part(s, 1),
+                        truth(ordered_code(
+                            part(s, 5),
+                            left < right,
+                            left == right
+                        ))
+                    );
+                },
+                18 => {
+                    left  = load_u64(frame +% part(s, 2));
+                    right = load_u64(frame +% part(s, 3));
+                    set_u64(
+                        frame +% part(s, 1),
+                        truth(ordered_code(
+                            part(s, 5),
+                            left < right,
+                            left == right
+                        ))
+                    );
+                },
+                20 => {
+                    got = self.call(frame, s);
+                    got.match({
+                        Returned => (),
+                        _        => { ended = got; going = false; h.break(); },
+                    });
+                },
+                23 => {
+                    size = part(s, 4);
+                    (size == 8).match({
+                        true  => set_u64(out, load_u64(frame +% part(s, 1))),
+                        false => move_bytes(out, frame +% part(s, 1), size),
+                    });
+                    going = false;
+                    h.break();
+                },
+                2  => move_bytes(
+                    frame +% part(s, 1),
+                    frame +% part(s, 2),
+                    part(s, 4)
+                ),
+                3  => set_usize(frame +% part(s, 1), frame +% part(s, 2)),
+                5  => {
+                    set_u64(frame +% part(s, 1), 0);
+                    move_bytes(
+                        frame +% part(s, 1),
+                        load_usize(frame +% part(s, 2)) +% part(s, 3),
+                        part(s, 5)
+                    );
+                    extend_code(frame +% part(s, 1), part(s, 7));
+                },
+                7  => move_bytes(
+                    load_usize(frame +% part(s, 1)) +% part(s, 3),
+                    frame +% part(s, 2),
+                    part(s, 5)
+                ),
+                24 => { stop = Ok(self.trapped(index, part(s, 4))); },
+                25 => { stop = self.cold(index, frame, part(s, 4)); },
+                _  => { stop = Ok(self.fault(
+                    "a step the interpreter does not know"
+                )); },
+            });
+            stop.match({
+                Ok(outcome) => { ended = outcome; going = false; h.break(); },
+                None        => { pc = next; },
+            });
+        });
+        ended
+    }
+
+    // The IR instruction behind a step, run the general way.
+    cold = (self :: @Self, index: usize, frame: usize, at: usize)
+           Res<Outcome> {
+        self.codes.get(index).match({
+            None     => Ok(self.fault("a step without its function")),
+            Ok(code) => self.program.functions.get(index).match({
+                None  => Ok(self.fault("a step without its function")),
+                Ok(f) => code.slow.get(at).match({
+                    None            => Ok(self.fault(
+                        "a slow step without its instruction"
+                    )),
+                    Ok(instruction) => self.step(index, f, frame, instruction),
+                }),
+            }),
+        })
+    }
+
+    trapped = (self :: @Self, index: usize, at: usize) Outcome {
+        self.codes.get(index).match({
+            None     => self.fault("a trap without its fault"),
+            Ok(code) => code.faults.get(at).match({
+                Ok(fault) => self.trap(fault.span, fault.what),
+                None      => self.fault("a trap without its fault"),
+            }),
+        })
+    }
+
+    // Checked arithmetic; an overflow traps through the IR form.
+    wide_signed = (self :: @Self, index: usize, frame: usize, s: usize, op: Op)
+                  Res<Outcome> {
+        signed_wide(
+            op,
+            load_i64(frame +% part(s, 2)),
+            load_i64(frame +% part(s, 3))
+        ).match({
+            Ok(value) => { set_i64(frame +% part(s, 1), value); None },
+            None      => self.cold(index, frame, part(s, 6)),
+        })
+    }
+
+    narrow_signed = (self :: @Self, index: usize, frame: usize, s: usize,
+                     op: Op) Res<Outcome> {
+        a   = load_i64(frame +% part(s, 2));
+        b   = load_i64(frame +% part(s, 3));
+        sum = op.match({ Add => a + b, Sub => a - b, _ => a * b });
+        (sum < part_i64(s, 4) || sum > part_i64(s, 7)).match({
+            true  => self.cold(index, frame, part(s, 6)),
+            false => { set_i64(frame +% part(s, 1), sum); None },
+        })
+    }
+
+    unsigned = (self :: @Self, index: usize, frame: usize, s: usize, op: Op)
+               Res<Outcome> {
+        unsigned_exact(
+            op,
+            load_u64(frame +% part(s, 2)),
+            load_u64(frame +% part(s, 3)),
+            part_u64(s, 4)
+        ).match({
+            Ok(value) => { set_u64(frame +% part(s, 1), value); None },
+            None      => self.cold(index, frame, part(s, 6)),
+        })
+    }
+
+    // A call: arguments copied by the callee's parameter pairs. Its outcome
+    // stays out of `perform`'s `stop`, whose halves reload as one word.
+    call = (self :: @Self, frame: usize, s: usize) Outcome {
+        callee = part(s, 4);
+        info   = self.info +% callee *% 32;
+        inner  = self.top;
+        (inner +% part(info, 1) > self.limit).match({
+            true  => self.overflowed(),
+            false => {
+                self.top = inner +% part(info, 1);
+                args     = part(s, 2);
+                params   = part(info, 2);
+                Range(0, part(s, 3)).loop((i) {
+                    to   = inner +% part(params, 2 *% i);
+                    size = part(params, 2 *% i +% 1);
+                    from = frame +% part(args, i);
+                    (size == 8).match({
+                        true  => set_u64(to, load_u64(from)),
+                        false => move_bytes(to, from, size),
+                    });
+                });
+                ended    = self.perform(callee, inner, frame +% part(s, 1));
+                self.top = inner;
+                ended
+            },
+        })
+    }
+
+    // One instruction; None continues with the next.
+    step = (self :: @Self, index: usize, f: Func, frame: usize,
+            instruction: Instruction) Res<Outcome> {
+        instruction.match({
+            Constant(value)      => {
+                at = self.cell(index, frame, value.out);
+                set_i64(at, value.value);
+                extend(at, slot_ty(f, value.out));
+                same(slot_ty(f, value.out), Scalar.U128).then(() { set_u64(at + 8, 0); });
+                None
+            },
+            Copy(value)          => {
+                move_bytes(
+                    self.cell(index, frame, value.out),
+                    self.cell(index, frame, value.source),
+                    cell_size(slot_ty(f, value.out))
+                );
+                None
+            },
+            UnaryValue(value)    => self.unary(index, f, frame, value),
+            BinaryValue(value)   => self.binary(index, f, frame, value),
+            Invoke(call)         => {
+                ended = self.invoke(
+                    index,
+                    frame,
+                    call.function,
+                    call.args,
+                    self.cell(index, frame, call.out)
+                );
+                unwound(ended)
+            },
+            PrintValue(value)    => { self.print(index, frame, value); None },
+            Text(text)           => {
+                self.emit(1, address_of(text.ptr()), text.len);
+                None
+            },
+            Cast(value)          => { self.convert(
+                index,
+                f,
+                frame,
+                value
+            ); None },
+            AddressOf(value)     => {
+                set_usize(
+                    self.cell(index, frame, value.out),
+                    self.cell(index, frame, value.slot)
+                );
+                None
+            },
+            LoadValue(value)     => { self.load(index, f, frame, value); None },
+            StoreValue(value)    => { self.store(
+                index,
+                f,
+                frame,
+                value
+            ); None },
+            CopyBytes(value)     => {
+                move_bytes(
+                    self.value(index, frame, value.dest),
+                    self.value(index, frame, value.source),
+                    self.value(index, frame, value.bytes)
+                );
+                None
+            },
+            Bytes(value)         => {
+                set_usize(
+                    self.cell(index, frame, value.out),
+                    address_of(value.bytes.ptr())
+                );
+                None
+            },
+            WriteOut(value)      => {
+                self.emit(
+                    descriptor(value.stream),
+                    self.value(index, frame, value.data),
+                    self.value(index, frame, value.len)
+                );
+                None
+            },
+            System(call)         => self.system(index, f, frame, call),
+            Startup(value)       => {
+                at = self.cell(index, frame, value.out);
+                set_usize(at, value.value.match({
+                    Argc    => self.argc,
+                    Argv    => self.argv,
+                    Envp    => self.env,
+                    Globals => self.globals,
+                }));
+                None
+            },
+            MapPages(value)      => {
+                bytes = self.value(index, frame, value.bytes);
+                got   = mapped(mmap(0, bytes + 16, 3, self.anonymous, -1, 0));
+                (got != 0).then(() { set_usize(got, bytes + 16); });
+                set_usize(
+                    self.cell(index, frame, value.out),
+                    (got == 0).match({ true => 0, false => got + 16 })
+                );
+                None
+            },
+            UnmapPages(slot)     => {
+                at = self.value(index, frame, slot);
+                (at != 0).then(() { munmap(at - 16, load_usize(at - 16)); });
+                None
+            },
+            SysConst(value)      => {
+                at = self.cell(index, frame, value.out);
+                set_i64(at, value.name.match({
+                    PthreadThreads => 1,
+                    _              => constant_value(value.name, self.platform),
+                }));
+                extend(at, slot_ty(f, value.out));
+                None
+            },
+            Flush                => { self.flush(); None },
+            FormatFloat(value)   => { self.format_float(
+                index,
+                frame,
+                value
+            ); None },
+            VolatileLoad(value)  => { self.load(index, f, frame, value); None },
+            VolatileStore(value) => { self.store(
+                index,
+                f,
+                frame,
+                value
+            ); None },
+            Barrier              => None,
+            AtomicLoad(value)    => { self.load(index, f, frame, value); None },
+            AtomicStore(value)   => { self.store(
+                index,
+                f,
+                frame,
+                value
+            ); None },
+            AtomicUpdate(value)  => { self.update(
+                index,
+                f,
+                frame,
+                value
+            ); None },
+            CompareSwap(value)   => { self.swap(index, f, frame, value); None },
+            CodeAddress(value)   => {
+                set_usize(
+                    self.cell(index, frame, value.out),
+                    CODE_BASE + value.function
+                );
+                None
+            },
+            InvokeAt(call)       => {
+                code = self.value(index, frame, call.target);
+                (code < CODE_BASE).match({
+                    true  => Ok(self.fault(
+                        "a call through an address that is not a function"
+                    )),
+                    false => {
+                        ended = self.invoke(
+                            index,
+                            frame,
+                            code - CODE_BASE,
+                            call.args,
+                            self.cell(index, frame, call.out)
+                        );
+                        unwound(ended)
+                    },
+                })
+            },
+            // Refused before the program runs (`refused_by_jit`).
+            _                    => Ok(self.fault(
+                "an instruction the jit backend refuses"
+            )),
+        })
+    }
+
+    // A word slot's value as an address or a count.
+    value = (self: @Self, index: usize, frame: usize, slot: usize) usize {
+        load_usize(self.cell(index, frame, slot))
+    }
+
+    unary = (self :: @Self, index: usize, f: Func, frame: usize, value: Unary)
+            Res<Outcome> {
+        ty  = slot_ty(f, value.input);
+        at  = self.cell(index, frame, value.input);
+        out = self.cell(index, frame, value.out);
+        value.op.match({
+            Not => {
+                integer(ty).match({
+                    true  => same(ty, Scalar.U128).match({
+                        true  => set_u128(
+                            out,
+                            load_u128(at).bit_xor(U128_ONES())
+                        ),
+                        false => { set_u64(out, load_u64(at).bit_xor(u64.MAX)); extend(out, ty); },
+                    }),
+                    false => set_u64(
+                        out,
+                        (pointer_at(at).read(0) == 0).match({ true => 1, false => 0 })
+                    ),
+                });
+                None
+            },
+            Neg => float(ty).match({
+                true  => { set_float(out, ty, float_at(at, ty) * -1.0); None },
+                false => signed(ty).match({
+                    true  => (load_i64(at) == minimum(ty)).match({
+                        true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                        false => { set_i64(out, 0 - load_i64(at)); None },
+                    }),
+                    false => (load_u64(at) != 0).match({
+                        true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                        false => { set_u64(out, 0); None },
+                    }),
+                }),
+            }),
+        })
+    }
+
+    binary = (self :: @Self, index: usize, f: Func, frame: usize, value: Binary)
+             Res<Outcome> {
+        ty    = slot_ty(f, value.left);
+        left  = self.cell(index, frame, value.left);
+        right = self.cell(index, frame, value.right);
+        out   = self.cell(index, frame, value.out);
+        oty   = slot_ty(f, value.out);
+        float(ty).match({
+            true  => { floating(
+                value.op,
+                ty,
+                float_at(left, ty),
+                float_at(right, ty),
+                out
+            ); None },
+            false => same(ty, Scalar.U128).match({ true => self.wide(value, left, right, out), false => value.op.match({
+                Add          => self.checked(value, ty, left, right, out),
+                Sub          => self.checked(value, ty, left, right, out),
+                Mul          => self.checked(value, ty, left, right, out),
+                Div          => self.divide(value, ty, left, right, out),
+                Rem          => self.divide(value, ty, left, right, out),
+                Equal        => { set_u64(
+                    out,
+                    compared(value.op, ty, left, right)
+                ); None },
+                NotEqual     => { set_u64(
+                    out,
+                    compared(value.op, ty, left, right)
+                ); None },
+                Less         => { set_u64(
+                    out,
+                    compared(value.op, ty, left, right)
+                ); None },
+                LessEqual    => { set_u64(
+                    out,
+                    compared(value.op, ty, left, right)
+                ); None },
+                Greater      => { set_u64(
+                    out,
+                    compared(value.op, ty, left, right)
+                ); None },
+                GreaterEqual => { set_u64(
+                    out,
+                    compared(value.op, ty, left, right)
+                ); None },
+                _            => {
+                    set_u64(
+                        out,
+                        bits(
+                            value.op,
+                            low(load_u64(left), width(ty)),
+                            low(
+                                load_u64(right),
+                                width(slot_ty(f, value.right))
+                            ),
+                            load_u64(left),
+                            load_u64(right),
+                            width(ty) * 8
+                        )
+                    );
+                    extend(out, oty);
+                    None
+                },
+            }) }),
+        })
+    }
+
+    // Add, Sub and Mul, trapping when the exact result leaves the type.
+    checked = (self :: @Self, value: Binary, ty: Scalar, left: usize,
+               right: usize, out: usize) Res<Outcome> {
+        signed(ty).match({
+            true  => {
+                a = load_i64(left);
+                b = load_i64(right);
+                (width(ty) == 8).match({
+                    true  => signed_wide(value.op, a, b).match({
+                        None    => Ok(self.trap(value.span, TrapKind.Overflow)),
+                        Ok(sum) => { set_i64(out, sum); None },
+                    }),
+                    false => {
+                        sum = value.op.match({ Add => a + b, Sub => a - b, _ => a * b });
+                        (sum < minimum(ty) || sum > maximum(ty)).match({
+                            true  => Ok(self.trap(
+                                value.span,
+                                TrapKind.Overflow
+                            )),
+                            false => { set_i64(out, sum); None },
+                        })
+                    },
+                })
+            },
+            false => {
+                a = load_u64(left);
+                b = load_u64(right);
+                unsigned_exact(value.op, a, b, ceiling(ty)).match({
+                    None    => Ok(self.trap(value.span, TrapKind.Overflow)),
+                    Ok(sum) => { set_u64(out, sum); None },
+                })
+            },
+        })
+    }
+
+    divide = (self :: @Self, value: Binary, ty: Scalar, left: usize,
+              right: usize, out: usize) Res<Outcome> {
+        rem = value.op.match({ Rem => true, _ => false });
+        signed(ty).match({
+            true  => {
+                a = load_i64(left);
+                b = load_i64(right);
+                (b == 0).match({
+                    true  => Ok(self.trap(value.span, TrapKind.DivideByZero)),
+                    false => (a == minimum(ty) && b == -1).match({
+                        true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                        false => { set_i64(
+                            out,
+                            rem.match({ true => a % b, false => a / b })
+                        ); None },
+                    }),
+                })
+            },
+            false => {
+                a = load_u64(left);
+                b = load_u64(right);
+                (b == 0).match({
+                    true  => Ok(self.trap(value.span, TrapKind.DivideByZero)),
+                    false => { set_u64(
+                        out,
+                        rem.match({ true => a % b, false => a / b })
+                    ); None },
+                })
+            },
+        })
+    }
+
+    convert = (self :: @Self, index: usize, f: Func, frame: usize, value: Convert) {
+        from      = slot_ty(f, value.input);
+        to        = slot_ty(f, value.out);
+        at        = self.cell(index, frame, value.input);
+        out       = self.cell(index, frame, value.out);
+        wide_from = same(from, Scalar.U128);
+        float(to).match({
+            // Integers reaching an f32 are at most 16 bits wide, so going
+            // through f64 rounds once.
+            true  => float(from).match({
+                true  => set_float(out, to, float_at(at, from)),
+                false => set_float(out, to, signed(from).match({
+                    true  => load_i64(at).narrow_f64(),
+                    false => load_u64(at).narrow_f64(),
+                })),
+            }),
+            false => to.match({
+                Bool => set_u64(out, float(from).match({
+                    true  => (float_at(
+                        at,
+                        from
+                    ) != 0.0).match({ true => 1, false => 0 }),
+                    false => (load_u64(at) != 0 || (wide_from && load_u64(at + 8) != 0)).match({ true => 1, false => 0 }),
+                })),
+                U128 => {
+                    high = wide_from.match({
+                        true  => load_u64(at + 8),
+                        false => (signed(from) && load_i64(at) < 0).match({ true => u64.MAX, false => 0 }),
+                    });
+                    set_u64(out, load_u64(at));
+                    set_u64(out + 8, high);
+                },
+                _    => {
+                    float(from).match({
+                        true  => truncated(float_at(at, from), signed(to), out),
+                        false => set_u64(out, load_u64(at)),
+                    });
+                    extend(out, to);
+                },
+            }),
+        })
+    }
+
+    print = (self :: @Self, index: usize, frame: usize, value: Print) {
+        fd = descriptor(value.stream);
+        at = self.cell(index, frame, value.value);
+        value.ty.match({
+            F64  => self.float(fd, load_f64(at)),
+            Unit => self.emit(fd, address_of("()".ptr()), 2),
+            Bool => (pointer_at(at).read(0) != 0).match({
+                true  => self.emit(fd, address_of("true".ptr()), 4),
+                false => self.emit(fd, address_of("false".ptr()), 5),
+            }),
+            _    => signed(value.ty).match({
+                true  => (load_i64(at) < 0).match({
+                    true  => {
+                        self.emit(fd, address_of("-".ptr()), 1);
+                        self.decimal(fd, 0 -% load_u64(at));
+                    },
+                    false => self.decimal(fd, load_u64(at)),
+                }),
+                false => self.decimal(fd, load_u64(at)),
+            }),
+        })
+    }
+
+    // C's `%g`, as the native runtime prints an f64 (`zr_print_f`); every
+    // NaN prints as `nan`.
+    float = (self :: @Self, fd: i32, value: f64) {
+        text = self.float_text(value);
+        self.emit(fd, address_of(text.ptr()), text.len);
+    }
+
+    float_text = (self :: @Self, value: f64) str {
+        (value != value).match({
+            true  => "nan",
+            false => (value > f64.MAX).match({
+                true  => "inf",
+                false => (value < f64.MIN).match({
+                    true  => "-inf",
+                    false => {
+                        self.text.clear();
+                        self.text.fmt(
+                            "{}",
+                            value
+                        ).match({ Ok => (), Err(_) => () });
+                        self.text.view()
+                    },
+                }),
+            }),
+        })
+    }
+
+    format_float = (self :: @Self, index: usize, frame: usize, value: FloatFormat) {
+        text = self.float_text(load_f64(self.cell(index, frame, value.value)));
+        move_bytes(
+            self.value(index, frame, value.dest),
+            address_of(text.ptr()),
+            text.len
+        );
+        set_usize(self.cell(index, frame, value.out), text.len);
+    }
+
+    // A 128-bit operation; shift and rotate counts are U64 words.
+    wide = (self :: @Self, value: Binary, left: usize, right: usize, out: usize)
+           Res<Outcome> {
+        a          = load_u128(left);
+        b          = load_u128(right);
+        count      = load_usize(right);
+        zero: u128 = 0;
+        value.op.match({
+            Add     => (a +% b < a).match({
+                true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                false => { set_u128(out, a +% b); None },
+            }),
+            Sub     => (a < b).match({
+                true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                false => { set_u128(out, a -% b); None },
+            }),
+            Mul     => (a != zero && (a *% b) / a != b).match({
+                true  => Ok(self.trap(value.span, TrapKind.Overflow)),
+                false => { set_u128(out, a *% b); None },
+            }),
+            Div     => (b == zero).match({
+                true  => Ok(self.trap(value.span, TrapKind.DivideByZero)),
+                false => { set_u128(out, a / b); None },
+            }),
+            Rem     => (b == zero).match({
+                true  => Ok(self.trap(value.span, TrapKind.DivideByZero)),
+                false => { set_u128(out, a % b); None },
+            }),
+            WrapAdd => { set_u128(out, a +% b); None },
+            WrapSub => { set_u128(out, a -% b); None },
+            WrapMul => { set_u128(out, a *% b); None },
+            And     => { set_u128(out, a.bit_and(b)); None },
+            Or      => { set_u128(out, a.bit_or(b)); None },
+            Xor     => { set_u128(out, a.bit_xor(b)); None },
+            Shl     => { set_u128(
+                out,
+                (count >= 128).match({ true => zero, false => a.shift_left(
+                    count
+                ) })
+            ); None },
+            Shr     => { set_u128(
+                out,
+                (count >= 128).match({ true => zero, false => a.shift_right(
+                    count
+                ) })
+            ); None },
+            Rotr    => {
+                turn = count % 128;
+                set_u128(out, (turn == 0).match({
+                    true  => a,
+                    false => a.shift_right(turn).bit_or(a.shift_left(128 - turn)),
+                }));
+                None
+            },
+            _       => {
+                set_u64(
+                    out,
+                    ordered(
+                        value.op,
+                        a < b,
+                        a == b
+                    ).match({ true => 1, false => 0 })
+                );
+                None
+            },
+        })
+    }
+
+    decimal = (self :: @Self, fd: i32, n: u64) {
+        end = self.digits + 24;
+        at    ::= end;
+        rest  ::= n;
+        going ::= true;
+        going.loop((h) {
+            at = at - 1;
+            set_u64(self.scratch, rest % 10 + 48);
+            move_bytes(at, self.scratch, 1);
+            rest  = rest / 10;
+            going = rest != 0;
+        });
+        self.emit(fd, at, end - at);
+    }
+
+    load = (self :: @Self, index: usize, f: Func, frame: usize, value: Load) {
+        ty  = slot_ty(f, value.out);
+        out = self.cell(index, frame, value.out);
+        set_u64(out, 0);
+        move_bytes(
+            out,
+            self.value(index, frame, value.base) + value.offset,
+            cell_size(ty).min(width(ty))
+        );
+        extend(out, ty);
+    }
+
+    store = (self :: @Self, index: usize, f: Func, frame: usize, value: Store) {
+        ty = slot_ty(f, value.value);
+        move_bytes(
+            self.value(index, frame, value.base) + value.offset,
+            self.cell(index, frame, value.value),
+            cell_size(ty).min(width(ty))
+        );
+    }
+
+    update = (self :: @Self, index: usize, f: Func, frame: usize, value: Update) {
+        ty    = slot_ty(f, value.out);
+        n     = width(ty);
+        place = self.value(index, frame, value.base);
+        out   = self.cell(index, frame, value.out);
+        given = load_u64(self.cell(index, frame, value.value));
+        set_u64(self.scratch, 0);
+        move_bytes(self.scratch, place, n);
+        old = load_u64(self.scratch);
+        set_u64(
+            self.scratch,
+            value.op.match({ Swap => given, Add => old +% given })
+        );
+        move_bytes(place, self.scratch, n);
+        set_u64(out, old);
+        extend(out, ty);
+    }
+
+    swap = (self :: @Self, index: usize, f: Func, frame: usize, value: Compare) {
+        ty    = slot_ty(f, value.out);
+        n     = width(ty);
+        place = self.value(index, frame, value.base);
+        out   = self.cell(index, frame, value.out);
+        set_u64(self.scratch, 0);
+        move_bytes(self.scratch, place, n);
+        old = load_u64(self.scratch);
+        (old == low(load_u64(self.cell(index, frame, value.expected)), n)).then(() {
+            move_bytes(place, self.cell(index, frame, value.desired), n);
+        });
+        set_u64(out, old);
+        extend(out, ty);
+    }
+
+    system = (self :: @Self, index: usize, f: Func, frame: usize, call: SysCall)
+             Res<Outcome> {
+        c0  = self.argument(index, frame, call, 0);
+        c1  = self.argument(index, frame, call, 1);
+        c2  = self.argument(index, frame, call, 2);
+        c3  = self.argument(index, frame, call, 3);
+        c4  = self.argument(index, frame, call, 4);
+        c5  = self.argument(index, frame, call, 5);
+        out = self.cell(index, frame, call.out);
+        result :: i64 = call.call.match({
+            Read             => read(int(c0), pointer(c1), load_usize(c2)),
+            Write            => { self.flush_before(int(c0)); write(int(c0), pointer(c1), load_usize(c2)) },
+            Openat           => openat(
+                int(c0),
+                pointer(c1),
+                int(c2),
+                word32(c3)
+            ),
+            Close            => close(int(c0)),
+            Mmap             => mmap(
+                load_usize(c0),
+                load_usize(c1),
+                int(c2),
+                int(c3),
+                int(c4),
+                load_i64(c5)
+            ),
+            Munmap           => munmap(load_usize(c0), load_usize(c1)),
+            ExitGroup        => 0,
+            ClockGettime     => clock_gettime(int(c0), pointer(c1)),
+            Getrandom        => getrandom(
+                pointer(c0),
+                load_usize(c1),
+                word32(c2)
+            ),
+            Socket           => socket(int(c0), int(c1), int(c2)),
+            Bind             => bind(int(c0), pointer(c1), word32(c2)),
+            Listen           => listen(int(c0), int(c1)),
+            Accept4          => accept4(
+                int(c0),
+                pointer(c1),
+                pointer(c2).to<u32>(),
+                int(c3)
+            ),
+            Connect          => connect(int(c0), pointer(c1), word32(c2)),
+            EpollCreate1     => epoll_create1(int(c0)),
+            EpollCtl         => epoll_ctl(
+                int(c0),
+                int(c1),
+                int(c2),
+                pointer(c3)
+            ),
+            EpollPwait       => epoll_pwait(
+                int(c0),
+                pointer(c1),
+                int(c2),
+                int(c3),
+                load_usize(c4),
+                load_usize(c5)
+            ),
+            Kqueue           => kqueue(),
+            Kevent           => kevent(
+                int(c0),
+                pointer(c1),
+                int(c2),
+                pointer(c3),
+                int(c4),
+                pointer(c5)
+            ),
+            Futex            => futex(
+                pointer(c0).to<u32>(),
+                int(c1),
+                word32(c2),
+                load_usize(c3),
+                load_usize(c4),
+                word32(c5)
+            ),
+            Nanosleep        => nanosleep(pointer(c0), pointer(c1)),
+            Mprotect         => mprotect(
+                load_usize(c0),
+                load_usize(c1),
+                int(c2)
+            ),
+            Madvise          => madvise(
+                load_usize(c0),
+                load_usize(c1),
+                int(c2)
+            ),
+            Flock            => flock(int(c0), int(c1)),
+            Getcwd           => getcwd(pointer(c0), load_usize(c1)),
+            Mkdirat          => mkdirat(int(c0), pointer(c1), word32(c2)),
+            Unlinkat         => unlinkat(int(c0), pointer(c1), int(c2)),
+            Renameat         => renameat(
+                int(c0),
+                pointer(c1),
+                int(c2),
+                pointer(c3)
+            ),
+            Pipe2            => pipe2(pointer(c0).to<i32>(), int(c1)),
+            Fork             => { self.flush(); fork(
+                load_usize(c0),
+                load_usize(c1),
+                load_usize(c2),
+                load_usize(c3),
+                load_usize(c4)
+            ) },
+            Execve           => { self.flush(); execve(
+                pointer(c0),
+                pointer(c1).to<Ptr<u8>>(),
+                pointer(c2).to<Ptr<u8>>()
+            ) },
+            Dup3             => dup3(int(c0), int(c1), int(c2)),
+            Chdir            => chdir(pointer(c0)),
+            Wait4            => wait4(
+                int(c0),
+                pointer(c1).to<i32>(),
+                int(c2),
+                load_usize(c3)
+            ),
+            Kill             => kill(int(c0), int(c1)),
+            Ppoll            => ppoll(
+                pointer(c0),
+                load_usize(c1),
+                load_usize(c2),
+                load_usize(c3),
+                load_usize(c4)
+            ),
+            Poll             => poll(pointer(c0), load_usize(c1), int(c2)),
+            Ioctl            => ioctl(int(c0), load_usize(c1)),
+            ThreadSelf       => thread_self(),
+            MutexInit        => pthread_mutex_init(pointer(c0), load_usize(c1)),
+            MutexLock        => pthread_mutex_lock(pointer(c0)),
+            MutexUnlock      => pthread_mutex_unlock(pointer(c0)),
+            MutexDestroy     => pthread_mutex_destroy(pointer(c0)),
+            CondInit         => pthread_cond_init(pointer(c0), load_usize(c1)),
+            CondWait         => pthread_cond_wait(pointer(c0), pointer(c1)),
+            CondSignal       => pthread_cond_signal(pointer(c0)),
+            CondBroadcast    => pthread_cond_broadcast(pointer(c0)),
+            CondDestroy      => pthread_cond_destroy(pointer(c0)),
+            SchedGetaffinity => sched_getaffinity(
+                int(c0),
+                load_usize(c1),
+                pointer(c2)
+            ),
+            Sysconf          => sysconf(int(c0)),
+            ThreadWordGet    => load_i64(self.word_cell()),
+            ThreadWordSet    => { self.word = load_usize(c0); 0 },
+            GuardedCall      => 0,
+            // Refused before the program runs (`refused_by_jit`).
+            _                => -38,
+        });
+        call.call.match({
+            ExitGroup   => Ok(Outcome.Exited(int(c0))),
+            GuardedCall => {
+                saved    = self.top;
+                ended    = self.invoke_at(
+                    load_usize(c0),
+                    2,
+                    load_usize(c1),
+                    load_usize(c2),
+                    self.scratch
+                );
+                self.top = saved;
+                ended.match({
+                    Exited(_) => Ok(ended),
+                    Trapped   => { set_u64(out, 1); extend(out, slot_ty(f, call.out)); None },
+                    Returned  => { set_u64(out, 0); extend(out, slot_ty(f, call.out)); None },
+                })
+            },
+            _           => { set_i64(out, result); extend(out, slot_ty(f, call.out)); None },
+        })
+    }
+
+    // The thread word, read through the scratch cell.
+    word_cell = (self: @Self) usize { set_usize(
+        self.scratch,
+        self.word
+    ); self.scratch }
+
+    // The cell of a call's `k`th argument; the result cell when it has fewer.
+    argument = (self: @Self, index: usize, frame: usize, call: SysCall, k: usize) usize {
+        self.cell(index, frame, call.args.get(k).value_or(call.out))
+    }
+
+    // Standard output is held; another stream, or a raw write to it,
+    // goes out at once after what is held.
+    emit = (self :: @Self, fd: i32, data: usize, len: usize) {
+        (fd != 1).match({
+            true  => write_all(fd, data, len),
+            false => {
+                (self.held + len > BUFFER).then(() { self.flush(); });
+                (len > BUFFER).match({
+                    true  => write_all(1, data, len),
+                    false => {
+                        move_bytes(self.buffer + self.held, data, len);
+                        self.held = self.held + len;
+                    },
+                })
+            },
+        })
+    }
+
+    flush = (self :: @Self) {
+        write_all(1, self.buffer, self.held);
+        self.held = 0;
+    }
+
+    flush_before = (self :: @Self, fd: i32) { (fd == 1).then(
+        () { self.flush(); }
+    ); }
+
+    // Zen's trap report, `file:line:col: trap: message`, after what is held.
+    trap = (self :: @Self, span: Span, what: TrapKind) Outcome {
+        self.flush();
+        write_text(2, span.file);
+        write_text(2, ":");
+        self.decimal(2, span.start.line.to_u64());
+        write_text(2, ":");
+        self.decimal(2, span.start.col.to_u64());
+        write_text(2, ": trap: ");
+        write_text(2, trap_message(what));
+        write_text(2, "\n");
+        Outcome.Trapped
+    }
+
+    // A fault of the interpreter itself, reported as a trap.
+    fault = (self :: @Self, what: str) Outcome {
+        self.flush();
+        write_text(2, "zen jit: ");
+        write_text(2, what);
+        write_text(2, "\n");
+        Outcome.Trapped
+    }
+
+    overflowed = (self :: @Self) Outcome { self.fault("stack overflow") }
+}
+
+// A call's outcome as a step: None continues after a return.
+unwound = (outcome: Outcome) Res<Outcome> {
+    outcome.match({ Returned => None, _ => Ok(outcome) })
+}
+
+descriptor = (stream: Stream) i32 { stream.match({ Out => 1, Err => 2 }) }
+
+write_text = (fd: i32, text: str) { write_all(
+    fd,
+    address_of(text.ptr()),
+    text.len
+); }
+
+write_all = (fd: i32, data: usize, len: usize) {
+    at   ::= data;
+    rest ::= len;
+    (rest > 0).loop((h) {
+        n = write(fd, pointer_at(at), rest);
+        (n == -4).match({
+            true  => (),
+            false => (n <= 0).match({
+                true  => h.break(),
+                false => {
+                    step = n.to_usize().value_or(rest);
+                    at   = at + step;
+                    rest = rest - step;
+                },
+            }),
+        });
+    });
+}
+
+// Copy `n` bytes between possibly overlapping runs, eight at a time.
+move_bytes = (dest: usize, source: usize, n: usize) {
+    (dest != source && n > 0).then(() {
+        to   = pointer_at(dest);
+        from = pointer_at(source);
+        (dest < source).match({
+            true  => {
+                i :: usize = 0;
+                (i + 8 <= n).loop(
+                    (h) {
+                        pointer_at(dest + i).to<u64>().write(0, pointer_at(source + i).to<u64>().read(0));
+                        i = i + 8;
+                    }
+                );
+                (i < n).loop((h) { to.write(i, from.read(i)); i = i + 1; });
+            },
+            false => {
+                i ::= n;
+                (i >= 8).loop(
+                    (h) {
+                        i = i - 8;
+                        pointer_at(dest + i).to<u64>().write(0, pointer_at(source + i).to<u64>().read(0));
+                    }
+                );
+                (i > 0).loop((h) { i = i - 1; to.write(i, from.read(i)); });
+            },
+        });
+    });
+}
+
+// Cells are eight-byte aligned, so their words are read directly.
+load_u64 = (at: usize) u64 { pointer_at(at).to<u64>().read(0) }
+load_i64 = (at: usize) i64 { pointer_at(at).to<i64>().read(0) }
+load_usize = (at: usize) usize { pointer_at(at).to<usize>().read(0) }
+load_f64 = (at: usize) f64 { pointer_at(at).to<f64>().read(0) }
+set_u64 = (at: usize, value: u64) { pointer_at(at).to<u64>().write(0, value); }
+set_i64 = (at: usize, value: i64) { pointer_at(at).to<i64>().write(0, value); }
+set_usize = (at: usize, value: usize) { pointer_at(at).to<usize>().write(0, value); }
+set_f64 = (at: usize, value: f64) { pointer_at(at).to<f64>().write(0, value); }
+
+// An f32 sits in the low four bytes of its cell; f32 arithmetic is done in
+// f64 and rounded back, which for + - * / is the correctly rounded f32 result.
+float_at = (at: usize, ty: Scalar) f64 {
+    ty.match({ F32 => pointer_at(at).to<f32>().read(0).to_f64(), _ => load_f64(at) })
+}
+
+set_float = (at: usize, ty: Scalar, value: f64) {
+    ty.match({
+        F32 => {
+            set_u64(at, 0);
+            pointer_at(at).to<f32>().write(0, value.narrow_f32());
+        },
+        _   => set_f64(at, value),
+    })
+}
+
+// A u128 cell is two eight-byte words, low first.
+load_u128 = (at: usize) u128 {
+    load_u64(at + 8).to_u128().shift_left(64).bit_or(load_u64(at).to_u128())
+}
+
+set_u128 = (at: usize, value: u128) {
+    set_u64(at, value.truncate_u64());
+    set_u64(at + 8, value.shift_right(64).truncate_u64());
+}
+
+U128_ONES = () u128 {
+    zero: u128 = 0;
+    zero -% 1
+}
+
+// Word `k` of an encoded step or table.
+part = (at: usize, k: usize) usize { pointer_at(at).to<usize>().read(k) }
+part_u64 = (at: usize, k: usize) u64 { pointer_at(at).to<u64>().read(k) }
+part_i64 = (at: usize, k: usize) i64 { pointer_at(at).to<i64>().read(k) }
+
+// `extend` by gen_jit_decode's `widening` code.
+extend_code = (at: usize, code: usize) {
+    p = pointer_at(at);
+    code.match({
+        1 => set_i64(at, p.to<i8>().read(0).to_i64()),
+        2 => set_u64(at, p.read(0).to_u64()),
+        3 => set_i64(at, p.to<i16>().read(0).to_i64()),
+        4 => set_u64(at, p.to<u16>().read(0).to_u64()),
+        5 => set_i64(at, p.to<i32>().read(0).to_i64()),
+        6 => set_u64(at, p.to<u32>().read(0).to_u64()),
+        _ => (),
+    })
+}
+
+// A system-call argument read at its declared width.
+int = (at: usize) i32 { pointer_at(at).to<i32>().read(0) }
+word32 = (at: usize) u32 { pointer_at(at).to<u32>().read(0) }
+pointer = (cell: usize) Ptr<u8> { pointer_at(load_usize(cell)) }
+
+// Re-extend a cell from its low bytes, as the IR holds a value of `ty`.
+extend = (at: usize, ty: Scalar) {
+    p = pointer_at(at);
+    ty.match({
+        I8   => set_i64(at, p.to<i8>().read(0).to_i64()),
+        U8   => set_u64(at, p.read(0).to_u64()),
+        Bool => set_u64(at, p.read(0).to_u64()),
+        I16  => set_i64(at, p.to<i16>().read(0).to_i64()),
+        U16  => set_u64(at, p.to<u16>().read(0).to_u64()),
+        I32  => set_i64(at, p.to<i32>().read(0).to_i64()),
+        U32  => set_u64(at, p.to<u32>().read(0).to_u64()),
+        _    => (),
+    })
+}
+
+// The low `n` bytes of a word.
+low = (value: u64, n: usize) u64 {
+    (n >= 8).match({
+        true  => value,
+        false => value.bit_and(ONE.shift_left(n * 8) -% ONE),
+    })
+}
+
+ONE: u64 = 1
+
+// Checked i64 Add, Sub and Mul; None on overflow.
+signed_wide = (op: Op, a: i64, b: i64) Res<i64> {
+    op.match({
+        Add => ((b > 0 && a > i64.MAX - b) || (b < 0 && a < i64.MIN - b)).match({
+            true => None, false => Ok(a + b),
+        }),
+        Sub => ((b < 0 && a > i64.MAX + b) || (b > 0 && a < i64.MIN + b)).match({
+            true => None, false => Ok(a - b),
+        }),
+        _   => (a == 0 || b == 0).match({
+            true  => Ok(0),
+            false => ((a == -1 && b == i64.MIN) || (b == -1 && a == i64.MIN)).match({
+                true  => None,
+                false => {
+                    product = a *% b;
+                    (product / b != a).match({ true => None, false => Ok(
+                        product
+                    ) })
+                },
+            }),
+        }),
+    })
+}
+
+// Checked unsigned Add, Sub and Mul below `top`; None on overflow.
+unsigned_exact = (op: Op, a: u64, b: u64, top: u64) Res<u64> {
+    result: Res<u64> = op.match({
+        Add => (a +% b < a).match({ true => None, false => Ok(a +% b) }),
+        Sub => (a < b).match({ true => None, false => Ok(a - b) }),
+        _   => (a != 0 && (a *% b) / a != b).match({ true => None, false => Ok(
+            a *% b
+        ) }),
+    });
+    result.match({
+        None  => None,
+        Ok(n) => (n > top).match({ true => None, false => Ok(n) }),
+    })
+}
+
+compared = (op: Op, ty: Scalar, left: usize, right: usize) u64 {
+    holds = ty.match({
+        Unit => op.match({ Equal => true, LessEqual => true, GreaterEqual => true, _ => false }),
+        _    => signed(ty).match({
+            true  => ordered(
+                op,
+                load_i64(left) < load_i64(right),
+                load_i64(left) == load_i64(right)
+            ),
+            false => ordered(
+                op,
+                load_u64(left) < load_u64(right),
+                load_u64(left) == load_u64(right)
+            ),
+        }),
+    });
+    holds.match({ true => 1, false => 0 })
+}
+
+ordered = (op: Op, less: bool, equal: bool) bool {
+    op.match({
+        Equal        => equal,
+        NotEqual     => !equal,
+        Less         => less,
+        LessEqual    => less || equal,
+        Greater      => !less && !equal,
+        GreaterEqual => !less,
+        _            => false,
+    })
+}
+
+floating = (op: Op, ty: Scalar, a: f64, b: f64, out: usize) {
+    op.match({
+        Add          => set_float(out, ty, a + b),
+        Sub          => set_float(out, ty, a - b),
+        Mul          => set_float(out, ty, a * b),
+        Div          => set_float(out, ty, a / b),
+        Equal        => set_u64(out, (a == b).match({ true => 1, false => 0 })),
+        NotEqual     => set_u64(out, (a != b).match({ true => 1, false => 0 })),
+        Less         => set_u64(out, (a < b).match({ true => 1, false => 0 })),
+        LessEqual    => set_u64(out, (a <= b).match({ true => 1, false => 0 })),
+        Greater      => set_u64(out, (a > b).match({ true => 1, false => 0 })),
+        GreaterEqual => set_u64(out, (a >= b).match({ true => 1, false => 0 })),
+        // Refused before the program runs; bit operations never reach F64.
+        _            => set_float(out, ty, a),
+    })
+}
+
+// Wrapping arithmetic and bit operations on unsigned words: `a` and `b`
+// are the operands cut to their widths, `left` and `right` the full words.
+// A 64-bit shift; counts of 64 or more give 0, as in `bits`.
+shifted = (s: usize, frame: usize, left: bool) u64 {
+    a     = load_u64(frame +% part(s, 2));
+    count = load_usize(frame +% part(s, 3));
+    (count >= 64).match({
+        true  => 0,
+        false => left.match({ true => a.shift_left(count), false => a.shift_right(count) }),
+    })
+}
+
+// A u32 shift on a zero-extended word; counts of 32 or more give 0.
+shifted32 = (s: usize, frame: usize, left: bool) u64 {
+    a     = load_u64(frame +% part(s, 2)).bit_and(4294967295);
+    count = load_usize(frame +% part(s, 3));
+    (count >= 32).match({
+        true  => 0,
+        false => left.match({
+            true  => a.shift_left(count).bit_and(4294967295),
+            false => a.shift_right(count),
+        }),
+    })
+}
+
+bits = (op: Op, a: u64, b: u64, left: u64, right: u64, count: usize) u64 {
+    shift = right.to_usize().value_or(count);
+    op.match({
+        WrapAdd => a +% b,
+        WrapSub => a -% b,
+        WrapMul => a *% b,
+        And     => left.bit_and(right),
+        Or      => left.bit_or(right),
+        Xor     => left.bit_xor(right),
+        Shl     => (shift >= count).match({ true => 0, false => a.shift_left(
+            shift
+        ) }),
+        Shr     => (shift >= count).match({ true => 0, false => a.shift_right(
+            shift
+        ) }),
+        _       => {
+            turn = shift % count;
+            (turn == 0).match({
+                true  => a,
+                false => a.shift_right(turn).bit_or(a.shift_left(count - turn)),
+            })
+        },
+    })
+}
+
+// 2^63: i64.MAX rounds up to it.
+HALF_RANGE = () f64 { i64.MAX.narrow_f64() }
+
+// `value` without its fraction, by clearing the mantissa bits below the
+// binary point; `cell` is scratch.
+toward_zero = (value: f64, cell: usize) f64 {
+    set_f64(cell, value);
+    raw      = load_u64(cell);
+    exponent = raw.shift_right(52).bit_and(2047);
+    (exponent < 1023).match({
+        true  => set_u64(cell, raw.bit_and(ONE.shift_left(63))),
+        false => (exponent < 1075).then(() {
+            fraction = (1075 - exponent).to_usize().value_or(0);
+            set_u64(cell, raw.bit_and(u64.MAX.shift_left(fraction)));
+        }),
+    });
+    load_f64(cell)
+}
+
+// C's conversion of a double to an integer: toward zero. Out-of-range
+// values, undefined in C, become the nearest bound.
+truncated = (value: f64, into_signed: bool, out: usize) {
+    whole = toward_zero(value, out);
+    into_signed.match({
+        true  => set_i64(
+            out,
+            // Out of range (and NaN) is x86-64's integer indefinite, as
+            // a native build's conversion gives.
+            whole.to_i64().value_or(i64.MIN)
+        ),
+        false => (whole >= HALF_RANGE()).match({
+            true  => {
+                set_i64(out, (whole - HALF_RANGE()).to_i64().value_or(i64.MIN));
+                set_u64(out, load_u64(out) +% 9223372036854775808);
+            },
+            false => set_i64(out, whole.to_i64().value_or(0)),
+        }),
+    })
+}
+
+truth = (holds: bool) u64 { holds.match({ true => 1, false => 0 }) }
+
+// `ordered` for the comparison codes of gen_jit_decode's `operator`.
+ordered_code = (code: usize, less: bool, equal: bool) bool {
+    code.match({
+        0 => equal, 1 => !equal, 2 => less, 3 => less || equal,
+        4 => !less && !equal, _ => !less,
+    })
+}
+
+// The bit operation an `operator` code names.
+op_of = (code: usize) Op {
+    code.match({
+        6 => Op.WrapAdd, 7 => Op.WrapSub, 8 => Op.WrapMul, 9 => Op.And,
+        10 => Op.Or, 11 => Op.Xor, 12 => Op.Shl, 13 => Op.Shr, _ => Op.Rotr,
+    })
+}

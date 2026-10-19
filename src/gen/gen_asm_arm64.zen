@@ -15,7 +15,7 @@
 // as a pointer to the caller's copy; an aggregate result is written through
 // the indirect-result register x8, as AAPCS64 does for large composites.
 
-{ Alloc, AllocError } = std.mem
+{ Alloc, AllocError, Mem } = std.mem
 { str, String } = std.text
 { Res, Ok, None, loop, Range } = std.core
 { Vec } = std.collections
@@ -30,16 +30,19 @@
 { Update, Compare, IndirectCall } = gen.gen_ir
 { Plan, Home, Pool, Address, Modes, plan } = gen.gen_asm_regalloc
 { NONE, bits, log2, low_mask, modulo, bit_width, scale_of } = gen.gen_asm_flow
-{ prepare } = gen.gen_asm_prepare
+{ prepare, Arenas } = gen.gen_asm_prepare
 { peephole, Dialect } = gen.gen_asm_peephole
 
 Arm64Os* = { Linux | Darwin }
 
-Arm64* = { alloc*: Alloc, os*: Arm64Os }
+Arm64* = { alloc*: Alloc, mem*: Mem, os*: Arm64Os }
 
 Arm64.impl(Target, {
     emit = (self: @Self, original: Program) Res<String, AllocError> {
-        program = prepare(self.alloc, original).try();
+        program = prepare(
+            Arenas(alloc: self.alloc, mem: self.mem),
+            original
+        ).try();
         writer ::= Assembly(
             alloc: self.alloc,
             os: self.os,
@@ -324,7 +327,7 @@ Assembly = {
     instruction = (self :: @Self, instruction: Instruction)
                   Res<AllocError> {
         instruction.match({
-            Constant(value)     => self.plan.home(value.out).match({
+            Constant(value)      => self.plan.home(value.out).match({
                 // A fixed slot's constant is materialized where it is read.
                 Fixed(_) => Ok,
                 _        => {
@@ -333,13 +336,13 @@ Assembly = {
                     self.settle(value.out, d)
                 },
             }),
-            Copy(value)         => self.copy(value.out, value.source),
-            UnaryValue(value)   => self.unary(value),
-            BinaryValue(value)  => self.binary(value),
-            Invoke(call)        => self.call(call),
-            PrintValue(value)   => self.print(value),
-            Text(bytes)         => self.text(bytes),
-            Cast(value)         => {
+            Copy(value)          => self.copy(value.out, value.source),
+            UnaryValue(value)    => self.unary(value),
+            BinaryValue(value)   => self.binary(value),
+            Invoke(call)         => self.call(call),
+            PrintValue(value)    => self.print(value),
+            Text(bytes)          => self.text(bytes),
+            Cast(value)          => {
                 d = self.destination(value.out);
                 a = self.value(value.input, "x1").try();
                 self.convert(
@@ -350,28 +353,28 @@ Assembly = {
                 ).try();
                 self.settle(value.out, d)
             },
-            AddressOf(value)    => self.plan.home(value.out).match({
+            AddressOf(value)     => self.plan.home(value.out).match({
                 Pointer(_) => Ok,
                 _          => {
                     self.slot_address(value.slot, "x0").try();
                     self.store(value.out, "x0")
                 },
             }),
-            LoadValue(value)    => self.load_memory(value),
-            StoreValue(value)   => self.store_memory(value),
-            CopyBytes(value)    => {
+            LoadValue(value)     => self.load_memory(value),
+            StoreValue(value)    => self.store_memory(value),
+            CopyBytes(value)     => {
                 self.load(value.dest, "x0").try();
                 self.load(value.source, "x1").try();
                 self.load(value.bytes, "x2").try();
                 self.out.add("    bl za_copy\n")
             },
-            Bytes(value)        => {
+            Bytes(value)         => {
                 label = self.literal(value.bytes).try();
                 name  = self.data_label(label).try();
                 self.address("x0", name.view()).try();
                 self.store(value.out, "x0")
             },
-            WriteOut(value)     => {
+            WriteOut(value)      => {
                 self.load(value.data, "x0").try();
                 self.load(value.len, "x1").try();
                 self.out.fmt(
@@ -379,24 +382,25 @@ Assembly = {
                     descriptor(value.stream)
                 )
             },
-            System(call)        => self.system(call),
-            MapPages(value)     => {
+            System(call)         => self.system(call),
+            MapPages(value)      => {
                 self.load(value.bytes, "x0").try();
                 self.out.add("    bl za_map\n").try();
                 self.store(value.out, "x0")
             },
-            UnmapPages(slot)    => {
+            UnmapPages(slot)     => {
                 self.load(slot, "x0").try();
                 self.out.add("    bl za_unmap\n")
             },
-            Flush               => {
+            FormatFloat(_)       => self.out.add("    brk #1\n"),
+            Flush                => {
                 self.out.add("    bl za_flush\n")
             },
             // JavaScript-host instructions; `refused_by_asm` rejects such
             // programs before any renderer runs.
-            Host(_)             => Ok,
-            Wait(_)             => Ok,
-            SysConst(value)     => {
+            Host(_)              => Ok,
+            Wait(_)              => Ok,
+            SysConst(value)      => {
                 platform = self.darwin().match({ true => Platform.Darwin, false => Platform.LinuxArm64 });
                 self.immediate(
                     "x0",
@@ -404,7 +408,7 @@ Assembly = {
                 ).try();
                 self.store(value.out, "x0")
             },
-            Startup(value)      => {
+            Startup(value)       => {
                 value.value.match({
                     Globals => self.address("x0", "za_globals"),
                     _       => {
@@ -417,17 +421,22 @@ Assembly = {
             },
             // gen_verify rejects machine operations (gen_ir_machine) before
             // rendering; should one arrive anyway, the program faults here.
-            Machine(_)          => self.out.add("    brk #1\n"),
-            AtomicLoad(value)   => self.atomic_load(value),
-            AtomicStore(value)  => self.atomic_store(value),
-            AtomicUpdate(value) => self.atomic_update(value),
-            CompareSwap(value)  => self.compare_swap(value),
-            CodeAddress(value)  => {
+            Machine(_)           => self.out.add("    brk #1\n"),
+            // A volatile access is one ordinary access: these renderers neither
+            // drop, merge nor reorder memory operations.
+            VolatileLoad(value)  => self.load_memory(value),
+            VolatileStore(value) => self.store_memory(value),
+            Barrier              => Ok,
+            AtomicLoad(value)    => self.atomic_load(value),
+            AtomicStore(value)   => self.atomic_store(value),
+            AtomicUpdate(value)  => self.atomic_update(value),
+            CompareSwap(value)   => self.compare_swap(value),
+            CodeAddress(value)   => {
                 name = self.alloc.String("za_fn_{}", value.function).try();
                 self.address("x0", name.view()).try();
                 self.store(value.out, "x0")
             },
-            InvokeAt(call)      => self.call_at(call),
+            InvokeAt(call)       => self.call_at(call),
         })
     }
 

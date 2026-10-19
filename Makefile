@@ -161,8 +161,10 @@ lspcheck: build
 ## Keep this target as the single list of required gates. Shared prerequisites
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
+## VERIFY_JIT= drops jitcorpus from verify; CI runs it as its own job.
+VERIFY_JIT ?= jitcorpus
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings nativecheck jscheck test stdcheck archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
+verify: warnings nativecheck $(VERIFY_JIT) jscheck test stdcheck archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
 
 .PHONY: ctcheck
 ## ctcheck: the constant-time tooling's self-test (tools/ct/check.zen): the
@@ -171,6 +173,23 @@ verify: warnings nativecheck jscheck test stdcheck archcheck fmt determinism fix
 ## The timing test (build/ct-timing) is not here: it needs a quiet core.
 ctcheck: build
 	ZEN_STD=$(ZEN_STD) ./zen test tools/ct
+
+## jitcorpus: every corpus program run by the jit (`--backend jit`) under
+## tests/native. Only the jit's documented refusals (`refused_by_jit`) are
+## UNSUPPORTED; a FAIL listed with its exact first error line in
+## tests/native/jit-known-failures.txt is KNOWN; any other FAIL, FLAKY or
+## BROKEN shard fails the target. Each test
+## importing compiler modules needs several GB, so JIT_SHARDS stays small.
+JIT_SHARDS ?= 4
+.PHONY: jitcorpus
+jitcorpus: build
+	ZEN_STD="$(CURDIR)/src" ./zen build tests/native
+	mkdir -p build
+	pids=""; for s in $$(seq 0 $$(($(JIT_SHARDS) - 1))); do \
+	  ZEN_STD="$(CURDIR)/src" tests/native/build/linux-x86_64/native-corpus ./zen jit "" $$s $(JIT_SHARDS) \
+	    > build/jitcorpus-$$s.out 2>&1 & pids="$$pids $$!"; \
+	done; status=0; for p in $$pids; do wait $$p || status=1; done; \
+	grep -h "^FAIL\|^FLAKY\|^BROKEN\|^native-corpus jit:" build/jitcorpus-*.out; exit $$status
 
 .PHONY: nativecheck
 nativecheck: build

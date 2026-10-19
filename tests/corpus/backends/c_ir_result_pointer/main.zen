@@ -1,0 +1,123 @@
+// A function returning a large block writes it through a caller-supplied
+// pointer. The caller may pass its own destination only when no argument
+// and no escaped address can reach that storage during the call; otherwise
+// the callee writes a spare that is copied into the destination afterwards.
+{ Program, Func, BasicBlock, Instruction, Terminator, Scalar, Layout, Const, Move, Invocation, Address } = gen.gen_ir
+{ verify } = gen.gen_verify
+{ emit_c } = gen.gen_c_ir
+{ Res, Ok, Err, None } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
+
+big = () Scalar { Scalar.Block(Layout(size: 24, align: 8)) }
+
+func = (
+    a          : Alloc,
+    name       : str,
+    parameters : usize,
+    slots      : Vec<Scalar>,
+    code       : Vec<Instruction>,
+    result     : usize,
+    ty         : Scalar
+)
+       Res<Func, AllocError> {
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(result))).try();
+    Ok(Func(
+        name: name,
+        parameters: parameters,
+        slots: slots,
+        blocks: blocks,
+        result: ty
+    ))
+}
+
+// make(x: Big) Big returns its own local, which is the caller's storage.
+make = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(big()).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Copy(Move(out: 1, source: 0))).try();
+    func(a, "make", 1, slots, code, 1, big())
+}
+
+// y = make(y): the argument is the destination, so it is copied first.
+same = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(big()).try();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Copy(Move(out: 1, source: 0))).try();
+    args ::= a.Vec<usize>();
+    args.add(1).try();
+    code.add(Instruction.Invoke(Invocation(out: 1, function: 0, args: args))).try();
+    code.add(Instruction.Constant(Const(out: 2, value: 0))).try();
+    func(a, "same", 1, slots, code, 2, Scalar.U64)
+}
+
+// through(x: Big, p: Ptr) Big may read `p` while it writes its result.
+through = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(Scalar.Ptr).try();
+    slots.add(big()).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Copy(Move(out: 2, source: 0))).try();
+    func(a, "through", 2, slots, code, 2, big())
+}
+
+// y = through(x, @y): the destination's address reaches the callee, so the
+// callee writes a spare.
+escaped = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(big()).try();
+    slots.add(big()).try();
+    slots.add(Scalar.Ptr).try();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Copy(Move(out: 1, source: 0))).try();
+    code.add(Instruction.AddressOf(Address(out: 2, slot: 1))).try();
+    args ::= a.Vec<usize>();
+    args.add(0).try();
+    args.add(2).try();
+    code.add(Instruction.Invoke(Invocation(out: 1, function: 4, args: args))).try();
+    code.add(Instruction.Constant(Const(out: 3, value: 0))).try();
+    func(a, "escaped", 1, slots, code, 3, Scalar.U64)
+}
+
+entry = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(Scalar.U64).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Constant(Const(out: 0, value: 0))).try();
+    func(a, "main", 0, slots, code, 0, Scalar.U64)
+}
+
+has = (text: str, needle: str) bool {
+    text.find(needle).match({ Ok(_) => true, None => false })
+}
+
+main = (env: Env) Res<AllocError> {
+    a = env.mem.alloc();
+    functions ::= a.Vec<Func>();
+    functions.add(make(a).try()).try();
+    functions.add(same(a).try()).try();
+    functions.add(escaped(a).try()).try();
+    functions.add(entry(a).try()).try();
+    functions.add(through(a).try()).try();
+    program = Program(functions: functions, entry: 3);
+    valid   = program.verify(a).match({ Ok(_) => true, Err(_) => false });
+    println("verified {}", valid);
+    valid.then(() {
+        code = emit_c(a, program).try();
+        text = code.view();
+        println("argument copied {}", has(text, "zc0 = v1;\n  zf0(&v1, &zc0);"));
+        println("escaped spare {}", has(text, "  zf4(&zc") && has(text, "  v1 = zc"));
+        println("local destination {}", has(text, "zf0(&v1, &zc0)") && !has(text, "zf4(&v1"));
+    });
+    Ok(())
+}

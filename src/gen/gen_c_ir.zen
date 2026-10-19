@@ -33,6 +33,7 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         first: a.Vec<usize>(),
         borrowed: a.Vec<bool>(),
         taken: a.Vec<bool>(),
+        outward: a.Vec<bool>(),
         names: a.Vec<str>(),
         origin: a.Vec<usize>(),
         escaped: a.Vec<bool>(),
@@ -67,6 +68,8 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         ends: a.Vec<usize>(),
         sizes: a.Vec<usize>(),
         next: a.Vec<usize>(),
+        ret_slot: 0,
+        ret_ptr: false,
         copies: 0
     );
     writer.program(program).try();
@@ -93,6 +96,9 @@ C = {
     first :: Vec<usize>,
     borrowed :: Vec<bool>,
     taken :: Vec<bool>,
+    // From `plan`, per function: its aggregate result is written through
+    // the caller's pointer `zr_ret` instead of returned by value.
+    outward :: Vec<bool>,
     // From `plan`, per function: neither it nor anything it calls writes
     // storage older than its own frame, so memory it is lent stays put until
     // it returns.
@@ -152,6 +158,10 @@ C = {
     next :: Vec<usize>,
     // `zc` copies made for borrowed arguments in the current function.
     copies :: usize,
+    // The current function's result local (plus one) that names `*zr_ret`,
+    // and whether it returns through `zr_ret` at all.
+    ret_slot :: usize,
+    ret_ptr :: bool,
 
     program = (self :: @Self, program: Program) Res<(), AllocError> {
         self.plan(program).try();
@@ -187,11 +197,22 @@ C = {
         heavy(function).then(() {
             self.out.add("__attribute__((noinline)) ").try();
         });
-        self.out.ctype(function.result).try();
+        outward = self.outward.get(index).value_or(false);
+        outward.match({
+            true  => self.out.add("void"),
+            false => self.out.ctype(function.result),
+        }).try();
         self.out.add(" ").try();
         self.callee_name(index).try();
         self.out.add("(").try();
-        (function.parameters == 0).then(() { self.out.add("void").try(); });
+        outward.then(() {
+            self.out.add("ZR_U ").try();
+            self.out.ctype(function.result).try();
+            self.out.add(" *zr_ret").try();
+        });
+        (function.parameters == 0 && !outward).then(
+            () { self.out.add("void").try(); }
+        );
         // A body lowered to traps alone never reads its parameters, though
         // the source did, and a unit parameter carries nothing to read; only
         // a returning body's unused data parameter is a warning.
@@ -201,7 +222,7 @@ C = {
         Range(0, function.parameters).loop((i) {
             ty = slot_ty(function, i);
             self.need(ty).try();
-            (i > 0).then(() { self.out.add(", ").try(); });
+            (i > 0 || outward).then(() { self.out.add(", ").try(); });
             (stub || ty.match({ Unit => true, _ => false })).then(() {
                 self.out.add("ZR_U ").try();
             });
@@ -247,6 +268,9 @@ C = {
             });
         });
         self.taken.set(program.entry, true);
+        program.functions.loop((h, index, function) {
+            self.outward.add(!self.taken.get(index).value_or(true) && large(function.result)).try();
+        });
         program.functions.loop(
             (function) { self.names.add(function.symbol).try(); }
         );
@@ -906,6 +930,7 @@ C = {
                 });
             });
         });
+        self.result_slot(index, function);
         self.share(function).try();
         // A sanitizer pads every addressable local and re-marks it at every
         // label, so under one the block slots share a single frame instead.
@@ -941,6 +966,9 @@ C = {
                 });
             });
             self.out.add("#endif\n").try();
+        });
+        (self.ret_slot > 0).then(() {
+            self.out.fmt("#define v{} (*zr_ret)\n", self.ret_slot - 1).try();
         });
         // The verifier has proved every read follows a write, so zeroing is
         // only a hint: an optimizer folds the zeroed scalars well, while an
@@ -999,6 +1027,33 @@ C = {
 
     own_storage = (self: @Self, f: Func, slot: usize) bool {
         self.framed(f, slot) && self.pool.get(slot).value_or(0) == 0
+            && self.ret_slot != slot + 1
+    }
+
+    // When every return of an outward function names one block local whose
+    // address stays in the function, that local is the caller's storage, so
+    // returning copies nothing.
+    result_slot = (self :: @Self, index: usize, f: Func) {
+        self.ret_ptr  = self.outward.get(index).value_or(false);
+        self.ret_slot = 0;
+        found :: usize = 0;
+        agree ::= true;
+        f.blocks.loop((block) {
+            block.exit.match({
+                Return(slot) => {
+                    s = self.root(slot) + 1;
+                    (found != 0 && found != s).then(() { agree = false; });
+                    found = s;
+                },
+                _            => (),
+            });
+        });
+        (self.ret_ptr && agree && found > f.parameters
+            && self.framed(f, found - 1)
+            && !self.escaped.get(found - 1).value_or(true)
+            && !self.lent.get(found - 1).value_or(true)).then(() {
+            self.ret_slot = found;
+        });
     }
 
     // A block local whose address the IR never takes is a plain value: its
@@ -1020,7 +1075,8 @@ C = {
         });
         Range(0, count).loop((s) {
             (s < f.parameters || self.escaped.get(s).value_or(true)
-                || self.lent.get(s).value_or(true)).then(() {
+                || self.lent.get(s).value_or(true)
+                || self.ret_slot == s + 1).then(() {
                 self.blocked.set(self.root(s), true);
             });
         });
@@ -1300,7 +1356,13 @@ C = {
     terminator = (self :: @Self, exit: Terminator, next: usize)
                  Res<(), AllocError> {
         exit.match({
-            Return(value)  => self.out.fmt("  return v{};\n", value),
+            Return(value)  => self.ret_ptr.match({
+                true  => (self.root(value) + 1 == self.ret_slot).match({
+                    true  => self.out.add("  return;\n"),
+                    false => self.out.fmt("  *zr_ret = v{};\n  return;\n", value),
+                }),
+                false => self.out.fmt("  return v{};\n", value),
+            }),
             Jump(to)       => (to == next).match({
                 true  => Ok,
                 false => self.out.fmt("  goto b{};\n", to),
@@ -1529,11 +1591,34 @@ C = {
             });
         });
         copy ::= first;
-        self.out.fmt("  v{} = ", call.out).try();
+        // An outward callee writes its result as it runs, so it gets the
+        // destination only where no argument can reach that storage.
+        outward = self.outward.get(call.function).value_or(false);
+        dest    = self.root(call.out);
+        direct  = dest >= f.parameters
+            && self.pool.get(dest).value_or(0) == 0
+            && !self.escaped.get(dest).value_or(true);
+        spare   = self.copies;
+        (outward && !direct).then(() {
+            self.out.add("  ZR_U ").try();
+            self.out.ctype(slot_ty(f, call.out)).try();
+            self.out.fmt(" zc{};\n", spare).try();
+            self.copies = self.copies + 1;
+        });
+        outward.match({
+            true  => self.out.add("  "),
+            false => self.out.fmt("  v{} = ", call.out),
+        }).try();
         self.callee_name(call.function).try();
         self.out.add("(").try();
+        outward.then(() {
+            direct.match({
+                true  => self.out.fmt("&v{}", call.out),
+                false => self.out.fmt("&zc{}", spare),
+            }).try();
+        });
         call.args.loop((h, i, slot) {
-            (i > 0).then(() { self.out.add(", ").try(); });
+            (i > 0 || outward).then(() { self.out.add(", ").try(); });
             self.copied(call, i, slot).match({
                 true  => {
                     self.out.fmt("&zc{}", copy).try();
@@ -1548,7 +1633,11 @@ C = {
                 }).try(),
             });
         });
-        self.out.add(");\n")
+        self.out.add(");\n").try();
+        (outward && !direct).match({
+            true  => self.out.fmt("  v{} = zc{};\n", call.out, spare),
+            false => Ok,
+        })
     }
 
     copied = (self: @Self, call: Invocation, i: usize, slot: usize) bool {

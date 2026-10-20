@@ -1,0 +1,46 @@
+// Struct and enum messages carry str fields. The sender's arena dies
+// before the receiver runs, so every str the sent variant holds must have
+// been copied into the message.
+
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+
+Line = { from: str, text: str }
+Chat = { Say: Line | Rename: str | Count: u64 | Quit }
+
+Room = { said :: u64 = 0 }
+
+Room.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Chat) {
+        m.match({
+            Say(l)    => {
+                self.said = self.said + 1;
+                ctx.env.out.println("{}: {}", l.from, l.text).ignore();
+            },
+            Rename(n) => ctx.env.out.println("now {}", n).ignore(),
+            Count(k)  => ctx.env.out.println("count {}", k).ignore(),
+            Quit      => ctx.env.out.println("said {}", self.said).ignore(),
+        })
+    }
+})
+
+Error = AllocError | IoError | ActorStartError | ActorError
+
+send_from_short_arena = (env: Env, room: Ref<Chat>) Res<Error> {
+    arena ::= env.mem.alloc();
+    from = arena.String("{}", "ann").try();
+    text = arena.String("hello {}", "world").try();
+    name = arena.String("{}", "bob").try();
+    room.send(Chat.Say(Line(from: from.view(), text: text.view()))).try();
+    room.send(Chat.Rename(name.view())).try();
+    room.send(Chat.Count(7)).try();
+    room.send(Chat.Quit).try();
+}
+
+main = (env: Env) Res<i32, Error> {
+    room = env.spawn(Room()).try();
+    send_from_short_arena(env, room).try();
+    Ok(0)
+}

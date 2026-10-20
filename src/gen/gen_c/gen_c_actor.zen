@@ -20,11 +20,14 @@
 { Inst } = sema.sema_inst
 { Emit } = gen.gen_emit
 { sym_gen, sym_member, sym_variant, RES_PATH } = gen.gen_name
+{ decl_at } = sema.sema_def
+{ write_qname } = gen.gen_c.gen_c_layout
+{ enter_struct_tparams, leave_tparams } = gen.gen_c.gen_c_mono
 { CBackend } = gen.gen_c.gen_c_state
 { Site, site_of, method_sig, member_symbol } = gen.gen_c.gen_c_member
 { has_body, decl_name, impl_member } = gen.gen_c.gen_c_impl
 { impl_bound_type } = sema.sema_supply
-{ ctype, field_of, pointee, request_type } = gen.gen_c.gen_c_type
+{ ctype, field_of, pointee, request_type, field_type, variant_type, decl_ctx, decl_inst } = gen.gen_c.gen_c_type
 { expr, ty_of, write_c_literal } = gen.gen_c.gen_c_expr
 { recv_inst, sub } = gen.gen_c.gen_c_mono
 { temp, payload_type, write_assign_ok, write_assign_err } = gen.gen_c.gen_c_flow
@@ -356,14 +359,18 @@ ActorSend = {
         skip = leading_args(self.access.name.text);
         self.call.args.loop((h, i, arg) {
             (i >= skip).then(() {
-                formal = sig.get(i - skip + 2).ok_or(AllocError.OutOfMemory).try();
-                actual = be.ty_of(arg.value, self.ctx, formal).try();
-                buffer = be.check.actor_byte_buffer(formal);
-                moved  = be.check.actor_owned_bytes(formal);
-                safe   = safe && (buffer == be.check.actor_byte_buffer(actual))
+                formal    = sig.get(i - skip + 2).ok_or(AllocError.OutOfMemory).try();
+                actual    = be.ty_of(arg.value, self.ctx, formal).try();
+                buffer    = be.check.actor_byte_buffer(formal);
+                moved     = be.check.actor_owned_bytes(formal);
+                described = be.check.actor_described(formal).try();
+                safe      = safe && (buffer == be.check.actor_byte_buffer(
+                    actual
+                ))
                     && (moved == be.check.actor_owned_bytes(actual))
+                    && (described == be.check.actor_described(actual).try())
                     && (is_direct_str(be, formal) == is_direct_str(be, actual))
-                    && (buffer || moved || !be.check.actor_payload_unsafe(
+                    && (buffer || moved || described || !be.check.actor_payload_unsafe(
                         formal
                     ).try());
             });
@@ -557,8 +564,16 @@ ActorSendEmission = {
             message.view(),
             self.payload
         ).try();
-        slices = direct_str_count(be, self.signature);
+        direct = direct_str_count(be, self.signature);
+        nested = be.nested_str_count(self.signature).try();
+        slices = direct + nested;
         slice_name ::= be.fresh_name("actor_slices").try();
+        live       ::= be.fresh_name("actor_live").try();
+        (nested > 0).then(() {
+            first ::= be.alloc.String().try();
+            first.write_usize(direct).try();
+            be.fmt("size_t {} = {};\n", live.view(), first.view()).try();
+        });
         (slices > 0).then(() {
             count ::= be.alloc.String().try();
             count.write_usize(slices).try();
@@ -606,6 +621,20 @@ ActorSendEmission = {
                     ).try();
                     slice = slice + 1;
                 });
+                (!is_direct_str(be, ty) && be.nested_strs(ty).try() > 0).then(() {
+                    place ::= be.alloc.String().try();
+                    place.fmt("{}.zg_arg", message.view()).try();
+                    place.write_usize(j).try();
+                    be.describe_nested(
+                        ty,
+                        place.view(),
+                        SliceSink(
+                            slices: slice_name.view(),
+                            live: live.view(),
+                            message: message.view()
+                        )
+                    ).try();
+                });
             });
         });
         id ::= be.alloc.String().try();
@@ -616,7 +645,10 @@ ActorSendEmission = {
             false => "NULL",
         });
         count ::= be.alloc.String().try();
-        count.write_usize(slices).try();
+        (nested > 0).match({
+            true  => count.add(live.view()),
+            false => count.write_usize(slices),
+        }).try();
         send = be.runtime_symbol(send_entry(self.access.name.text)).try();
         be.fmt(
             "int {} = {}({}.{}, {}(size_t){}, (uint8_t *)&{}, sizeof({}), (uint8_t *){}, {});\n",
@@ -711,7 +743,7 @@ lower_message_send = (
     be.request_type(ret).try();
     sig ::= be.alloc.Vec<TyId>();
     [message, message, message].loop((h, ty) { sig.add(ty).try() });
-    be.check.actor_payload_unsafe(message).try().match({
+    (be.check.actor_payload_unsafe(message).try() && !be.check.actor_described(message).try()).match({
         true  => be.unsupported(
             id,
             "an actor payload without a concrete mailbox transfer",
@@ -754,7 +786,7 @@ lower_actor_watch* = (
     done    = c.args.get(1).ok_or(AllocError.OutOfMemory).try();
     failed  = c.args.get(2).ok_or(AllocError.OutOfMemory).try();
     message = be.sub(be.check.type_of(done.value, ctx).try()).try();
-    be.check.actor_payload_unsafe(message).try().match({
+    (be.check.actor_payload_unsafe(message).try() && !be.check.actor_described(message).try()).match({
         true  => be.unsupported(
             id,
             "an actor payload without a concrete mailbox transfer",
@@ -836,9 +868,12 @@ message_block = (
     expr(be, value, ctx, ty, code).try();
     be.fmt("{}.zg_arg0 = {};\n", record.view(), code.view()).try();
     buffer = be.check.actor_byte_buffer(ty);
-    copied = buffer || is_direct_str(be, ty);
+    direct = buffer || is_direct_str(be, ty);
+    nested = direct.match({ true => 0, false => be.nested_strs(ty).try() });
+    copied = direct || nested > 0;
     slices ::= be.fresh_name("actor_slices").try();
-    copied.then(() {
+    live   ::= be.fresh_name("actor_live").try();
+    direct.then(() {
         be.fmt("zg_actor_slice {}[1];\n", slices.view()).try();
         be.write_slice_descriptor(
             slices.view(),
@@ -846,6 +881,24 @@ message_block = (
             record.view(),
             0,
             buffer
+        ).try();
+        be.fmt("size_t {} = 1;\n", live.view()).try();
+    });
+    (nested > 0).then(() {
+        room ::= be.alloc.String().try();
+        room.write_usize(nested).try();
+        be.fmt("zg_actor_slice {}[{}];\n", slices.view(), room.view()).try();
+        be.fmt("size_t {} = 0;\n", live.view()).try();
+        place ::= be.alloc.String().try();
+        place.fmt("{}.zg_arg0", record.view()).try();
+        be.describe_nested(
+            ty,
+            place.view(),
+            SliceSink(
+                slices: slices.view(),
+                live: live.view(),
+                message: record.view()
+            )
         ).try();
     });
     block ::= be.fresh_name("actor_block").try();
@@ -857,7 +910,7 @@ message_block = (
         record.view(),
         record.view(),
         copied.match({ true => slices.view(), false => "NULL" }),
-        copied.match({ true => "1", false => "0" })
+        copied.match({ true => live.view(), false => "0" })
     ).try();
     Ok(block)
 }
@@ -886,6 +939,157 @@ write_message_record = (be :: CBackend, n: usize, sig: Vec<TyId>)
     text.fmt("}} {};", name.view()).try();
     be.add_actor_def(text).try();
     Ok(name)
+}
+
+// Where descriptors for str fields inside a struct or enum argument go:
+// `slices[live++]`, offsets measured from the payload record `message`.
+SliceSink = { slices: str, live: str, message: str }
+
+nested_str_count = (be :: CBackend, sig: Vec<TyId>) Res<usize, AllocError> {
+    count :: usize = 0;
+    Range(2, sig.len).loop((h, i) {
+        ty = sig.ty_at(i);
+        (!is_direct_str(be, ty)).then(() { count = count + be.nested_strs(ty).try(); });
+    });
+    Ok(count)
+}
+
+// The most str values a `ty` holds through its fields and variants: each
+// field's count added, the largest variant's taken.
+nested_strs = (be :: CBackend, ty: TyId) Res<usize, AllocError> {
+    be.check.types.at(ty).match({
+        Prim(p)  => Ok(p.name.eq("str").match({ true => 1, false => 0 })),
+        Named(n) => (be.check.actor_described(ty).try()).match({
+            false => Ok(0),
+            true  => decl_at(be.tree, n.decl).match({
+                None    => Ok(0),
+                Ok(dec) => {
+                    ctx  = be.decl_ctx(n);
+                    inst = be.decl_inst(n).try();
+                    mark = be.enter_struct_tparams(n.decl).try();
+                    count :: usize = 0;
+                    dec.kind.match({
+                        Struct(st) => st.members.loop((h, m) {
+                            be.field_type(m, ctx, inst).match({
+                                None  => (),
+                                Ok(t) => { count = count + be.nested_strs(
+                                    t
+                                ).try(); },
+                            });
+                        }),
+                        Enum(e)    => e.variants.loop((h, v) {
+                            variant_type(be, n, v, ctx, inst).match({
+                                None  => (),
+                                Ok(t) => {
+                                    k = be.nested_strs(t).try();
+                                    (k > count).then(() { count = k; });
+                                },
+                            });
+                        }),
+                        _          => (),
+                    });
+                    be.leave_tparams(mark).try();
+                    Ok(count)
+                },
+            }),
+        }),
+        _        => Ok(0),
+    })
+}
+
+// One descriptor per str live under `place`: every field of a struct, and
+// the payload of the variant the enum holds at the send.
+describe_nested = (be :: CBackend, ty: TyId, place: str, sink: SliceSink)
+                  Res<AllocError> {
+    be.check.types.at(ty).match({
+        Prim(p)  => p.name.eq("str").then(() { be.describe_str(place, sink).try(); }),
+        Named(n) => (be.nested_strs(ty).try() > 0).then(() {
+            decl_at(be.tree, n.decl).match({
+                None    => (),
+                Ok(dec) => {
+                    ctx  = be.decl_ctx(n);
+                    inst = be.decl_inst(n).try();
+                    mark = be.enter_struct_tparams(n.decl).try();
+                    dec.kind.match({
+                        Struct(st) => st.members.loop((h, m) {
+                            be.field_type(m, ctx, inst).match({
+                                None  => (),
+                                Ok(t) => m.kind.match({
+                                    Field(f) => {
+                                        inner ::= be.alloc.String().try();
+                                        inner.fmt("{}.", place).try();
+                                        inner.sym_member(f.name.text).try();
+                                        be.describe_nested(
+                                            t,
+                                            inner.view(),
+                                            sink
+                                        ).try();
+                                    },
+                                    _        => (),
+                                }),
+                            });
+                        }),
+                        Enum(e)    => {
+                            qname ::= be.alloc.String().try();
+                            be.write_qname(qname, n).try();
+                            e.variants.loop((h, v) {
+                                variant_type(be, n, v, ctx, inst).match({
+                                    None  => (),
+                                    Ok(t) => (be.nested_strs(t).try() > 0).then(() {
+                                        tag ::= be.alloc.String().try();
+                                        tag.sym_variant(
+                                            qname.view(),
+                                            v.name.text
+                                        ).try();
+                                        be.fmt(
+                                            "if ({}.zg_tag == {}) {{\n",
+                                            place,
+                                            tag.view()
+                                        ).try();
+                                        be.indent();
+                                        inner ::= be.alloc.String().try();
+                                        inner.fmt("{}.zg_data.", place).try();
+                                        inner.sym_member(v.name.text).try();
+                                        be.describe_nested(
+                                            t,
+                                            inner.view(),
+                                            sink
+                                        ).try();
+                                        be.dedent();
+                                        be.writeln("}").try();
+                                    }),
+                                });
+                            });
+                        },
+                        _          => (),
+                    });
+                    be.leave_tparams(mark).try();
+                },
+            });
+        }),
+        _        => (),
+    });
+    Ok
+}
+
+describe_str = (be :: CBackend, place: str, sink: SliceSink) Res<AllocError> {
+    be.fmt(
+        "{}[{}].data_offset = (size_t)((unsigned char *)&{}.data - (unsigned char *)&{});\n",
+        sink.slices,
+        sink.live,
+        place,
+        sink.message
+    ).try();
+    be.fmt(
+        "{}[{}].len_offset = (size_t)((unsigned char *)&{}.len - (unsigned char *)&{});\n",
+        sink.slices,
+        sink.live,
+        place,
+        sink.message
+    ).try();
+    be.fmt("{}[{}].data = {}.data;\n", sink.slices, sink.live, place).try();
+    be.fmt("{}[{}].len = {}.len;\n", sink.slices, sink.live, place).try();
+    be.fmt("{}++;\n", sink.live)
 }
 
 direct_str_count = (be: CBackend, sig: Vec<TyId>) usize {

@@ -54,7 +54,11 @@ same = (a: Alloc) Res<Func, AllocError> {
     code.add(Instruction.Copy(Move(out: 1, source: 0))).try();
     args ::= a.Vec<usize>();
     args.add(1).try();
-    code.add(Instruction.Invoke(Invocation(out: 1, function: 0, args: args))).try();
+    code.add(Instruction.Invoke(Invocation(
+        out: 1,
+        function: 0,
+        args: args
+    ))).try();
     code.add(Instruction.Constant(Const(out: 2, value: 0))).try();
     func(a, "same", 1, slots, code, 2, Scalar.U64)
 }
@@ -84,7 +88,11 @@ escaped = (a: Alloc) Res<Func, AllocError> {
     args ::= a.Vec<usize>();
     args.add(0).try();
     args.add(2).try();
-    code.add(Instruction.Invoke(Invocation(out: 1, function: 4, args: args))).try();
+    code.add(Instruction.Invoke(Invocation(
+        out: 1,
+        function: 4,
+        args: args
+    ))).try();
     code.add(Instruction.Constant(Const(out: 3, value: 0))).try();
     func(a, "escaped", 1, slots, code, 3, Scalar.U64)
 }
@@ -116,8 +124,14 @@ main = (env: Env) Res<AllocError> {
         code = emit_c(a, program).try();
         text = code.view();
         println("argument copied {}", has(text, "zc0 = v1;\n  zf0(&v1, &zc0);"));
-        println("escaped spare {}", has(text, "  zf4(&zc") && has(text, "  v1 = zc"));
-        println("local destination {}", has(text, "zf0(&v1, &zc0)") && !has(text, "zf4(&v1"));
+        println(
+            "escaped spare {}",
+            has(text, "  zf4(&zc") && has(text, "  v1 = zc")
+        );
+        println(
+            "local destination {}",
+            has(text, "zf0(&v1, &zc0)") && !has(text, "zf4(&v1")
+        );
     });
     Ok(())
 }

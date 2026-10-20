@@ -28,11 +28,11 @@ Big = {
 
     mix = (self :: @Self, src: Big) Big {
         out ::= Big(a: 0, b: 0, c: 0, d: 0);
-        out.a = src.b;
+        out.a  = src.b;
         self.a = self.a + 100;
-        out.b = src.a + self.a;
-        out.c = self.b + out.a;
-        out.d = src.d;
+        out.b  = src.a + self.a;
+        out.c  = self.b + out.a;
+        out.d  = src.d;
         out
     }
 }

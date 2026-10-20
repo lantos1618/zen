@@ -21,8 +21,10 @@
 { pack_elem, tail_is_pack } = sema.sema
 { Printer } = sema.sema_print
 { Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
-{ Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes } = gen.gen_ir
+{ Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes, CodeRef } = gen.gen_ir
 { Write, Stream, TrapKind, Marshal, HostCall, Layout, FloatFormat } = gen.gen_ir
+{ ForeignCall } = gen.gen_ir
+{ c_header, valid_c_header } = gen.gen_lower_core
 { word, integer, signed, same, float } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { MachineOp, machine_op, machine_refusal } = gen.gen_ir_machine
@@ -1592,6 +1594,10 @@ library_intrinsic = (
                     sources,
                     span
                 ),
+                "std.native.native"       => name.eq("callback").match({
+                    true  => lo.native_callback(id, c, span),
+                    false => Err(unsupported(span, "this native operation")),
+                }),
                 "std.mem.mem_ptr"         => lo.pointer_call(
                     id,
                     name,
@@ -1639,10 +1645,13 @@ library_intrinsic = (
                         c,
                         span
                     ),
-                    None       => Err(unsupported(
-                        span,
-                        "this process operation"
-                    )),
+                    None       => (c_header(lo.tree, decl).len > 0).match({
+                        true  => lo.foreign_call(id, callee, sources, span),
+                        false => Err(unsupported(
+                            span,
+                            "this process operation"
+                        )),
+                    }),
                 }),
                 // `std.js.wait()`: suspend until an event handler fires.
                 "std.js.js"               => name.eq("wait").match({
@@ -1670,17 +1679,131 @@ library_intrinsic = (
                 }),
                 _                         => lo.format_door(callee.f).match({
                     true  => lo.sink_door(id, c, sources, span),
-                    false => Err(unsupported(
-                        span,
-                        lo.alloc.String(
-                            "the compiler-provided operation `{}.{}`",
-                            module,
-                            name
-                        ).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" })
-                    )),
+                    false => module.eq("std.ct.ct").match({
+                        false => lo.foreign_call(id, callee, sources, span),
+                        true  => Err(unsupported(
+                            span,
+                            lo.alloc.String(
+                                "the compiler-provided operation `{}.{}`",
+                                module,
+                                name
+                            ).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" })
+                        )),
+                    }),
                 }),
             }),
         }),
+    })
+}
+
+callback_refused = (span: Span) LowerError {
+    unsupported(
+        span,
+        "a native callback must name one nongeneric free function with an explicit C scalar/pointer signature and body"
+    )
+}
+
+// `callback(f)` is the code address of a named concrete Zen function whose
+// parameters and result are C words. It captures nothing.
+native_callback = (lo :: Lowerer, id: ExprId, c: Call, span: Span)
+                  Res<Value, LowerError> {
+    lo.c_calls.ensure(unsupported(
+        span,
+        "a C function on a target without C"
+    )).try();
+    arg   = c.args.get(0).ok_or(callback_refused(span)).try();
+    text  = lo.tree.expr_at(
+        arg.value
+    ).kind.match({ Name(n) => n.text, _ => "" });
+    local = lo.lookup(text).match({ Ok(_) => true, None => false });
+    (c.args.len == 1 && text.len > 0 && !local).ensure(callback_refused(
+        span
+    )).try();
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.defs_of(
+        lo.here().module,
+        text,
+        defs
+    ).try(LowerError.OutOfMemory);
+    def   = defs.find((d) { d.kind.match({ FunctionDef => true, _ => false }) }).ok_or(callback_refused(span)).try();
+    decl  = decl_at(lo.tree, def.id).ok_or(callback_refused(span)).try();
+    f     = decl.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(callback_refused(span)).try();
+    plain = f.tparams.len == 0 && f.body.match({ Ok(_) => true, None => false }) && f.params.find(
+        (p) { p.mutable || p.type.match({ Ok(_) => false, None => true }) }
+    ).match({ Ok(_) => false, None => true });
+    plain.ensure(callback_refused(span)).try();
+    callee = Callee(
+        f: f,
+        owner: def.id,
+        member: None,
+        module: def.id.module.to_usize(),
+        inst: lo.alloc.Inst(),
+        self_ty: None,
+        generic_owner: None
+    );
+    f.params.loop((h, i, p) {
+        probe = lo.temp(lo.param_type(callee, i).try()).try();
+        lo.native_word(probe.slot).ensure(callback_refused(span)).try();
+    });
+    index = lo.enqueue(callee).try();
+    out   = lo.temp(lo.type_of(id).try()).try();
+    lo.add(Instruction.CodeAddress(CodeRef(
+        out: out.slot,
+        function: index
+    ))).try();
+    Ok(out)
+}
+
+// A bodyless declaration names a C function. A `c.bind` namespace's member
+// is declared by the namespace's header; any other bodyless function is
+// declared from its signature.
+foreign_call = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    callee  : Callee,
+    sources : Vec<Source>,
+    span    : Span
+)
+               Res<Value, LowerError> {
+    lo.c_calls.ensure(unsupported(
+        span,
+        "a C function on a target without C"
+    )).try();
+    (callee.f.tparams.len == 0).ensure(unsupported(
+        span,
+        "a generic function has no single C symbol"
+    )).try();
+    args ::= lo.alloc.Vec<usize>();
+    callee.f.params.loop((h, i, p) {
+        ty     = lo.param_type(callee, i).try();
+        source = sources.get(i).value_or(Source.Absent);
+        slot   = p.mutable.match({
+            true  => lo.address(
+                lo.argument_place(source, ty, span).try()
+            ).try(),
+            false => lo.argument_value(source, ty, span).try().slot,
+        });
+        lo.native_word(slot).ensure(unsupported(span, "a C function argument that is not a word, float or pointer")).try();
+        args.add(slot).try(LowerError.OutOfMemory);
+    });
+    header = c_header(lo.tree, callee.owner);
+    (header.len == 0 || valid_c_header(header)).ensure(unsupported(span, "a C header path with a byte an include name cannot hold")).try();
+    out = lo.temp(lo.type_of(id).try()).try();
+    (lo.native_word(out.slot) || lo.is_unit(out.ty)).ensure(unsupported(span, "a C function result that is not a word, float or pointer")).try();
+    lo.add(Instruction.Foreign(ForeignCall(
+        out: out.slot,
+        symbol: callee.f.name.text,
+        header: header,
+        args: args
+    ))).try();
+    Ok(out)
+}
+
+native_word = (lo :: Lowerer, slot: usize) bool {
+    lo.slots.get(slot).value_or(Scalar.Unit).match({
+        Block(_) => false,
+        Unit     => false,
+        _        => true,
     })
 }
 

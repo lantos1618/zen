@@ -65,6 +65,8 @@ need = (f: Func, instruction: Instruction) Res<str> {
     instruction.match({
         Host(_)            => Ok("JavaScript host calls"),
         Wait(_)            => Ok("JavaScript event waits"),
+        Foreign(_)         => Ok("calls of C functions"),
+        NativeConst(_)     => Ok("constants from C headers"),
         Machine(_)         => Ok("machine instructions"),
         BinaryValue(value) => (value.op.match({ Rem => true, _ => false })
             && float(slot_ty(f, value.left))).match({

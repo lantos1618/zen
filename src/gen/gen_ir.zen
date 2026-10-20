@@ -165,6 +165,19 @@ Compare* = { out*: usize, base*: usize, expected*: usize, desired*: usize }
 CodeRef* = { out*: usize, function*: usize }
 IndirectCall* = { out*: usize, target*: usize, args*: Vec<usize> }
 
+// A call of a C function: one declared without a body, or one a `c.bind`
+// namespace names (`header` is its header, empty for none). With a header
+// the renderer includes it and calls `symbol` as the header declares it, so
+// a macro or variadic function keeps its meaning; without one it declares
+// the symbol from the slot classes. Arguments and `out` are words, floats or
+// pointers; `out` may also be Unit.
+ForeignCall* = { out*: usize, symbol*: str, header*: str, args*: Vec<usize> }
+// A constant a `c.bind` header defines (a macro or enumerator) as the word
+// class of `out`; `fallback` is the written integer it takes where the
+// header leaves it undefined, which the C compiler range-checks against the
+// class.
+NativeValue* = { out*: usize, header*: str, name*: str, fallback*: Res<i64> }
+
 Instruction* = { Constant: Const
     | Copy: Move
     | UnaryValue: Unary
@@ -204,7 +217,9 @@ Instruction* = { Constant: Const
     | AtomicUpdate: Update
     | CompareSwap: Compare
     | CodeAddress: CodeRef
-    | InvokeAt: IndirectCall }
+    | InvokeAt: IndirectCall
+    | Foreign: ForeignCall
+    | NativeConst: NativeValue }
 
 // A terminator that ends the process with Zen's trap report.
 TrapKind* = { Overflow

@@ -31,7 +31,7 @@
 { written_secret } = sema.sema_secret
 { Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
-{ Guards, TagGuard, PayloadRead, SysValue } = gen.gen_ir
+{ Guards, TagGuard, PayloadRead, SysValue, NativeValue } = gen.gen_ir
 { SysConstant } = gen.gen_sys
 { word, integer, float, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
@@ -209,6 +209,9 @@ Lowerer* = {
     vias* :: Vec<Res<TyId>>,
     made* :: Vec<TyId>,
     broken* :: Vec<Broken>,
+    // Whether the target links C: only then do bodyless declarations and
+    // header constants lower to C calls; elsewhere they are refused.
+    c_calls* :: bool = false,
     // Per real function: the tag tests and payload reads the verifier
     // checks against each other (gen_ir.Guards). `case_tests` remembers
     // which Bool slots hold a tag test until a branch consumes one.
@@ -2310,9 +2313,9 @@ Lowerer* = {
         ty = self.type_of(id).try();
         is_prim(type_name).match({
             true  => self.prim_constant(ty, type_name, member, span),
-            false => self.c_bound(type_name).match({
-                true  => self.predefined(ty, member, span),
-                false => self.type_const(
+            false => self.c_binding(type_name).match({
+                Ok(d) => self.c_constant(ty, d, member, span),
+                None  => self.type_const(
                     type_name,
                     member,
                     ty,
@@ -2393,8 +2396,31 @@ Lowerer* = {
         })
     }
 
+    // The integer a `c.bind` constant writes for headers that leave its
+    // macro undefined.
+    native_fallback = (self :: @Self, binding: DeclId, macro: str, span: Span)
+                      Res<Res<i64>, LowerError> {
+        members: Res<Vec<Member>> = decl_at(self.tree, binding).match({
+            Ok(d) => d.kind.match({ Struct(s) => Ok(s.members), _ => None }),
+            None  => None,
+        });
+        value: Res<ExprId>        = members.match({
+            Ok(ms) => ms.find((m) { m.name().text.eq(macro) }).match({
+                Ok(m) => m.kind.match({ Field(f) => f.value, _ => None }),
+                None  => None,
+            }),
+            None   => None,
+        });
+        value.match({
+            None  => Ok(None),
+            Ok(v) => Ok(Ok(
+                self.check.const_int(v).ok_or(unsupported(span, "a C constant fallback that is not an integer constant")).try()
+            )),
+        })
+    }
+
     // A struct bound from a C header by `c.bind`: its constants are macros.
-    c_bound = (self :: @Self, name: str) bool {
+    c_binding = (self :: @Self, name: str) Res<DeclId> {
         defs ::= self.alloc.Vec<Def>();
         self.check.world.defs_of(self.here().module, name, defs).ignore();
         defs.find(
@@ -2402,37 +2428,50 @@ Lowerer* = {
         ).match({
             Ok(d) => decl_at(self.tree, d.id).match({
                 Ok(decl) => decl.kind.match({
-                    Struct(s) => !s.native_record && !s.native_host && s.native_header.match({
+                    Struct(s) => (!s.native_record && !s.native_host && s.native_header.match({
                         Ok(_) => true,
                         None  => false,
-                    }),
-                    _         => false,
+                    })).match({ true => Ok(d.id), false => None }),
+                    _         => None,
                 }),
-                None     => false,
+                None     => None,
             }),
-            None  => false,
+            None  => None,
         })
     }
 
-    // The target macros the C compiler predefines, answered by the target.
-    predefined = (self :: @Self, ty: TyId, macro: str, span: Span) Res<Value, LowerError> {
-        name: Res<SysConstant> = macro.match({
-            "__APPLE__"   => Ok(SysConstant.IsDarwin),
-            "__linux__"   => Ok(SysConstant.IsLinux),
-            "__x86_64__"  => Ok(SysConstant.IsX86_64),
-            "__aarch64__" => Ok(SysConstant.IsAarch64),
-            _             => None,
-        });
-        constant               = name.ok_or(unsupported(
-            span,
-            "a C macro other than a target predefine"
-        )).try();
-        out                    = self.temp(ty).try();
-        self.add(Instruction.SysConst(SysValue(
-            out: out.slot,
-            name: constant
-        ))).try();
-        Ok(out)
+    // A `c.bind` constant: a target macro the C compiler predefines, or the
+    // header's macro, read as the member's written value where the header
+    // leaves it undefined.
+    c_constant = (self :: @Self, ty: TyId, binding: DeclId, macro: str, span: Span)
+                 Res<Value, LowerError> {
+        predefine(macro).match({
+            Ok(constant) => {
+                out = self.temp(ty).try();
+                self.add(Instruction.SysConst(SysValue(
+                    out: out.slot,
+                    name: constant
+                ))).try();
+                Ok(out)
+            },
+            None         => {
+                self.c_calls.ensure(unsupported(
+                    span,
+                    "a C header constant on a target without C"
+                )).try();
+                header = c_header(self.tree, binding);
+                valid_c_header(header).ensure(unsupported(span, "a C header path with a byte an include name cannot hold")).try();
+                fallback = self.native_fallback(binding, macro, span).try();
+                out      = self.temp(ty).try();
+                self.add(Instruction.NativeConst(NativeValue(
+                    out: out.slot,
+                    header: header,
+                    name: macro,
+                    fallback: fallback
+                ))).try();
+                Ok(out)
+            },
+        })
     }
 
     // Each primitive's width is named, never defaulted: a missing name is
@@ -4205,7 +4244,13 @@ NameFinder.impl(WalkVisitor, {
     }
 })
 
-lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
+lower_native* = (
+    alloc   : Alloc,
+    tree    : Ast,
+    check   : Checker,
+    entry   : usize,
+    c_calls : bool
+)
                 Res<Program, LowerError> {
     module = tree.module_at(entry).ok_or(unsupported(nowhere(), "a missing entry module")).try();
     mains ::= alloc.Vec<DeclId>();
@@ -4242,6 +4287,7 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         drops: alloc.Vec<DropEntry>(),
         defers: alloc.Vec<DeferEntry>(),
         vias: alloc.Vec<Res<TyId>>(),
+        c_calls: c_calls,
         made: alloc.Vec<TyId>(),
         broken: alloc.Vec<Broken>(),
         case_tests: alloc.Vec<CaseTest>(),
@@ -4304,4 +4350,37 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         state.made.find((t) { t == b.ty }).when_ok((_) { Err(b.fault).try(); });
     });
     Ok(Program(functions: functions, entry: entry_index))
+}
+
+// The target macros the C compiler predefines, answered by the target.
+predefine = (macro: str) Res<SysConstant> {
+    macro.match({
+        "__APPLE__"   => Ok(SysConstant.IsDarwin),
+        "__linux__"   => Ok(SysConstant.IsLinux),
+        "__x86_64__"  => Ok(SysConstant.IsX86_64),
+        "__aarch64__" => Ok(SysConstant.IsAarch64),
+        _             => None,
+    })
+}
+
+// The header a `c.bind` namespace names; empty for a free declaration.
+c_header* = (tree: Ast, owner: DeclId) str {
+    decl_at(tree, owner).match({
+        Ok(d) => d.kind.match({
+            Struct(s) => s.native_host.match({
+                true  => "",
+                false => s.native_header.value_or(""),
+            }),
+            _         => "",
+        }),
+        None  => "",
+    })
+}
+
+// A header path an `#include <..>` can spell.
+valid_c_header* = (path: str) bool {
+    (path.len > 0) && Range(0, path.len).find((i) {
+        b = path.index(i);
+        !(b.is_alnum() || b.is_in(['/', '.', '_', '-', '+']))
+    }).match({ Ok(_) => false, None => true })
 }

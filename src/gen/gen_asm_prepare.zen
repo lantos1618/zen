@@ -20,7 +20,7 @@
 { same, FloatFormat } = gen.gen_ir
 { CopyMem, StaticBytes, Write, SysCall, Start, Pages, SysValue, Branch } = gen.gen_ir
 { width, word } = gen.gen_ir
-{ Update, Compare, CodeRef, IndirectCall, HostCall } = gen.gen_ir
+{ Update, Compare, CodeRef, IndirectCall, HostCall, ForeignCall, NativeValue } = gen.gen_ir
 { MachineCall } = gen.gen_ir_machine
 { simplify } = gen.gen_asm_regalloc
 { Flow, flow, reads, written, exit_read, successors, zeros, bits, group, NONE } = gen.gen_asm_flow
@@ -1279,6 +1279,18 @@ shift = (
             result: c.result
         )),
         Wait(v)          => Instruction.Wait(base + v),
+        Foreign(c)       => Instruction.Foreign(ForeignCall(
+            out: base + c.out,
+            symbol: c.symbol,
+            header: c.header,
+            args: moved(alloc, c.args, base).try()
+        )),
+        NativeConst(v)   => Instruction.NativeConst(NativeValue(
+            out: base + v.out,
+            header: v.header,
+            name: v.name,
+            fallback: v.fallback
+        )),
     }))
 }
 

@@ -301,6 +301,7 @@ native_field_default = (c :: Checker, field: Field, self_ty: TyId, mi: usize)
         field.type.when_ok((written) {
             want = c.type_from_ast(written, ctx).try();
             c.check_literal(value, want).try();
+            c.expr_memo.set(value, want).try();
         });
     });
     Ok

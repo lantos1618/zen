@@ -58,7 +58,7 @@ Case = {
                 println("{} frontend {}", self.name, report.view());
                 h.break(false);
             });
-            lower(a, build.tree, check, 0).match({
+            lower(a, build.tree, check, 0, false).match({
                 Err(_)      => { println("{} lowering failed", self.name); h.break(false); },
                 Ok(program) => {
             valid = program.verify(a).match({ Ok(_) => true, Err(_) => false });

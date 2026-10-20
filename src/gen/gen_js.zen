@@ -54,6 +54,7 @@ supports* = (feature: IrFeature) bool {
         Traps       => true,
         Host        => true,
         Threads     => false,
+        Native      => false,
     })
 }
 
@@ -474,6 +475,8 @@ JavaScript = {
             CompareSwap(_)       => self.out.add(OUTSIDE_SUPPORTS),
             CodeAddress(_)       => self.out.add(OUTSIDE_SUPPORTS),
             InvokeAt(_)          => self.out.add(OUTSIDE_SUPPORTS),
+            Foreign(_)           => self.out.add(OUTSIDE_SUPPORTS),
+            NativeConst(_)       => self.out.add(OUTSIDE_SUPPORTS),
         })
     }
 

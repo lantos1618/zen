@@ -12,6 +12,7 @@
 { Span } = std.source
 { Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print, Move } = gen.gen_ir
 { Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
+{ ForeignCall, NativeValue } = gen.gen_ir
 { trap_message, width, signed, integer, float, same } = gen.gen_ir
 { IrFeature } = gen.gen_ir_feature
 { Sys, SysConstant, Platform, DarwinResult } = gen.gen_sys
@@ -35,6 +36,8 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         taken: a.Vec<bool>(),
         outward: a.Vec<bool>(),
         names: a.Vec<str>(),
+        declared: a.Vec<str>(),
+        included: a.Vec<str>(),
         origin: a.Vec<usize>(),
         escaped: a.Vec<bool>(),
         stored: a.Vec<bool>(),
@@ -110,6 +113,9 @@ C = {
     // call) and the caller's parameter it is plus one (zero for none).
     calls :: Vec<usize>,
     names :: Vec<str>,
+    // C symbols declared and headers included, in first-use order.
+    declared :: Vec<str>,
+    included :: Vec<str>,
     // From `survey`, per slot of one function: the slot an address slot
     // points at (plus one; zero for none), whether that slot's address
     // leaves loads (`escaped`), is stored through (`stored`), and whether an
@@ -415,6 +421,7 @@ C = {
             UnmapPages(_)   => true,
             Machine(_)      => true,
             Host(_)         => true,
+            Foreign(_)      => true,
             Wait(_)         => true,
             AtomicStore(_)  => true,
             AtomicUpdate(_) => true,
@@ -560,6 +567,11 @@ C = {
                 self.wrote(v.out);
                 self.escapes(v.args);
             },
+            Foreign(v)       => {
+                self.wrote(v.out);
+                self.escapes(v.args);
+            },
+            NativeConst(v)   => self.wrote(v.out),
             Wait(s)          => self.wrote(s),
             VolatileLoad(v)  => self.wrote(v.out),
             VolatileStore(v) => {
@@ -1586,9 +1598,118 @@ C = {
                 self.out.add(";\n")
             },
             InvokeAt(value)      => self.indirect(f, value),
+            Foreign(value)       => self.foreign(f, value),
+            NativeConst(value)   => self.native_const(f, value),
             // Outside `supports`; the driver refuses it before rendering.
             _                    => self.out.add(OUTSIDE),
         })
+    }
+
+    // A C function. Without a header it is declared under a private name
+    // bound to the symbol's assembler label, so the declaration cannot
+    // conflict with a header the runtime includes.
+    foreign = (self :: @Self, f: Func, call: ForeignCall) Res<(), AllocError> {
+        headed = call.header.len > 0;
+        headed.match({
+            true  => self.include(call.header).try(),
+            false => self.declare_foreign(f, call).try(),
+        });
+        result = slot_ty(f, call.out);
+        result.match({
+            Unit => self.out.add("  ").try(),
+            _    => {
+                self.out.fmt("  v{} = (", call.out).try();
+                self.out.ctype(result).try();
+                self.out.add(")").try();
+                same(result, Scalar.Ptr).then(() { self.out.add("(uintptr_t)").try(); });
+            },
+        });
+        headed.match({
+            true  => self.out.add(call.symbol).try(),
+            false => self.out.fmt("zr_ffi_{}", call.symbol).try(),
+        });
+        self.out.add("(").try();
+        call.args.loop((h, i, slot) {
+            (i > 0).then(() { self.out.add(", ").try(); });
+            same(slot_ty(f, slot), Scalar.Ptr).match({
+                true  => self.out.fmt("(void *)(uintptr_t)v{}", slot).try(),
+                false => self.out.fmt("v{}", slot).try(),
+            });
+        });
+        self.out.add(");\n")
+    }
+
+    declare_foreign = (self :: @Self, f: Func, call: ForeignCall)
+                      Res<(), AllocError> {
+        known = self.declared.find(
+            (s) { s.eq(call.symbol) }
+        ).match({ Ok(_) => true, None => false });
+        known.match({
+            true  => Ok,
+            false => {
+                self.declared.add(call.symbol).try();
+                self.head.add("extern ").try();
+                foreign_type(self.head, slot_ty(f, call.out)).try();
+                self.head.fmt(" zr_ffi_{}(", call.symbol).try();
+                (call.args.len == 0).then(() { self.head.add("void").try(); });
+                call.args.loop((h, i, slot) {
+                    (i > 0).then(() { self.head.add(", ").try(); });
+                    foreign_type(self.head, slot_ty(f, slot)).try();
+                });
+                self.head.fmt(") __asm__(ZR_LABEL \"{}\");\n", call.symbol)
+            },
+        })
+    }
+
+    include = (self :: @Self, header: str) Res<(), AllocError> {
+        known = self.included.find(
+            (h) { h.eq(header) }
+        ).match({ Ok(_) => true, None => false });
+        known.match({
+            true  => Ok,
+            false => {
+                self.included.add(header).try();
+                self.head.fmt("#include <{}>\n", header)
+            },
+        })
+    }
+
+    // A header's constant, or its fallback where the header leaves it
+    // undefined.
+    native_const = (self :: @Self, f: Func, value: NativeValue)
+                   Res<(), AllocError> {
+        self.include(value.header).try();
+        ty = slot_ty(f, value.out);
+        value.fallback.match({
+            None     => self.native_read(value.out, ty, value.name),
+            Ok(bits) => {
+                self.out.fmt("#ifdef {}\n", value.name).try();
+                self.native_read(value.out, ty, value.name).try();
+                self.out.add("#else\n").try();
+                // A fallback the class cannot hold is refused by the C compiler.
+                (c_min(ty).len > 0).then(() {
+                    self.out.fmt(
+                        "  typedef char {}_range_v{}[({}LL >= {} && {}LL <= {}) ? 1 : -1];\n",
+                        value.name,
+                        value.out,
+                        bits,
+                        c_min(ty),
+                        bits,
+                        c_max(ty)
+                    ).try();
+                });
+                self.out.fmt("  v{} = (", value.out).try();
+                self.out.ctype(ty).try();
+                self.out.fmt(")({}LL);\n#endif\n", bits)
+            },
+        })
+    }
+
+    native_read = (self :: @Self, out: usize, ty: Scalar, name: str)
+                  Res<(), AllocError> {
+        self.out.fmt("  v{} = (", out).try();
+        self.out.ctype(ty).try();
+        self.out.fmt(")({});\n", name)
     }
 
     // `base + offset` as a byte pointer. A base whose one write takes a
@@ -2125,6 +2246,35 @@ C = {
     }
 }
 
+// The C limits of an integer class; empty for a class with no check.
+c_min = (ty: Scalar) str {
+    ty.match({
+        I8  => "INT8_MIN",
+        I16 => "INT16_MIN",
+        I32 => "INT32_MIN",
+        I64 => "INT64_MIN",
+        U8  => "0",
+        U16 => "0",
+        U32 => "0",
+        U64 => "0",
+        _   => "",
+    })
+}
+
+c_max = (ty: Scalar) str {
+    ty.match({
+        I8  => "INT8_MAX",
+        I16 => "INT16_MAX",
+        I32 => "INT32_MAX",
+        I64 => "INT64_MAX",
+        U8  => "UINT8_MAX",
+        U16 => "UINT16_MAX",
+        U32 => "UINT32_MAX",
+        U64 => "UINT64_MAX",
+        _   => "",
+    })
+}
+
 slot_ty = (f: Func, slot: usize) Scalar {
     f.slots.get(slot).value_or(Scalar.Unit)
 }
@@ -2155,6 +2305,15 @@ ctype = (out :: String, ty: Scalar) Res<(), AllocError> {
         F32      => out.add("float"),
         F64      => out.add("double"),
         _        => out.add("uint8_t"),
+    })
+}
+
+// A C prototype's spelling of a slot class: pointers are `void *`.
+foreign_type = (out :: String, ty: Scalar) Res<(), AllocError> {
+    ty.match({
+        Unit => out.add("void"),
+        Ptr  => out.add("void *"),
+        _    => out.ctype(ty),
     })
 }
 
@@ -2231,6 +2390,9 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("#include <sys/syscall.h>\n").try();
     out.add("#endif\n").try();
     out.add("#define ZR_U __attribute__((unused))\n").try();
+    out.add(
+        "#define ZR_STR2(x) #x\n#define ZR_STR(x) ZR_STR2(x)\n#define ZR_LABEL ZR_STR(__USER_LABEL_PREFIX__)\n"
+    ).try();
     out.add(
         "#if defined(__SANITIZE_ADDRESS__)\n#define ZR_ASAN 1\n#elif defined(__has_feature)\n#if __has_feature(address_sanitizer)\n#define ZR_ASAN 1\n#endif\n#endif\n"
     ).try();
@@ -2549,6 +2711,11 @@ mentions = (instruction: Instruction, visit: (slot: usize, read: bool) ()) {
             visit(v.out, false);
             v.args.loop((slot) { visit(slot, true); });
         },
+        Foreign(v)       => {
+            visit(v.out, false);
+            v.args.loop((slot) { visit(slot, true); });
+        },
+        NativeConst(v)   => visit(v.out, false),
         Wait(s)          => visit(s, false),
         VolatileLoad(v)  => {
             visit(v.out, false);

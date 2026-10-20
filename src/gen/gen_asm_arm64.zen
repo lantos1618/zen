@@ -399,6 +399,8 @@ Assembly = {
             // JavaScript-host instructions; `refused_by_asm` rejects such
             // programs before any renderer runs.
             Host(_)              => Ok,
+            Foreign(_)           => Ok,
+            NativeConst(_)       => Ok,
             Wait(_)              => Ok,
             SysConst(value)      => {
                 platform = self.darwin().match({ true => Platform.Darwin, false => Platform.LinuxArm64 });

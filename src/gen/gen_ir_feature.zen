@@ -21,7 +21,8 @@ IrFeature* = { WideInt
     | Sys
     | Traps
     | Host
-    | Threads }
+    | Threads
+    | Native }
 
 describe* = (feature: IrFeature) str {
     feature.match({
@@ -39,6 +40,7 @@ describe* = (feature: IrFeature) str {
         Traps       => "trapping control flow",
         Host        => "JavaScript host calls and event waits",
         Threads     => "atomic operations and calls through code addresses",
+        Native      => "C functions and constants from C headers",
     })
 }
 
@@ -148,6 +150,8 @@ instruction_need = (instruction: Instruction) Res<IrFeature> {
         CompareSwap(_)     => Ok(IrFeature.Threads),
         CodeAddress(_)     => Ok(IrFeature.Threads),
         InvokeAt(_)        => Ok(IrFeature.Threads),
+        Foreign(_)         => Ok(IrFeature.Native),
+        NativeConst(_)     => Ok(IrFeature.Native),
         _                  => Ok(IrFeature.Memory),
     })
 }

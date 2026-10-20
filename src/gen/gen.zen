@@ -161,7 +161,13 @@ Generation* = {
 
     // Every backend renders the one lowering.
     lowered = (self: @Self, backend: ScalarBackend) Res<Program, LowerError> {
-        lower(self.alloc, self.tree, self.check, self.entry)
+        lower(
+            self.alloc,
+            self.tree,
+            self.check,
+            self.entry,
+            backend.match({ C => true, _ => false })
+        )
     }
 
     render_scalar = (self: @Self, backend: ScalarBackend, program: Program,
@@ -272,7 +278,7 @@ Generation* = {
     // this host, after the report says why.
     run* = (self: @Self, report :: String, argv: Vec<str>)
            Res<Res<i32>, AllocError> {
-        lower(self.alloc, self.tree, self.check, self.entry).match({
+        lower(self.alloc, self.tree, self.check, self.entry, false).match({
             Err(error)  => error.match({
                 OutOfMemory        => Err(AllocError.OutOfMemory),
                 Unsupported(fault) => {
@@ -472,15 +478,23 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
         function.blocks.loop((block) {
             block.code.loop((instruction) {
                 instruction.match({
-                    Host(_) => { found = Ok(AsmRefusal(
+                    Foreign(_)     => { found = Ok(AsmRefusal(
+                        what: "calls of C functions",
+                        function: function.name
+                    )); },
+                    NativeConst(_) => { found = Ok(AsmRefusal(
+                        what: "constants from C headers",
+                        function: function.name
+                    )); },
+                    Host(_)        => { found = Ok(AsmRefusal(
                         what: "JavaScript host calls (js.bind)",
                         function: function.name
                     )); },
-                    Wait(_) => { found = Ok(AsmRefusal(
+                    Wait(_)        => { found = Ok(AsmRefusal(
                         what: "JavaScript event waits (std.js.wait)",
                         function: function.name
                     )); },
-                    _       => (),
+                    _              => (),
                 });
             });
         });

@@ -24,7 +24,7 @@
 { Func, BasicBlock, Instruction, Terminator, Scalar, same, signed, float } = gen.gen_ir
 { Move, Unary, Binary, Invocation, Print, Convert, Load, Store, CopyMem } = gen.gen_ir
 { Write, SysCall, Pages, Branch, Op, Const } = gen.gen_ir
-{ Update, Compare, IndirectCall, HostCall, FloatFormat } = gen.gen_ir
+{ Update, Compare, IndirectCall, HostCall, FloatFormat, ForeignCall } = gen.gen_ir
 TakeAddress = gen.gen_ir.Address
 { coalesce, retarget } = gen.gen_asm_coalesce
 { MachineCall } = gen.gen_ir_machine
@@ -509,6 +509,13 @@ Propagate = {
                 result: call.result
             )),
             Wait(_)          => instruction,
+            Foreign(call)    => Instruction.Foreign(ForeignCall(
+                out: call.out,
+                symbol: call.symbol,
+                header: call.header,
+                args: self.all(alloc, call.args).try()
+            )),
+            NativeConst(_)   => instruction,
         }))
     }
 

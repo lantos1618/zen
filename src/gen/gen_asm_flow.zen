@@ -90,13 +90,8 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<AllocError> {
             call.args.loop((slot) { out.add(slot).try(); });
             Ok
         },
-        // Refused before the machine passes run (gen_verify refuses a
-        // machine primitive; the driver refuses JavaScript host programs),
-        // but their reads are still listed.
-        Machine(call)        => {
-            call.args.loop((slot) { out.add(slot).try(); });
-            Ok
-        },
+        // The driver refuses JavaScript host programs before the machine
+        // passes run, but their reads are still listed.
         Host(call)           => {
             call.args.loop((slot) { out.add(slot).try(); });
             Ok
@@ -144,9 +139,6 @@ written* = (instruction: Instruction) Res<usize> {
         VolatileStore(_)    => None,
         Barrier             => None,
         AtomicStore(_)      => None,
-        // A machine primitive writes several slots, and gen_verify refuses
-        // it before any machine pass runs.
-        Machine(_)          => None,
     })
 }
 

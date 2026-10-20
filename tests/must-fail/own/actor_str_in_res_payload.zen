@@ -1,12 +1,12 @@
-// The C mailbox owns direct str arguments, but it emits no slice descriptor
-// for a str stored inside another value.
+// A str a message holds through fields and variants is copied, but a str
+// inside a Res is not described, so the payload is refused.
 
 { Res, Ok } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { Actor, Ref, ActorError, Context } = std.actor
 
-TextBox = { text: str }
+TextBox = { text: Res<str> }
 
 Worker = {}
 

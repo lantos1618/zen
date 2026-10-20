@@ -55,6 +55,11 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
 - A str argument is copied into the message; a consumed `Vec<u8>` is copied
   into the message and moved into the receiver's allocator before its
   behaviour runs.
+- A struct or enum message may hold `str` fields, through fields and
+  variants at any depth (not inside `Res`, arrays or unions). The send
+  checks the tags of the value it sends and copies the bytes of each str the
+  live variants hold, so a message holding none costs nothing extra. The
+  receiver's str is a view into the message, valid for the turn.
 - A consumed `std.actor.Bytes` is not copied: the message carries its
   pointer, length and capacity, and the receiver owns the pool block. Bytes
   is Drop, so the sender has no second name left for it. The turn frees it

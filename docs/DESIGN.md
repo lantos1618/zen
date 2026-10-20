@@ -601,7 +601,7 @@ Four consequences worth stating; three are places the rule looks like it bites a
 
 - **A handle is not a `Drop` value.** `Alloc` is an interface, so an `Alloc` value is a fat value pointing at an arena. The *arena* is `Drop`; the handle is two words and copies freely. That is why `Vec` can store `alloc: Alloc` by value and why `fill(alloc, v)` is not an illegal copy.
 - **A handle built from a concrete value points at that value's storage.** Passing an `Arena` or any other implementor where an `Alloc` (or any interface) is wanted builds the handle over the argument's address: a local, this body's copy of a by-value parameter, or a temporary. That handle — and anything that keeps it, such as a `Vec` made from it — may be used inside the body and passed inward, but may not be returned or stored through a `::` parameter, and a value that keeps it may not follow the owner when the owner is moved. Take the interface type as the parameter, so the caller that owns the value builds the handle; a place reached through a `::` parameter is the caller's own storage and may be handed back, but may not then be moved out from under the handle. Values that only drew on the handle — a `str` or `Ptr` allocated through it — point at the allocator's memory, not at the handle, and are unaffected; so is an implementor with no storage, which has nothing to point at.
-- **Passing a `Drop` value to a parameter is a borrow, not a move.** `v.add(1)` does not consume `v`, and a receiver is just the first parameter — so nothing else could be true. A move is spelled `consume` at the call site, and only there.
+- **Passing a `Drop` value to a parameter is a borrow, not a move.** `v.add(1)` does not consume `v`, and a receiver is just the first parameter — so nothing else could be true. A move is spelled `.consume()` at the call site, and only there; `x.consume()` and the older prefix `consume x` are the same move.
 - **The compiler-inserted `drop` is exempt from the receiver rule.** `drop` is declared `(self :: @Self)`, but scope exit runs it on `:` bindings too. Destroying a value is not mutating it through a binding.
 
 A source-written standard destructor call on a local owner must explicitly
@@ -614,7 +614,7 @@ compiler does not yet prove those field lifetimes.
 
 ```groovy fragment
 f = alloc.File("x.txt").try();
-g = consume f;                  // move, stated at the use site. f is dead after
+g = f.consume();                // move, stated at the use site. f is dead after
 f.read();                       // ERROR: f was consumed
 g = alloc.File(f.path).try();   // want another? construct it
 ```
@@ -629,13 +629,13 @@ g = alloc.File(f.path).try();   // want another? construct it
 
 `val` is deeply immutable *forever* — not "you may not write it" but "no writer exists", so any number of actors may read at once. Literals are `val`. `iso` is unique: you may write through it precisely *because* you hold the only reference in the program. So **only `val` and `iso` cross actors** means *share what nobody can change, or hand over what only you have*. Both make races impossible by construction, and there are no locks anywhere in the language.
 
-**None of `ref`, `val`, `iso` is ever written.** There is no capability syntax, and that is deliberate: a behavior's parameters are sendable *by definition* — it is a behavior — so marking them would restate what the declaration already says. The constraint lives on the **argument**, and it is checked where the argument is passed. The checker proves one of two things at every send: the value is deeply immutable (`val`), or it is uniquely owned and handed over (`iso`), which you spell `consume`. The only thing you write is the `consume`.
+**None of `ref`, `val`, `iso` is ever written.** There is no capability syntax, and that is deliberate: a behavior's parameters are sendable *by definition* — it is a behavior — so marking them would restate what the declaration already says. The constraint lives on the **argument**, and it is checked where the argument is passed. The checker proves one of two things at every send: the value is deeply immutable (`val`), or it is uniquely owned and handed over (`iso`), which you spell `.consume()`. The only thing you write is the `.consume()`.
 
 Sending an `iso` is the same `consume`, tracked the same way:
 
 ```groovy fragment
 buf ::= alloc.Vec<u8>();
-worker.process(consume buf);
+worker.process(buf.consume());
 buf.add(2).try();              // ERROR: buf was consumed
 ```
 

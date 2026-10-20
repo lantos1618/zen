@@ -8,6 +8,7 @@ tests/corpus/actor/actor_mem_supplies_runtime_pages # UNSUPPORTED: error: unsupp
 tests/corpus/actor/actor_mem_that_refuses_pages_fails_spawn # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/buffer_payload_is_owned_by_receiver # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/bytes_payload_moves_to_receiver # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/enum_messages_carry_str # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/vector_state_is_16_aligned # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/concurrent_joins_share_one_worker # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/context_me_is_the_actors_own_ref # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma

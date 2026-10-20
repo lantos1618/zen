@@ -457,8 +457,30 @@ targs_call = (p :: Parser, m: Mark, base: ExprId) Res<ExprId, AllocError> {
 
 after_dot = (p :: Parser, m: Mark, base: ExprId) Res<ExprId, AllocError> {
     p.bump().try();
-    name = p.ident("expected a field or method name after `.`").try();
-    p.dot_target(m, base, name);
+    p.at_kind(TokenKind.Consume).match({
+        true  => p.postfix_consume(m, base),
+        false => {
+            name = p.ident("expected a field or method name after `.`").try();
+            p.dot_target(m, base, name)
+        },
+    });
+}
+
+// `value.consume()`: the move, written after the value it moves.
+postfix_consume = (
+    p       :: Parser,
+    m       : Mark,
+    operand : ExprId
+) Res<ExprId, AllocError> {
+    p.bump().try();
+    open = p.here_span();
+    p.expect(TokenKind.ParenOpen, "expected `()` after `.consume`").try();
+    p.expect_close(
+        TokenKind.ParenClose,
+        "unclosed `(`: this `.consume` is never closed",
+        open
+    ).try();
+    p.add_expr(ExprKind.Consume(Consume(operand: operand)), m.bare());
 }
 
 dot_target = (

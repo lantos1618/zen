@@ -186,6 +186,7 @@ with_reads = (s: CallShape, measured: Vec<str>) CallShape {
         vector_result: s.vector_result,
         vector_results: s.vector_results,
         hidden: s.hidden,
+        hidden_reg: s.hidden_reg,
         writable: s.writable,
         extents: s.extents,
         ignored: s.ignored,

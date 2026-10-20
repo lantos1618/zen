@@ -117,6 +117,8 @@ CallShape* = {
     // arm64 aggregate of vectors (v0..v3).
     vector_results*: usize,
     hidden*: usize,           // bytes returned through a hidden pointer
+    // The register holding that pointer, when not the convention's.
+    hidden_reg* :: str = "",
     writable*: Vec<Writable>, // pointers the callee may write through
     // Pointer arguments that name one value, with its size: a `::` or lent
     // parameter, or arm64's hidden pointer to a by-value copy. Any other
@@ -1294,6 +1296,7 @@ call = (
             }),
         }),
     });
+    hidden_reg = (shape.hidden_reg.len > 0).match({ true => shape.hidden_reg, false => conv.hidden_reg });
     secret ::= false;   // some argument is secret or points at secrets
     points ::= false;   // some argument points at secrets
     stray  ::= false;   // a secret reached an audited callee unseeded
@@ -1307,7 +1310,7 @@ call = (
         // secrets as surely as a pointer to secret memory does. The hidden
         // result pointer is only written.
         extent = shape.extents.find((w) { w.index == i }).match({ Ok(w) => w.bytes, None => 0 });
-        behind = !(shape.hidden > 0 && r.eq(conv.hidden_reg)) && stack_behind(cur, r, extent);
+        behind = !(shape.hidden > 0 && r.eq(hidden_reg)) && stack_behind(cur, r, extent);
         p = (has(cur.pts, r) || behind) && !dead && deref;
         q = has(cur.pts2, r) && !dead && deref;
         secret = secret || v || p || q;
@@ -1372,9 +1375,9 @@ call = (
     // other memory (this function's own result, which its hidden pointer
     // seeds as holding secrets) is not tracked.
     (shape.hidden > 0).then(() {
-        addr_of(cur, conv.hidden_reg).match({
+        addr_of(cur, hidden_reg).match({
             Ok(o)  => stack_store(cur, Place.Exact(o), shape.hidden, out, false).try(),
-            None   => { (out && !cur.precise && on_stack(cur, conv.hidden_reg)).then(() { cur.smear = true; }); },
+            None   => { (out && !cur.precise && on_stack(cur, hidden_reg)).then(() { cur.smear = true; }); },
         });
     });
     // A callee given secrets may write what it derives from them through
@@ -1382,7 +1385,7 @@ call = (
     // borrow names, or anywhere.
     shape.writable.loop((w) {
         r = conv.gprs.get(w.index).value_or("");
-        (secret && !cur.precise && on_stack(cur, r) && !(shape.hidden > 0 && r.eq(conv.hidden_reg))).then(() {
+        (secret && !cur.precise && on_stack(cur, r) && !(shape.hidden > 0 && r.eq(hidden_reg))).then(() {
             (w.bytes > 0).match({
                 true  => addr_of(cur, r).match({
                     Ok(o) => { mark(cur.slots, o, w.bytes, true).try().match({ true => (), false => { cur.smear = true; } }); },

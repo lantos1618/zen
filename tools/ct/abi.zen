@@ -51,6 +51,10 @@ Marked* = {
     // not analysed, but counted as audited where audited code is inlined
     // into it (the inlined audit's coverage check).
     public_only* :: bool = false,
+    // IR-C returns a large result through an explicit first parameter
+    // `zr_ret`, which parsing folds back into `result`: in rdi on x86-64
+    // like a hidden pointer, but in x0 rather than x8 on arm64.
+    result_param* :: bool = false,
 }
 
 // `vector`: passed in the SIMD&FP registers (a vector, a float, or a small
@@ -139,14 +143,21 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
     symbol = head.slice(space + 1, head.len);
     result = head.slice(0, space).trim().try();
     params ::= a.Vec<Param>();
+    returned ::= result;
+    result_param ::= false;
     line.slice(open + 1, close).split(',').loop((part) {
         text = part.trim().value_or("");
         (text.len > 0 && !text.eq("void")).then(() {
-            cut = last_identifier(text);
-            params.add(Param(
-                ctype: text.slice(0, cut).trim().value_or(""),
-                name: text.slice(cut, text.len)
-            )).match({ _ => () });
+            cut   = last_identifier(text);
+            ctype = text.slice(0, cut).trim().value_or("");
+            name  = text.slice(cut, text.len);
+            (name.eq("zr_ret") && params.len == 0 && ctype.ends_with("*")).match({
+                true  => {
+                    returned     = ctype.slice(0, ctype.len - 1).trim().value_or(ctype);
+                    result_param = true;
+                },
+                false => { params.add(Param(ctype: ctype, name: name)).match({ _ => () }); },
+            });
         });
     });
     secret  ::= a.Vec<str>();
@@ -163,7 +174,7 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
     });
     Ok(Marked(
         symbol: symbol,
-        result: strip_qualifiers(result),
+        result: strip_qualifiers(returned),
         params: params,
         secret: secret,
         pointee: pointee,
@@ -171,7 +182,8 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
         avx: targets_avx(line),
         // The backend writes `public-result` for a checked function whose
         // result is not written Secret.
-        public_result: words.contains(" public-result")
+        public_result: words.contains(" public-result"),
+        result_param: result_param
     ))
 }
 
@@ -396,7 +408,7 @@ placements = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<Placed>, AllocError
     stack :: usize = isa.match({ X86 => 8, Arm => 0 });
     limit: usize = isa.match({ X86 => 6, Arm => 8 });
     x86 = isa.match({ X86 => true, Arm => false });
-    (x86 && hidden_result(a, isa, c, m.result, m.avx) > 0).then(() { next = 1; });
+    ((x86 || m.result_param) && hidden_result(a, isa, c, m.result, m.avx) > 0).then(() { next = 1; });
     m.params.loop((p) {
         l = layout_of(a, c, p.ctype).match({ Ok(v) => v, None => Layout(size: 8, align: 8, vector: false) });
         // Registers a vector-class parameter needs: one per vector on
@@ -462,6 +474,11 @@ capability = (a: Alloc, c: str, ctype: str) bool {
 // A std.simd vector type itself (not a struct that contains vectors).
 vector_type = (ctype: str) bool { vector_layout(ctype).match({ Ok(_) => true, None => false }) }
 
+// The register holding the address a result returned through memory goes to.
+result_reg = (isa: Isa, m: Marked) str {
+    isa.match({ X86 => "rdi", Arm => m.result_param.match({ true => "x0", false => "x8" }) })
+}
+
 // Bytes a result of C type `result` returns through a hidden pointer, or 0.
 hidden_result = (a: Alloc, isa: Isa, c: str, result: str, avx: bool) usize {
     layout_of(a, c, result).match({
@@ -487,7 +504,7 @@ seed_of* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Seed, AllocError> {
     // result, which the body may build there and read back. A public
     // result returned that way must not have secrets stored into it.
     hidden = hidden_result(a, isa, c, m.result, m.avx) > 0;
-    hidden_reg = isa.match({ X86 => "rdi", Arm => "x8" });
+    hidden_reg = result_reg(isa, m);
     hidden.then(() { pointers.add(hidden_reg).try(); });
     placements(a, isa, c, m).try().loop((pl) {
         marked_value = pl.param.name.is_in(m.secret);
@@ -885,7 +902,7 @@ call_shapes* = (
 shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
     x86      = isa.match({ X86 => true, Arm => false });
     hidden   = hidden_result(a, isa, c, m.result, m.avx);
-    gprs :: usize = (x86 && hidden > 0).match({ true => 1, false => 0 });
+    gprs :: usize = ((x86 || m.result_param) && hidden > 0).match({ true => 1, false => 0 });
     vectors :: usize = 0;
     stack :: usize = 0;
     writable ::= a.Vec<Writable>();
@@ -944,6 +961,7 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
             None  => 0,
         }),
         hidden: hidden,
+        hidden_reg: (hidden > 0).match({ true => result_reg(isa, m), false => "" }),
         writable: writable,
         extents: extents,
         ignored: ignored,
@@ -984,6 +1002,7 @@ audited_shape* = (
         vector_result: shape.vector_result,
         vector_results: shape.vector_results,
         hidden: shape.hidden,
+        hidden_reg: shape.hidden_reg,
         writable: shape.writable,
         extents: shape.extents,
         ignored: shape.ignored,

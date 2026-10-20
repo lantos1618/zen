@@ -1624,9 +1624,12 @@ C = {
                 same(result, Scalar.Ptr).then(() { self.out.add("(uintptr_t)").try(); });
             },
         });
-        headed.match({
-            true  => self.out.add(call.symbol).try(),
-            false => self.out.fmt("zr_ffi_{}", call.symbol).try(),
+        (headed && call.typed).match({
+            true  => self.typed_callee(f, call).try(),
+            false => headed.match({
+                true  => self.out.add(call.symbol).try(),
+                false => self.out.fmt("zr_ffi_{}", call.symbol).try(),
+            }),
         });
         self.out.add("(").try();
         call.args.loop((h, i, slot) {
@@ -1641,6 +1644,28 @@ C = {
         same(result, Scalar.Unit).match({
             true  => self.out.fmt("  v{} = 0;\n", call.out),
             false => Ok,
+        })
+    }
+
+    // `((R (*)(A, B))symbol)`: the call keeps the declared signature.
+    typed_callee = (self :: @Self, f: Func, call: ForeignCall)
+                   Res<(), AllocError> {
+        self.out.add("((").try();
+        self.c_word(slot_ty(f, call.out)).try();
+        self.out.add(" (*)(").try();
+        call.args.loop((h, i, slot) {
+            (i > 0).then(() { self.out.add(", ").try(); });
+            self.c_word(slot_ty(f, slot)).try();
+        });
+        (call.args.len == 0).then(() { self.out.add("void").try(); });
+        self.out.fmt(")){})", call.symbol)
+    }
+
+    c_word = (self :: @Self, ty: Scalar) Res<(), AllocError> {
+        ty.match({
+            Unit => self.out.add("void"),
+            Ptr  => self.out.add("void *"),
+            _    => self.out.ctype(ty),
         })
     }
 

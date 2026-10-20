@@ -24,7 +24,7 @@
 { Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes, CodeRef } = gen.gen_ir
 { Write, Stream, TrapKind, Marshal, HostCall, Layout, FloatFormat } = gen.gen_ir
 { ForeignCall } = gen.gen_ir
-{ c_header, valid_c_header } = gen.gen_lower_core
+{ c_header, c_symbol_override, valid_c_header } = gen.gen_lower_core
 { word, integer, signed, same, float } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { MachineOp, machine_op, machine_refusal } = gen.gen_ir_machine
@@ -1789,15 +1789,22 @@ foreign_call = (
         lo.native_word(slot).ensure(unsupported(span, "a C function argument that is not a word, float or pointer")).try();
         args.add(slot).try(LowerError.OutOfMemory);
     });
+    override = c_symbol_override(lo.tree, callee.owner);
+    symbol   = override.value_or(callee.f.name.text);
+    symbol.is_identifier().ensure(unsupported(
+        span,
+        "an invalid native symbol name"
+    )).try();
     header = c_header(lo.tree, callee.owner);
     (header.len == 0 || valid_c_header(header)).ensure(unsupported(span, "a C header path with a byte an include name cannot hold")).try();
     out = lo.temp(lo.type_of(id).try()).try();
     (lo.native_word(out.slot) || lo.is_unit(out.ty)).ensure(unsupported(span, "a C function result that is not a word, float or pointer")).try();
     lo.add(Instruction.Foreign(ForeignCall(
         out: out.slot,
-        symbol: callee.f.name.text,
+        symbol: symbol,
         header: header,
-        args: args
+        args: args,
+        typed: override.match({ Ok(_) => true, None => false })
     ))).try();
     Ok(out)
 }

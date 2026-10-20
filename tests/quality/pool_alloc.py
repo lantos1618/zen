@@ -3,7 +3,7 @@
 import argparse
 import os
 from pathlib import Path
-import re
+import shutil
 import subprocess
 import tempfile
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,19 +30,17 @@ with tempfile.TemporaryDirectory(prefix='zen-pool-alloc-') as folder:
         else:
             assert result.returncode != 0, 'Broken realloc copy unexpectedly passed'
     execute('policy', source)
-    # Remove only the copy from compiled PoolAlloc.realloc, retaining allocation
-    # and freeing paths. The real Alloc caller must notice lost old contents.
-    starts = list(re.finditer(r'^static [^;\n]*9PoolAlloc7realloc[^;\n]*\{', source, re.M))
-    assert starts, 'PoolAlloc realloc implementation not found'
-    negative = source
-    removed = 0
-    for match in reversed(starts):
-        end = source.index('\n}', match.end())
-        body = source[match.start():end]
-        body, count = re.subn(r'\bmemcpy\([^;]+;', '(void)0;', body)
-        removed += count
-        negative = negative[:match.start()] + body + negative[end:]
-    assert removed, 'PoolAlloc realloc copy not found'
+    # A std whose PoolAlloc.realloc skips the copy, keeping allocation and
+    # freeing paths. The real Alloc caller must notice lost old contents.
+    std = work / 'std-no-copy'
+    shutil.copytree(args.std, std)
+    pool = std / 'std' / 'mem' / 'mem_pool.zen'
+    copy = '                (keep > 0).then(() { destination.copy_from(source, keep); });\n'
+    text = pool.read_text()
+    assert text.count(copy) == 1, 'PoolAlloc realloc copy not found'
+    pool.write_text(text.replace(copy, ''))
+    subprocess.run([str(args.zen.resolve()), 'build', str(work), '--emit-c', '-o', str(work / 'no-copy.c')], env=dict(env, ZEN_STD=str(std)), check=True, timeout=120)
+    negative = (work / 'no-copy.c').read_text()
     execute('negative', negative, expected=False)
     print('PASS: realloc-copy negative control')
     if args.ubsan:

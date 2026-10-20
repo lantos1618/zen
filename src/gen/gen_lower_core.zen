@@ -4380,6 +4380,14 @@ c_header* = (tree: Ast, owner: DeclId) str {
     })
 }
 
+// The C symbol a `c.bind` names in place of its members' own names.
+c_symbol_override* = (tree: Ast, owner: DeclId) Res<str> {
+    decl_at(tree, owner).match({
+        Ok(d) => d.kind.match({ Struct(s) => s.native_symbol, _ => None }),
+        None  => None,
+    })
+}
+
 // A header path an `#include <..>` can spell.
 valid_c_header* = (path: str) bool {
     (path.len > 0) && Range(0, path.len).find((i) {

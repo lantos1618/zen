@@ -513,7 +513,8 @@ Propagate = {
                 out: call.out,
                 symbol: call.symbol,
                 header: call.header,
-                args: self.all(alloc, call.args).try()
+                args: self.all(alloc, call.args).try(),
+                typed: call.typed
             )),
             NativeConst(_)   => instruction,
         }))

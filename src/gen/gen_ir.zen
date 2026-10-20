@@ -171,7 +171,15 @@ IndirectCall* = { out*: usize, target*: usize, args*: Vec<usize> }
 // a macro or variadic function keeps its meaning; without one it declares
 // the symbol from the slot classes. Arguments and `out` are words, floats or
 // pointers; `out` may also be Unit.
-ForeignCall* = { out*: usize, symbol*: str, header*: str, args*: Vec<usize> }
+// `typed` calls through a pointer of the declared signature: an explicit
+// symbol override names a C function whose own prototype may differ.
+ForeignCall* = {
+    out*: usize,
+    symbol*: str,
+    header*: str,
+    args*: Vec<usize>,
+    typed* :: bool = false,
+}
 // A constant a `c.bind` header defines (a macro or enumerator) as the word
 // class of `out`; `fallback` is the written integer it takes where the
 // header leaves it undefined, which the C compiler range-checks against the

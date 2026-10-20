@@ -1283,7 +1283,8 @@ shift = (
             out: base + c.out,
             symbol: c.symbol,
             header: c.header,
-            args: moved(alloc, c.args, base).try()
+            args: moved(alloc, c.args, base).try(),
+            typed: c.typed
         )),
         NativeConst(v)   => Instruction.NativeConst(NativeValue(
             out: base + v.out,

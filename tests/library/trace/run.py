@@ -3,7 +3,7 @@
 import argparse
 import os
 from pathlib import Path
-import re
+import shutil
 import subprocess
 import tempfile
 ROOT = Path(__file__).resolve().parents[3]
@@ -27,6 +27,7 @@ static void *trace_realloc(void *p, size_t n) { assert(!trace_active); return re
 #define malloc trace_malloc
 #define calloc trace_calloc
 #define realloc trace_realloc
+static void leak(void) { void *p = malloc(1); free(p); }
 #endif
 ''')
     subprocess.run([str(a.zen.resolve()), 'build', str(work), '--emit-c', '-o', str(work / 'generated.c')], env=dict(os.environ, ZEN_STD=str(a.std.resolve())), check=True, timeout=120)
@@ -44,9 +45,17 @@ static void *trace_realloc(void *p, size_t n) { assert(!trace_active); return re
             print(result.stdout, end='')
         else:
             assert result.returncode != 0, 'Record-allocation negative control unexpectedly passed'
+            assert 'trace_active' in result.stderr, result.stdout + result.stderr
     execute('trace', source)
-    match = re.search(r'^static [^;\n]*6Buffer6record[^;\n]*\{', source, re.M)
-    assert match, 'Buffer.record implementation not found'
-    negative = source[:match.end()] + '\n    void *unwanted = malloc(1); free(unwanted);\n' + source[match.end():]
-    execute('allocating-record', negative, False)
+    # Negative control: a std whose Buffer.record allocates must be caught.
+    std = work / 'std-allocating-record'
+    shutil.copytree(a.std, std)
+    trace = std / 'std' / 'trace.zen'
+    text = trace.read_text()
+    head = '    record* = (self :: @Self, span: Span) bool {\n'
+    assert head in text, 'Buffer.record implementation not found'
+    text = text.replace('Buffer* = {', 'Leak = c.bind("trace_probe.h", { leak = () () })\nBuffer* = {', 1)
+    trace.write_text(text.replace(head, head + '        Leak.leak();\n', 1))
+    subprocess.run([str(a.zen.resolve()), 'build', str(work), '--emit-c', '-o', str(work / 'negative.c')], env=dict(os.environ, ZEN_STD=str(std)), check=True, timeout=120)
+    execute('allocating-record', (work / 'negative.c').read_text(), False)
     print('PASS: allocating-record negative control')

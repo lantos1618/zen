@@ -1,4 +1,4 @@
-{ Module, Decl, Function, TParam, BlockId, Ident } = std.ast
+{ Module, Decl, Function, TParam, BlockId, Ident, Alias } = std.ast
 { Struct, Impl, Member, Enum, Variant } = std.ast
 { ExprId, TypeId, Const, Field } = std.ast
 { AllocError } = std.mem
@@ -120,7 +120,28 @@ check_decl = (c :: Checker, d: Decl, m: Module, mi: usize)
         },
         Impl(im)    => c.impl_bodies(im, m, mi),
         Const(k)    => c.const_body(k, mi),
+        Alias(al)   => c.alias_names_a_type(al, mi),
         _           => Ok,
+    })
+}
+
+// `X = X` resolves to nothing, so every use of it would be an unknown type.
+alias_names_a_type = (c :: Checker, al: Alias, mi: usize) Res<AllocError> {
+    target = c.tree.type_at(al.target).kind.match({
+        Named(n) => n.args.len == 0 && n.name.text.eq(al.name.text),
+        _        => false,
+    });
+    module = c.world.first_def_of(mi, al.name.text).try().match({
+        Ok(d) => c.alias_module(d.id).match({ Ok(_) => true, None => false }),
+        None  => false,
+    });
+    (target && al.tparams.len == 0 && !module).match({
+        true  => c.report(
+            al.name.span.file,
+            al.name.span,
+            SemaFault.SelfAlias(NameFault(name: al.name.text))
+        ),
+        false => Ok,
     })
 }
 

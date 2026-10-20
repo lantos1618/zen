@@ -250,6 +250,12 @@ spawn_actor* = (
     name      = lo.string(type_name, lo.prim("str").try()).try();
     start_args ::= lo.one(Source.Computed(cell)).try();
     [started, stopped, receive, Source.Computed(name)].loop((a) { start_args.more(a).try(); });
+    // Turns settle the Bytes of messages that never ran or that trapped.
+    lo.actor_call(
+        "actor_drops",
+        lo.one(Source.Computed(cell)).try(),
+        span
+    ).try();
     status = lo.actor_call("actor_start", start_args, span).try();
     zero   = lo.word_const(Scalar.I32, 0).try();
     ok     = lo.slot_of(Scalar.Bool).try();
@@ -714,6 +720,7 @@ send = (
             formal = lo.send_formal(hook, actor_ty, i).try();
             actual = lo.type_of(arg.value).try();
             lo.transferable(formal, actual, span).try();
+            lo.consumed_on_every_path(hook, formal, i, span).try();
             class  = lo.class_of(formal).try();
             at     = round_up(at, align_of(class));
             widest = widest.larger(align_of(class));
@@ -806,9 +813,10 @@ send = (
         ty: usize_ty
     ))).try();
     status = lo.actor_call(send_entry(name), send_args, span).try();
-    ty     = lo.type_of(id).try();
-    out    = lo.temp(ty).try();
-    done   = lo.label().try();
+    lo.free_unsent(status.slot, data, fields).try();
+    ty   = lo.type_of(id).try();
+    out  = lo.temp(ty).try();
+    done = lo.label().try();
     lo.outcome(status.slot, 0, out, ty, None, done, span).try();
     lo.outcome(status.slot, 1, out, ty, Ok("Closed"), done, span).try();
     lo.fail(out, ty, "Full", span).try();
@@ -1057,13 +1065,15 @@ transferable = (
     actual : TyId,
     span   : Span
 ) Res<LowerError> {
+    moved      = lo.check.actor_owned_bytes(formal);
     same_shape = lo.check.actor_byte_buffer(formal) == lo.check.actor_byte_buffer(actual)
+        && moved == lo.check.actor_owned_bytes(actual)
         && lo.is_str(formal) == lo.is_str(actual);
     same_shape.ensure(unsupported(
         span,
         "an actor payload without a concrete mailbox transfer"
     )).try();
-    (lo.copied(formal) || !lo.check.actor_payload_unsafe(formal).try(LowerError.OutOfMemory))
+    (lo.copied(formal) || moved || !lo.check.actor_payload_unsafe(formal).try(LowerError.OutOfMemory))
         .ensure(unsupported(
             span,
             "an actor payload without a concrete mailbox transfer"
@@ -1095,6 +1105,11 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
         offset: layout.context,
         ty: layout.context_ty
     );
+    exit    = lo.label().try();
+    entry.kind.match({
+        Turn => lo.settle_unrun(entry, record, data, exit).try(),
+        _    => (),
+    });
     lo.write_me(context, nowhere()).try();
     entry.fields.loop((h, i, f) {
         entry.buffers.get(i).value_or(false).then(() {
@@ -1128,6 +1143,7 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
             ))).try(LowerError.OutOfMemory);
         });
         lo.real_call(hook, sources, nowhere()).try();
+        lo.settle_after_turn(entry, data).try();
     });
     lo.jump(skip).try();
     lo.start(skip);
@@ -1153,9 +1169,159 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
         },
         _       => (),
     });
+    lo.jump(exit).try();
+    lo.start(exit);
     done = lo.unit().try();
     name = entry.kind.match({ Turn => "actor_turn", Started => "actor_started", Stopped => "actor_stopped" });
     lo.finish_synth(name, entry_block, 2, done.slot, Scalar.Unit)
+}
+
+// A Bytes field of a message payload.
+payload_field = (data: usize, f: FieldAt) Place {
+    Place(base: Base.Through(data), offset: f.offset, ty: f.ty)
+}
+
+// Call the runtime's `entry` on a Bytes' data when it has any.
+bytes_call = (lo :: Lowerer, entry: str, bytes: Place) Res<LowerError> {
+    span = nowhere();
+    data = lo.read(lo.field_place(bytes, "data", span).try()).try();
+    call = lo.label().try();
+    done = lo.label().try();
+    lo.branch_to(lo.is_null(data.slot).try(), done, call).try();
+    lo.start(call);
+    lo.actor_call(entry, lo.one(Source.Computed(data)).try(), span).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok
+}
+
+// Whether the behavior consumes (or only lends) its `i`th payload field.
+consumed = (lo :: Lowerer, entry: ActorEntry, i: usize) Res<bool, LowerError> {
+    entry.hook.match({
+        Ok(h) => Ok(
+            lo.check.consumes_parameter(h.f, i + 2).try(LowerError.OutOfMemory)
+        ),
+        None  => Ok(false),
+    })
+}
+
+lent = (lo :: Lowerer, entry: ActorEntry, i: usize) Res<bool, LowerError> {
+    entry.hook.match({
+        Ok(h) => Ok(
+            lo.check.lends_parameter(h.f, i + 2).try(LowerError.OutOfMemory)
+        ),
+        None  => Ok(false),
+    })
+}
+
+// A Bytes the turn may or may not consume has no single owner afterwards.
+consumed_on_every_path = (
+    lo     :: Lowerer,
+    hook   : Res<Callee>,
+    formal : TyId,
+    i      : usize,
+    span   : Span
+) Res<LowerError> {
+    partial = hook.match({
+        Ok(h) => lo.check.actor_owned_bytes(formal)
+            && lo.check.consumes_parameter_conditionally(
+                h.f,
+                i + 2
+            ).try(LowerError.OutOfMemory),
+        None  => false,
+    });
+    (!partial).ensure(unsupported(
+        span,
+        "a behaviour that consumes a Bytes parameter on only some paths (consume it unconditionally, outside any lambda or match)"
+    ))
+}
+
+// A Closed or Full send never delivered the message: its Bytes are still
+// the sender's to free.
+free_unsent = (lo :: Lowerer, status: usize, data: usize, fields: Vec<FieldAt>)
+              Res<LowerError> {
+    fields.loop((f) {
+        lo.check.actor_owned_bytes(f.ty).then(() {
+            zero = lo.word_const(Scalar.I32, 0).try();
+            sent = lo.slot_of(Scalar.Bool).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: sent,
+                left: status,
+                right: zero,
+                op: Op.Equal,
+                span: nowhere()
+            ))).try();
+            free = lo.label().try();
+            done = lo.label().try();
+            lo.branch_to(sent, done, free).try();
+            lo.start(free);
+            lo.bytes_call("actor_bytes_free", payload_field(data, f)).try();
+            lo.jump(done).try();
+            lo.start(done);
+        });
+    });
+    Ok
+}
+
+// The runtime calls a turn with a null record for a message that never ran
+// and with 1 for a turn that trapped. A message that never ran frees its
+// Bytes; a trapped turn keeps them until the actor ends, since a view may
+// have escaped, unless it consumed them.
+settle_unrun = (
+    lo     :: Lowerer,
+    entry  : ActorEntry,
+    record : usize,
+    data   : usize,
+    exit   : usize
+) Res<LowerError> {
+    unrun   = lo.label().try();
+    check   = lo.label().try();
+    trapped = lo.label().try();
+    ran     = lo.label().try();
+    lo.branch_to(lo.is_null(record).try(), unrun, check).try();
+    lo.start(unrun);
+    entry.fields.loop((f) {
+        lo.check.actor_owned_bytes(f.ty).then(() {
+            lo.bytes_call("actor_bytes_free", payload_field(data, f)).try();
+        });
+    });
+    lo.jump(exit).try();
+    lo.start(check);
+    one  = lo.word_const(Scalar.Ptr, 1).try();
+    test = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: test,
+        left: record,
+        right: one,
+        op: Op.Equal,
+        span: nowhere()
+    ))).try();
+    lo.branch_to(test, trapped, ran).try();
+    lo.start(trapped);
+    entry.fields.loop((h, i, f) {
+        (lo.check.actor_owned_bytes(f.ty) && !lo.consumed(entry, i).try()).then(() {
+            lo.bytes_call("actor_bytes_keep", payload_field(data, f)).try();
+        });
+    });
+    lo.jump(exit).try();
+    lo.start(ran);
+    Ok
+}
+
+// After the turn: a behavior that only read its Bytes frees them, one that
+// consumed them owns them, and any other use keeps them until the actor ends.
+settle_after_turn = (lo :: Lowerer, entry: ActorEntry, data: usize)
+                    Res<LowerError> {
+    entry.fields.loop((h, i, f) {
+        (lo.check.actor_owned_bytes(f.ty) && !lo.consumed(entry, i).try()).then(() {
+            verb = lo.lent(entry, i).try().match({
+                true  => "actor_bytes_free",
+                false => "actor_bytes_keep",
+            });
+            lo.bytes_call(verb, payload_field(data, f)).try();
+        });
+    });
+    Ok
 }
 
 // Move a byte buffer's bytes from the message into the actor's allocator

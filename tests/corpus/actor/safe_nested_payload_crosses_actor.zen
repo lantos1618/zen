@@ -5,7 +5,7 @@
 { Env } = std.env
 { Actor, ActorError, ActorStartError, Context } = std.actor
 
-SafeFault = SafeFault
+SafeFault = {}
 Leaf = { number: i32, ready: bool }
 SafePayload = {
     leaf: Leaf,

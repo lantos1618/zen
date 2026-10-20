@@ -1199,14 +1199,30 @@ Lowerer* = {
                 inner = self.coerce(value, self.concrete(r.value).try()).try();
                 self.variant_value(ty, "Ok", Ok(inner), nowhere())
             },
-            _      => Err(unsupported(
-                nowhere(),
-                self.described2(
-                    "a value conversion this backend does not model",
-                    value.ty,
-                    ty
-                )
-            )),
+            _      => {
+                out    = self.temp(ty).try();
+                scalar = self.slots.get(out.slot).value_or(Scalar.Unit);
+                // A last statement that yields nothing closes a function
+                // with a result, which then answers zero.
+                word = scalar.match({ Block(_) => false, Unit => false, _ => true });
+                (word && self.is_unit(value.ty)).match({
+                    true  => {
+                        self.add(Instruction.Constant(Const(
+                            out: out.slot,
+                            value: 0
+                        ))).try();
+                        Ok(out)
+                    },
+                    false => Err(unsupported(
+                        nowhere(),
+                        self.described2(
+                            "a value conversion this backend does not model",
+                            value.ty,
+                            ty
+                        )
+                    )),
+                })
+            },
         })
     }
 

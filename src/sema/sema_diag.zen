@@ -91,6 +91,7 @@ SemaFault* =
     | NoSuchField: TypeFault           // the type has no member of that name
     | MemberNeedsValue: TypeFault      // a union's member IS a type, so naming it alone writes no value
     | BareEnum: NameFault              // `A | B` without braces joins types; an enum is braced
+    | SelfAlias: NameFault             // `X = X` names no type
     | Rebound: PairFault               // a second `=` binding of one name in one block
     | TypeNotAValue: TypeValueFault    // `x = Foo;` binds a type, not a value of it
 
@@ -257,6 +258,7 @@ message* = (fault: SemaFault) str {
         ImportShadowed(_)            => "imported and also declared in this module: a name has one meaning per module, so rename the declaration or bind the import under another name (`other = m.name`)",
         NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
         MemberNeedsValue(_)          => "a union's member is the type it names, so the member alone is not a value",
+        SelfAlias(_)                 => "an alias names an existing type, and this one names only itself: declare the type, `Name = {}` or `Name = { A | B }`",
         BareEnum(_)                  => "an enum is written in braces, `Name = { A | B: T }`: without them `|` joins existing types into a union, and this declaration names something that is not a type",
         TypeMismatch(_)              => "type mismatch",
         TypeNotAValue(_)             => "",
@@ -499,6 +501,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
 
         NoSuchField(f)               => out.write_member(types, f),
         BareEnum(f)                  => out.write_name(f),
+        SelfAlias(f)                 => out.write_name(f),
         MemberNeedsValue(f)          => out.write_needs_value(types, f),
         EqNeedsImpl(f)               => out.write_needs_eq(types, f),
         InvalidOperator(f)           => out.write_operator_types(types, f),

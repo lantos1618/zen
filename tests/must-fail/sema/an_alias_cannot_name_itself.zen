@@ -1,0 +1,10 @@
+// An alias names an existing type; one that names itself names nothing,
+// so every use of it would carry an unknown type.
+{ Res, Ok } = std.core
+{ Env } = std.env
+
+Fault = Fault
+
+main = (env: Env) Res<i32, Fault> {
+    Ok(0)
+}

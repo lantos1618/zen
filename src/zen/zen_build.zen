@@ -7,7 +7,7 @@
 // is parsed into one shared Ast, making ids unique across the program.
 
 { Alloc, AllocError } = std.mem
-{ str, String } = std.text
+{ str, String, dup } = std.text
 { Vec, Map } = std.collections
 { Res, Ok, None, loop, Range, Path } = std.core
 { Env, FsError, fs_message } = std.env
@@ -22,7 +22,7 @@
 
 { scan, Source, Lexed } = std.lex.lex
 { Parser, module } = std.parse.parse
-{ Checker, check_all } = sema.sema
+{ Checker, check_all, check_after, extended, Settled, settled } = sema.sema
 { CORE } = sema.sema
 { println } = std.io
 { package_of } = sema.sema_def
@@ -39,7 +39,7 @@
 { Unit } = zen.zen_path
 
 { Publisher } = zen.zen_write
-{ Inputs, inputs } = zen.zen_inputs
+{ Inputs, inputs, replay } = zen.zen_inputs
 
 // The import root of a target's dependencies, named after its `deps` list.
 DEPS: str = "deps"
@@ -50,6 +50,9 @@ LibraryPaths = {
     flat: str,
     folder: str,
 }
+
+// `from` queued `to` while being walked; an empty `from` is the walk's root.
+Link* = { from*: str, to*: str }
 
 // One build: the phase inputs and the fault tally that becomes the exit code.
 Build* = {
@@ -181,6 +184,28 @@ Build* = {
         found
     }
 
+    // Opt-in record of which unit queued which path, and of the walk's queue,
+    // for callers that keep checked modules across builds.
+    links* :: Res<Vec<Link>> = None,
+    walked* :: Res<Vec<Unit>> = None,
+    walking :: str = "",
+
+    track_links* = (self :: @Self) {
+        self.links = Ok(self.alloc.Vec<Link>());
+    }
+
+    link = (self :: @Self, to: str) Res<AllocError> {
+        self.links.match({
+            None       => Ok,
+            Ok(record) => {
+                held ::= record;
+                held.add(Link(from: self.walking, to: to)).try();
+                self.links = Ok(held);
+                Ok
+            },
+        })
+    }
+
     // Language-server builds collect diagnostics without writing to stdout.
     speaking* :: bool = true,
 
@@ -198,19 +223,52 @@ Build* = {
     // Breadth first from the entry. `seen` is queue and set; the index walks
     // it while it grows.
     walk* = (self :: @Self, entry: Unit) Res<AllocError> {
-        seen ::= self.alloc.Vec<Unit>();
+        self.walk_from(entry, self.alloc.Vec<Unit>())
+    }
+
+    // Walk from the entry when the tree already holds `done`, an
+    // import-closed set of units: imports of them are already satisfied.
+    walk_from* = (self :: @Self, entry: Unit, done: Vec<Unit>)
+                 Res<AllocError> {
+        seen ::= done.dup(self.alloc).try();
         self.entry_rel = entry.rel;
         seen.add(entry).try();
         self.seed_core(seen).try();
         self.libraries.match({
             None        => (),
-            Ok(entries) => entries.loop((unit) { seen.add(unit).try(); }),
+            Ok(entries) => entries.loop((unit) {
+                self.link(unit.path).try();
+                done.find((u) { u.path.eq(unit.path) }).match({
+                    Ok(_) => Ok,
+                    None  => seen.add(unit),
+                }).try();
+            }),
         });
-        i :: usize = 0;
+        self.walk_queue(seen, done.len).try();
+    }
+
+    // Parse `units` in order, with what they import, and no entry.
+    walk_units* = (self :: @Self, units: Vec<Unit>) Res<AllocError> {
+        self.walk_queue(units.dup(self.alloc).try(), 0)
+    }
+
+    walk_queue = (self :: @Self, seen :: Vec<Unit>, first: usize)
+                 Res<AllocError> {
+        i :: usize = first;
         loop(i < seen.len, (h) {
-            u = seen.get(i).match({ Ok(v) => v, None => entry });
+            seen.get(i).match({
+                None  => (),
+                Ok(u) => {
+                    self.walking = u.path;
+                    self.front(u, seen).try();
+                },
+            });
             i = i + 1;
-            self.front(u, seen).try();
+        });
+        self.walking = "";
+        self.links.match({
+            None  => (),
+            Ok(_) => { self.walked = Ok(seen); },
         });
         Ok;
     }
@@ -464,13 +522,13 @@ Build* = {
                 false => self.library_module(root, whole).try().match({
                     None     => self.enqueue(im.module, seen),
                     Ok(unit) => {
-                        queue_unit(unit, seen).try();
+                        self.queue_unit(unit, seen).try();
                         (im.module.segments.len > 2).match({
                             false => Ok,
                             true  => self.library_module(root, im.module)
                                 .try().match({
                                     None  => Ok,
-                                    Ok(u) => queue_unit(u, seen),
+                                    Ok(u) => self.queue_unit(u, seen),
                                 }),
                         })
                     },
@@ -525,7 +583,7 @@ Build* = {
         (q.segments.len <= 2).match({
             true  => Ok,
             false => self.library_module(root, q).try().match({
-                Ok(unit) => queue_unit(unit, seen),
+                Ok(unit) => self.queue_unit(unit, seen),
                 None     => {
                     paths = self.library_paths(root, q).try();
                     self.missing_import(q, paths.flat, paths.folder)
@@ -680,9 +738,20 @@ Build* = {
     // Deduplicate modules by resolved path rather than import spelling.
     queue = (self :: @Self, path: str, seen :: Vec<Unit>)
             Res<AllocError> {
+        self.link(path).try();
         seen.find((u) { u.path.eq(path) }).match({
             Ok(_) => Ok,
             None  => self.queue_fresh(path, seen),
+        })
+    }
+
+    // Add a dependency module to the walk unless it is already queued.
+    queue_unit = (self :: @Self, unit: Unit, seen :: Vec<Unit>)
+                 Res<AllocError> {
+        self.link(unit.path).try();
+        seen.find((u) { u.name.eq(unit.name) }).match({
+            Ok(_) => Ok,
+            None  => seen.add(unit),
         })
     }
 
@@ -728,7 +797,7 @@ Build* = {
                     ).try();
                     self.library_module(root, q).try().match({
                         None     => Ok,
-                        Ok(unit) => queue_unit(unit, seen),
+                        Ok(unit) => self.queue_unit(unit, seen),
                     })
                 },
             }),
@@ -981,14 +1050,16 @@ check_workspace* = (
     })
 }
 
-check_workspace_at = (
+Prepared = { b: Build, root: str, unit: Unit, over: Map<str, str> }
+
+prepare_workspace = (
     env       : Env,
     a         : Alloc,
     directory : str,
     root      : str,
     entry     : str,
     docs      : Map<str, str>
-) Res<WorkspaceCheck, AllocError> {
+) Res<Prepared, AllocError> {
     absolute_root = anchored_path(a, directory, root).try();
     b ::= a.Build(env, absolute_root);
     std_root = std_root_for(env, a);
@@ -1015,8 +1086,209 @@ check_workspace_at = (
         true  => entry_of(env, a, absolute_root, entry).try(),
         false => unit_at(a, absolute_root, path).try(),
     });
-    c    = b.whole(unit, over).try();
+    Ok(Prepared(b: b, root: absolute_root, unit: unit, over: over))
+}
+
+check_workspace_at = (
+    env       : Env,
+    a         : Alloc,
+    directory : str,
+    root      : str,
+    entry     : str,
+    docs      : Map<str, str>
+) Res<WorkspaceCheck, AllocError> {
+    p = prepare_workspace(env, a, directory, root, entry, docs).try();
+    b ::= p.b;
+    c = b.whole(p.unit, p.over).try();
     Ok(WorkspaceCheck(b: b, c: c))
+}
+
+// The checked modules of a workspace that no open buffer reaches, kept so
+// later checks parse and check only the rest. Only a base without
+// diagnostics is kept, so its answers do not depend on the modules added.
+WorkspaceBase* = {
+    b: Build,
+    c: Checker,
+    done: Settled,
+    units: Vec<Unit>,
+}
+
+// A base for checking `entry` with `docs` open, owned by `keep`; None when
+// no module qualifies. `scratch` holds the walk that finds the modules.
+workspace_base* = (
+    env       : Env,
+    scratch   : Alloc,
+    keep      : Alloc,
+    directory : str,
+    root      : str,
+    entry     : str,
+    docs      : Map<str, str>
+) Res<Res<WorkspaceBase>, AllocError> {
+    p = prepare_workspace(env, scratch, directory, root, entry, docs).try();
+    probe ::= p.b;
+    probe.overlay  = p.over;
+    probe.speaking = false;
+    probe.track_links();
+    probe.walk(p.unit).try();
+    links = probe.links.value_or(scratch.Vec<Link>());
+    // Every unit that is open, or reaches one through its imports.
+    dirty ::= scratch.Map<str, bool>();
+    dirty.set(p.unit.path, true).try();
+    p.over.pairs((h, path, text) { dirty.set(path, true).try(); });
+    grew ::= true;
+    loop(() { grew }, (h) {
+        grew = false;
+        links.loop((l) {
+            (!l.from.is_empty() && dirty.get(l.to).value_or(false)
+                && !dirty.get(l.from).value_or(false)).then(() {
+                dirty.set(l.from, true).try();
+                grew = true;
+            });
+        });
+    });
+    clean  ::= scratch.Vec<Unit>();
+    stdlib ::= scratch.Vec<Unit>();
+    probe.walked.value_or(scratch.Vec<Unit>()).loop((u) {
+        (!dirty.get(u.path).value_or(false)).then(() {
+            clean.add(u).try();
+            u.name.starts_with("std.").then(() { stdlib.add(u).try(); });
+        });
+    });
+    whole = base_of(env, keep, p.root, probe.std_root, clean, links).try();
+    whole.match({
+        Ok(base) => Ok(Ok(base)),
+        None     => base_of(env, keep, p.root, probe.std_root, stdlib, links),
+    })
+}
+
+// Check `units` alone when they import nothing outside themselves.
+base_of = (
+    env      : Env,
+    keep     : Alloc,
+    root     : str,
+    std_root : str,
+    units    : Vec<Unit>,
+    links    : Vec<Link>
+) Res<Res<WorkspaceBase>, AllocError> {
+    inside ::= keep.Map<str, bool>();
+    units.loop((u) { inside.set(u.path, true).try(); });
+    leaks = links.find((l) {
+        inside.get(l.from).value_or(false) && !inside.get(l.to).value_or(false)
+    }).match({ Ok(_) => true, None => false });
+    (units.len == 0 || leaks).match({
+        true  => Ok(None),
+        false => {
+            b ::= keep.Build(env, root.dup(keep).try());
+            (!std_root.is_empty()).then(() {
+                b.set_std_root(std_root.dup(keep).try());
+            });
+            b.speaking = false;
+            b.track_links();
+            b.record_inputs().try();
+            kept ::= keep.Vec<Unit>();
+            units.loop((u) {
+                kept.add(Unit(
+                    name: u.name.dup(keep).try(),
+                    path: u.path.dup(keep).try(),
+                    rel: u.rel.dup(keep).try()
+                )).try();
+            });
+            b.walk_units(kept).try();
+            c ::= keep.Checker(b.tree).try();
+            c.check_all().try();
+            replayable = b.inputs.match({ Ok(i) => i.exact, None => false });
+            clean      = b.faults == 0 && b.diag_count() == 0 && c.diag_count() == 0;
+            Ok((clean && replayable).match({
+                true  => Ok(WorkspaceBase(
+                    b: b,
+                    c: c,
+                    done: c.settled(),
+                    units: kept
+                )),
+                false => None,
+            }))
+        },
+    })
+}
+
+// Whether `base` still holds for the workspace: same root, no open buffer
+// among its modules, and every file and probe it read answers the same.
+base_holds* = (
+    base      : WorkspaceBase,
+    env       : Env,
+    scratch   : Alloc,
+    directory : str,
+    root      : str,
+    docs      : Map<str, str>
+) Res<bool, AllocError> {
+    absolute_root = anchored_path(scratch, directory, root).try();
+    opened ::= false;
+    docs.pairs((h, path, text) {
+        full = anchored_path(scratch, directory, path).try();
+        base.units.find((u) { u.path.eq(full) }).when_ok((u) { opened = true; });
+    });
+    (base.b.root.eq(absolute_root) && !opened).match({
+        false => Ok(false),
+        true  => base.b.inputs.match({
+            None      => Ok(false),
+            Ok(saved) => replay(env, scratch, saved.paths.view()).try().match({
+                None    => Ok(false),
+                Ok(now) => Ok(now.record.view().eq(saved.record.view())),
+            }),
+        }),
+    })
+}
+
+// Check the workspace on top of `base`; None when the program no longer
+// reaches every module of the base, so the base must be rebuilt.
+check_workspace_after* = (
+    base      : WorkspaceBase,
+    env       : Env,
+    a         : Alloc,
+    directory : str,
+    root      : str,
+    entry     : str,
+    docs      : Map<str, str>
+) Res<Res<WorkspaceCheck>, AllocError> {
+    p = prepare_workspace(env, a, directory, root, entry, docs).try();
+    b ::= p.b;
+    b.tree     = base.b.tree.dup(a).try();
+    b.overlay  = p.over;
+    b.speaking = false;
+    b.track_links();
+    b.walk_from(p.unit, base.units).try();
+    reached ::= a.Map<str, bool>();
+    reached.set("", true).try();
+    reached.set(p.unit.path, true).try();
+    grew ::= true;
+    loop(() { grew }, (h) {
+        grew = false;
+        reach(reached, base.b.links.value_or(a.Vec<Link>()), grew).try();
+        reach(reached, b.links.value_or(a.Vec<Link>()), grew).try();
+    });
+    whole = base.units.find((u) { !reached.get(u.path).value_or(false) })
+        .match({ Ok(_) => false, None => true });
+    whole.match({
+        false => Ok(None),
+        true  => {
+            c ::= base.c.extended(a, b.tree).try();
+            (b.faults > 0).then(() { c.after_syntax_faults(); });
+            c.check_after(base.done).try();
+            Ok(Ok(WorkspaceCheck(b: b, c: c)))
+        },
+    })
+}
+
+reach = (reached :: Map<str, bool>, links: Vec<Link>, grew :: bool)
+        Res<AllocError> {
+    links.loop((l) {
+        (reached.get(l.from).value_or(false)
+            && !reached.get(l.to).value_or(false)).then(() {
+            reached.set(l.to, true).try();
+            grew = true;
+        });
+    });
+    Ok
 }
 
 CheckedBuild* = {
@@ -1069,12 +1341,4 @@ host_target* = () Res<Target> {
         arch: arch,
         abi: os.match({ Macos => Abi.Darwin, _ => Abi.Gnu })
     ))
-}
-
-// Add a dependency module to the walk unless it is already queued.
-queue_unit = (unit: Unit, seen :: Vec<Unit>) Res<AllocError> {
-    seen.find((u) { u.name.eq(unit.name) }).match({
-        Ok(_) => Ok,
-        None  => seen.add(unit),
-    })
 }

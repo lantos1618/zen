@@ -559,6 +559,19 @@ Types* = {
     }
 }
 
+// A copy in `a` that keeps every interned id; interning in either copy
+// leaves the other unchanged.
+dup_types* = (t: Types, a: Alloc) Res<Types, AllocError> {
+    Ok(Types(
+        kinds: t.kinds.dup(a).try(),
+        keys: t.keys.dup(a).try(),
+        by_key: t.by_key.dup(a).try(),
+        count: t.count,
+        std_decls: t.std_decls,
+        alloc: a
+    ))
+}
+
 Types* = (a: Alloc) Types {
     Types(
         kinds: a.Vec<Ty>(),

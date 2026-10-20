@@ -9,7 +9,8 @@
 { Note } = std.parse.parse_diag
 { Checker } = sema.sema_check
 { message, write_detail } = sema.sema_diag
-{ Build, check_workspace } = zen.zen_build
+{ Build, check_workspace, WorkspaceCheck, WorkspaceBase } = zen.zen_build
+{ workspace_base, base_holds, check_workspace_after } = zen.zen_build
 { Classed } = lsp.lsp_colour
 { classify } = lsp.lsp_names
 { uri_at, path_of } = lsp.lsp_uri
@@ -65,6 +66,10 @@ Inner = {
 Built* = {
     arena :: Arena,
 
+    // Owns `base`, which outlives the per-check arena.
+    base_arena :: Arena,
+    base :: Res<WorkspaceBase> = None,
+
     cur :: Res<Inner>,
 
     stale :: bool = false,
@@ -89,6 +94,71 @@ Built* = {
 
     invalidate* = (self :: @Self) { self.stale = true; }
 
+    // Check on the kept base while it holds, rebuilding it when it does
+    // not; check the whole workspace when no base qualifies.
+    check = (self :: @Self, env: Env, root: str, entry: str,
+             docs: Map<str, str>) Res<WorkspaceCheck, AllocError> {
+        env.fs.cwd(self.arena).match({
+            Err(_)        => check_workspace(
+                env,
+                self.arena,
+                root,
+                entry,
+                docs
+            ),
+            Ok(directory) => {
+                dir   = directory.view();
+                holds = self.base.match({
+                    None     => false,
+                    Ok(base) => base.base_holds(
+                        env,
+                        self.arena,
+                        dir,
+                        root,
+                        docs
+                    ).try(),
+                });
+                (!holds).then(() {
+                    self.forget_base(env);
+                    self.base = workspace_base(
+                        env,
+                        self.arena,
+                        self.base_arena,
+                        dir,
+                        root,
+                        entry,
+                        docs
+                    ).try();
+                });
+                turn: Res<WorkspaceCheck> = self.base.match({
+                    None     => None,
+                    Ok(base) => base.check_workspace_after(
+                        env,
+                        self.arena,
+                        dir,
+                        root,
+                        entry,
+                        docs
+                    ).try(),
+                });
+                turn.match({
+                    Ok(checked) => Ok(checked),
+                    None        => {
+                        self.forget_base(env);
+                        check_workspace(env, self.arena, root, entry, docs)
+                    },
+                })
+            },
+        })
+    }
+
+    forget_base = (self :: @Self, env: Env) {
+        self.base = None;
+        fresh ::= env.mem.alloc();
+        self.base_arena.drop();
+        self.base_arena = consume fresh;
+    }
+
     rebuild = (self :: @Self, env: Env, root: str, entry: str,
                uris: Vec<str>, docs: Map<str, str>) Res<AllocError> {
         // A refused rebuild must not expose values owned by the old arena.
@@ -109,13 +179,7 @@ Built* = {
             }).try();
         });
 
-        checked = check_workspace(
-            env,
-            self.arena,
-            kept_root,
-            kept_entry,
-            over
-        ).try();
+        checked = self.check(env, kept_root, kept_entry, over).try();
         spots ::= self.arena.Vec<Spot>();
         checked.b.parse_spots(self.arena, kept_root, spots).try();
         checked.c.sema_spots(self.arena, kept_root, spots).try();
@@ -264,11 +328,14 @@ restore_uris = (spots :: Vec<Spot>, a: Alloc, directory: str, uris: Vec<str>)
 }
 
 Built.impl(Drop, {
-    drop = (self :: @Self) { self.arena.drop(); }
+    drop = (self :: @Self) {
+        self.arena.drop();
+        self.base_arena.drop();
+    }
 })
 
 Built* = (env: Env) Built {
-    Built(arena: env.mem.alloc(), cur: None)
+    Built(arena: env.mem.alloc(), base_arena: env.mem.alloc(), cur: None)
 }
 
 parse_spots = (b: Build, a: Alloc, root: str, spots :: Vec<Spot>)

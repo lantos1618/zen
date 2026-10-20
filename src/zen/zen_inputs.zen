@@ -7,7 +7,8 @@
 
 { Alloc, AllocError } = std.mem
 { str, String } = std.text
-{ Res, Ok, Range, Hasher } = std.core
+{ Res, Ok, None, Range, Hasher } = std.core
+{ Env } = std.env
 
 Inputs* = {
     paths* :: String,
@@ -60,4 +61,24 @@ digest* = (text: str) u64 {
     h ::= Hasher();
     Range(0, text.len).loop((i) { h.write_u8(text.index(i)); });
     h.finish()
+}
+
+// Rebuild the record for a `paths` listing from the filesystem. None means
+// a listed file can no longer be read, so the old record cannot match.
+replay* = (env: Env, a: Alloc, paths: str) Res<Res<Inputs>, AllocError> {
+    now      ::= inputs(a).try();
+    readable ::= true;
+    paths.split('\n').loop((line) {
+        (line.len > 2).then(() {
+            path = line.slice(2, line.len);
+            (line.index(0) == 'R').match({
+                true  => env.fs.read(a, path).match({
+                    Ok(text) => now.read(path, text.view()).try(),
+                    Err(_)   => { readable = false; },
+                }),
+                false => now.probe(path, env.fs.exists(path)).try(),
+            });
+        });
+    });
+    Ok(readable.match({ true => Ok(now), false => None }))
 }

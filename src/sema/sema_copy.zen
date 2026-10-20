@@ -18,7 +18,8 @@ PayloadPolicy = { ActorMessage | OwningCopy | BoundCarrier }
 owning_copy_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
     walk ::= PayloadWalk(
         seen: c.alloc.Vec<TyId>(),
-        policy: PayloadPolicy.OwningCopy
+        policy: PayloadPolicy.OwningCopy,
+        described: false
     );
     walk.unsafe(c, ty)
 }
@@ -35,7 +36,8 @@ mailbox_payload_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
         _       => {
             walk ::= PayloadWalk(
                 seen: c.alloc.Vec<TyId>(),
-                policy: PayloadPolicy.ActorMessage
+                policy: PayloadPolicy.ActorMessage,
+                described: false
             );
             walk.unsafe(c, ty)
         },
@@ -61,6 +63,33 @@ mailbox_byte_buffer* = (c: Checker, ty: TyId) bool {
     })
 }
 
+// A struct or enum message whose only borrowed memory is str fields reached
+// through fields and variants: the send copies each live one into the
+// message, as it does a direct str argument.
+mailbox_described* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+    c.types.at(ty).match({
+        Named(_) => {
+            strict ::= PayloadWalk(
+                seen: c.alloc.Vec<TyId>(),
+                policy: PayloadPolicy.ActorMessage,
+                described: false
+            );
+            strict.unsafe(c, ty).try().match({
+                false => Ok(false),
+                true  => {
+                    walk ::= PayloadWalk(
+                        seen: c.alloc.Vec<TyId>(),
+                        policy: PayloadPolicy.ActorMessage,
+                        described: true
+                    );
+                    Ok(!walk.unsafe(c, ty).try())
+                },
+            })
+        },
+        _        => Ok(false),
+    })
+}
+
 // `std.actor.Bytes`: a pool-backed Drop buffer a mailbox moves whole.
 mailbox_owned_bytes* = (c: Checker, ty: TyId) bool {
     c.types.at(ty).match({
@@ -80,7 +109,8 @@ carries_bound* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
         None      => {
             walk ::= PayloadWalk(
                 seen: c.alloc.Vec<TyId>(),
-                policy: PayloadPolicy.BoundCarrier
+                policy: PayloadPolicy.BoundCarrier,
+                described: false
             );
             found = walk.unsafe(c, ty).try();
             c.carrier_memo.set(ty, found).try();
@@ -95,6 +125,9 @@ carries_bound* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
 PayloadWalk = {
     seen :: Vec<TyId>,
     policy: PayloadPolicy,
+    // A str reached through struct fields and enum variants alone gets a
+    // slice descriptor from the send (`mailbox_described`).
+    described: bool,
 
     actor_message = (self: @Self) bool {
         self.policy.match({ ActorMessage => true, _ => false })
@@ -118,22 +151,49 @@ PayloadWalk = {
     fresh = (self :: @Self, c :: Checker, ty: TyId)
             Res<bool, AllocError> {
         c.types.at(ty).match({
-            Prim(p)  => Ok(self.actor_message() && p.name.eq("str")),
+            Prim(p)  => Ok(
+                self.actor_message() && p.name.eq("str") && !self.described
+            ),
             Fn(_)    => Ok(self.actor_message()),
             Var(_)   => Ok(self.actor_message() || self.bound_carrier()),
             Infer    => Ok(false),
             Unknown  => Ok(false),
             Array(a) => (a.count == 0).match({
                 true  => Ok(false),
-                false => self.unsafe(c, a.elem),
+                false => self.opaque(c, a.elem),
             }),
-            Res(r)   => self.unsafe(c, r.value).try().match({
+            Res(r)   => self.opaque(c, r.value).try().match({
                 true  => Ok(true),
-                false => self.unsafe(c, r.error),
+                false => self.opaque(c, r.error),
             }),
-            Union(u) => self.list(c, u.members),
+            Union(u) => self.opaque_list(c, u.members),
             Named(n) => self.named(c, ty, n),
         })
+    }
+
+    // Descriptors reach no str inside an array, Res or structural union.
+    opaque = (self :: @Self, c :: Checker, ty: TyId) Res<bool, AllocError> {
+        self.described.match({
+            false => self.unsafe(c, ty),
+            true  => {
+                strict ::= PayloadWalk(
+                    seen: c.alloc.Vec<TyId>(),
+                    policy: self.policy,
+                    described: false
+                );
+                strict.unsafe(c, ty)
+            },
+        })
+    }
+
+    opaque_list = (self :: @Self, c :: Checker, types: Vec<TyId>)
+                  Res<bool, AllocError> {
+        unsafe ::= false;
+        types.loop((h, ty) {
+            unsafe = self.opaque(c, ty).try();
+            unsafe.then(() { h.break(); });
+        });
+        Ok(unsafe)
     }
 
     list = (self :: @Self, c :: Checker, types: Vec<TyId>)

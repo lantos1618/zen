@@ -34,7 +34,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok((values.read(0) == 1 && values.read(1) == 5 && values.read(2) == 9).match({ true => 0, false => 1 }))
 }
 ''')
-        self.assertIn("((void *)&", output.read_text())
+        self.assertRegex(output.read_text(), r"\(\(void \*\)&|\(uintptr_t\)&")
         self.assertEqual(self.run_c(directory, output).returncode, 0)
 
     def test_omitted_unit_return_callback(self):

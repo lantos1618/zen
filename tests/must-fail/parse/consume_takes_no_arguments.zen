@@ -1,0 +1,8 @@
+// `.consume()` is a move, not a call: an argument is one error, with no
+// cascade after it.
+main = () i32 {
+    x = 1;
+    i = 2;
+    y = x.consume(i);
+    0
+}

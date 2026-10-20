@@ -186,12 +186,12 @@ C = {
             "int main(int argc, char **argv, char **envp) {\n  zr_argc = (uint64_t)argc;\n  zr_argv = (uint64_t)(uintptr_t)argv;\n  zr_envp = (uint64_t)(uintptr_t)envp;\n"
         ).try();
         self.out.add(
-            unit_entry.match({ true => "  ", false => "  zr_exit((int)" })
+            unit_entry.match({ true => "  ", false => "  int zr_status = (int)" })
         ).try();
         self.callee_name(program.entry).try();
         self.out.add(unit_entry.match({
-            true  => "();\n  zr_exit(0);\n}\n",
-            false => "());\n}\n",
+            true  => "();\n  zr_finish();\n  return 0;\n}\n",
+            false => "();\n  zr_finish();\n  return zr_status;\n}\n",
         }))
     }
 
@@ -2529,13 +2529,17 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add("  if (zr_guard) longjmp(*zr_guard, 1);\n").try();
     out.add("  _exit(134);\n").try();
     out.add("}\n").try();
-    out.add(
-        "static inline ZR_U __attribute__((noreturn)) void zr_exit(int status) {\n"
-    ).try();
+    // Returning from `main` runs C `atexit` handlers; `zr_exit` does not.
+    out.add("static inline ZR_U void zr_finish(void) {\n").try();
     out.add(
         "  if (zr_globals[0]) ((void (*)(void))(uintptr_t)zr_globals[0])();\n"
     ).try();
     out.add("  zr_flush();\n").try();
+    out.add("}\n").try();
+    out.add(
+        "static inline ZR_U __attribute__((noreturn)) void zr_exit(int status) {\n"
+    ).try();
+    out.add("  zr_finish();\n").try();
     out.add("  _exit(status);\n").try();
     out.add("}\n").try();
     out.add(

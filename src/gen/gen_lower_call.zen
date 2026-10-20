@@ -1745,6 +1745,9 @@ native_callback = (lo :: Lowerer, id: ExprId, c: Call, span: Span)
         probe = lo.temp(lo.param_type(callee, i).try()).try();
         lo.native_word(probe.slot).ensure(callback_refused(span)).try();
     });
+    ret    = lo.result_type(callee).try();
+    answer = lo.temp(ret).try();
+    (lo.is_unit(ret) || lo.native_word(answer.slot)).ensure(callback_refused(span)).try();
     index = lo.enqueue(callee).try();
     out   = lo.temp(lo.type_of(id).try()).try();
     lo.add(Instruction.CodeAddress(CodeRef(

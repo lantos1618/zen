@@ -40,23 +40,22 @@ prefix = '''#include <stdint.h>
 bool aligned(const unsigned char *p) { return ((uintptr_t)p & 15u) == 0; }
 static size_t page_maps;
 #define mmap counted_mmap
-#define _exit counted_exit
+#define main zen_main
 '''
 suffix = '''
 #include <stdio.h>
 #undef mmap
-#undef _exit
+#undef main
 void *mmap(void *, size_t, int, int, int, off_t);
-void _exit(int) __attribute__((noreturn));
 void *counted_mmap(void *at, size_t n, int prot, int flags, int fd, off_t off) {
     page_maps++;
     return mmap(at, n, prot, flags, fd, off);
 }
-void counted_exit(int status) {
-    if(status || page_maps != 3) { fprintf(stderr, "status=%d maps=%zu\\n", status, page_maps); _exit(1); }
+int main(int argc, char **argv, char **envp) {
+    int status = zen_main(argc, argv, envp);
+    if(status || page_maps != 3) { fprintf(stderr, "status=%d maps=%zu\\n", status, page_maps); return 1; }
     puts("PASS: overflowing page headers rejected before mapping; ordinary page and aligned Arena allocation succeed");
-    fflush(stdout);
-    _exit(0);
+    return 0;
 }
 '''
 

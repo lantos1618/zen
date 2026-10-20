@@ -27,13 +27,13 @@
 { ExprId, Call } = std.ast
 { Span, nowhere } = std.source
 { TyId, Def, DeclId, CheckedCall } = sema.sema
-{ Scalar, Layout, Op, Move, Binary, Instruction, Store, Address, Convert } = gen.gen_ir
+{ Scalar, Layout, Op, Move, Binary, Instruction, Store, Load, Address, Convert } = gen.gen_ir
 { CodeRef, Func, Pages, CopyMem, TrapKind, StaticBytes } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Lowerer, Value, Place, Base, Callee, to_i64_bits } = gen.gen_lower_core
 { Source, argument_value, param_type, real_call } = gen.gen_lower_call
 { resolve, handle_for_place, payload_type, pointee_of, bound_of, dispatch } = gen.gen_lower_member
-{ size_of, align_of, round_up, class_of, FieldAt } = gen.gen_lower_shape
+{ size_of, align_of, round_up, class_of, FieldAt, shape } = gen.gen_lower_shape
 { Synth, TurnName, std_call, std_function, enqueue_synth, begin_synth, finish_synth } = gen.gen_lower_thread
 { succeeded, is_null, byte_pointer, ok_payload } = gen.gen_lower_thread
 { Inst } = sema.sema_inst
@@ -634,8 +634,12 @@ message_block = (lo :: Lowerer, arg: ExprId, ty: TyId, span: Span)
     ))).try();
     data    = lo.slot_of(Scalar.Ptr).try();
     lo.add(Instruction.AddressOf(Address(out: data, slot: payload))).try();
+    copied      = lo.copied(ty);
+    nested      = copied.match({ true => 0, false => lo.nested_strs(
+        ty
+    ).try() });
     slices      = lo.slot_of(Scalar.Block(Layout(
-        size: SLICE_BYTES.larger(16),
+        size: (SLICE_BYTES * nested.larger(1)).larger(16),
         align: 16
     ))).try();
     descriptors = lo.slot_of(Scalar.Ptr).try();
@@ -649,8 +653,16 @@ message_block = (lo :: Lowerer, arg: ExprId, ty: TyId, span: Span)
         offset: 0,
         value: value.slot
     ))).try();
-    copied = lo.copied(ty);
     copied.then(() { lo.describe(descriptors, 0, value, 0, span).try(); });
+    one ::= lo.alloc.Vec<FieldAt>();
+    one.add(FieldAt(name: "", ty: ty, offset: 0)).try(LowerError.OutOfMemory);
+    count      = (nested > 0).match({
+        true  => lo.live_strs(descriptors, data, one, 0, span).try(),
+        false => lo.word_const(
+            Scalar.U64,
+            copied.match({ true => 1, false => 0 })
+        ).try(),
+    });
     usize_ty   = lo.prim("usize").try();
     pointer_ty = lo.byte_pointer().try();
     args ::= lo.one(Source.Computed(Value(
@@ -663,19 +675,13 @@ message_block = (lo :: Lowerer, arg: ExprId, ty: TyId, span: Span)
         ty: usize_ty
     ))).try();
     args.more(Source.Computed(Value(
-        slot: copied.match({ true => descriptors, false => lo.word_const(
+        slot: (copied || nested > 0).match({ true => descriptors, false => lo.word_const(
             Scalar.Ptr,
             0
         ).try() }),
         ty: pointer_ty
     ))).try();
-    args.more(Source.Computed(Value(
-        slot: lo.word_const(
-            Scalar.U64,
-            copied.match({ true => 1, false => 0 })
-        ).try(),
-        ty: usize_ty
-    ))).try();
+    args.more(Source.Computed(Value(slot: count, ty: usize_ty))).try();
     lo.actor_call("actor_message", args, span)
 }
 
@@ -714,6 +720,7 @@ send = (
     at      :: usize = 0;
     widest  :: usize = 1;
     strs    :: usize = 0;
+    nested  :: usize = 0;
     c.args.loop((h, k, arg) {
         (k >= skip).then(() {
             i      = k - skip;
@@ -733,7 +740,10 @@ send = (
                 formal
             )).try(LowerError.OutOfMemory);
             at = at + size_of(class);
-            lo.copied(formal).then(() { strs = strs + 1; });
+            lo.copied(formal).match({
+                true  => { strs = strs + 1; },
+                false => { nested = nested + lo.nested_strs(formal).try(); },
+            });
         });
     });
     // As C lays out the payload struct (one byte when there are no fields).
@@ -748,7 +758,7 @@ send = (
     data    = lo.slot_of(Scalar.Ptr).try();
     lo.add(Instruction.AddressOf(Address(out: data, slot: payload))).try();
     slices      = lo.slot_of(Scalar.Block(Layout(
-        size: (strs * SLICE_BYTES).larger(16),
+        size: ((strs + nested) * SLICE_BYTES).larger(16),
         align: 16
     ))).try();
     descriptors = lo.slot_of(Scalar.Ptr).try();
@@ -792,6 +802,10 @@ send = (
             });
         });
     });
+    count      = (nested > 0).match({
+        true  => lo.live_strs(descriptors, data, fields, strs, span).try(),
+        false => lo.word_const(Scalar.U64, strs.to_i64_bits()).try(),
+    });
     turn       = lo.send_turn(hook, actor_ty, fields, buffers, span).try();
     usize_ty   = lo.prim("usize").try();
     pointer_ty = lo.byte_pointer().try();
@@ -805,13 +819,10 @@ send = (
         ty: usize_ty
     ))).try();
     send_args.more(Source.Computed(Value(
-        slot: (strs > 0).match({ true => descriptors, false => no_slices }),
+        slot: (strs + nested > 0).match({ true => descriptors, false => no_slices }),
         ty: pointer_ty
     ))).try();
-    send_args.more(Source.Computed(Value(
-        slot: lo.word_const(Scalar.U64, strs.to_i64_bits()).try(),
-        ty: usize_ty
-    ))).try();
+    send_args.more(Source.Computed(Value(slot: count, ty: usize_ty))).try();
     status = lo.actor_call(send_entry(name), send_args, span).try();
     lo.free_unsent(status.slot, data, fields).try();
     ty   = lo.type_of(id).try();
@@ -1046,6 +1057,218 @@ describe = (
     )))
 }
 
+// How many str descriptors a payload field of `ty` that is not itself a
+// str can need: a record needs its fields' sum, a tagged value its widest
+// variant's.
+nested_strs = (lo :: Lowerer, ty: TyId) Res<usize, LowerError> {
+    lo.is_str(ty).match({
+        true  => Ok(1),
+        false => {
+            s = lo.shape(ty).try();
+            s.form.match({
+                Record(fields)   => {
+                    count :: usize = 0;
+                    fields.loop(
+                        (f) { count = count + lo.nested_strs(f.ty).try(); }
+                    );
+                    Ok(count)
+                },
+                Variants(tagged) => {
+                    widest :: usize = 0;
+                    tagged.variants.loop((v) {
+                        v.payload.when_ok(
+                            (t) { widest = widest.larger(
+                                lo.nested_strs(t).try()
+                            ); }
+                        );
+                    });
+                    Ok(widest)
+                },
+                _                => Ok(0),
+            })
+        },
+    })
+}
+
+// Describe every str the live variants of the payload `fields` hold, after
+// the `direct` str arguments already described; the descriptor count.
+live_strs = (
+    lo          :: Lowerer,
+    descriptors : usize,
+    data        : usize,
+    fields      : Vec<FieldAt>,
+    direct      : usize,
+    span        : Span
+) Res<usize, LowerError> {
+    cell = lo.slot_of(Scalar.Block(Layout(size: 16, align: 16))).try();
+    live = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: live, slot: cell))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: live,
+        offset: 0,
+        value: lo.word_const(Scalar.U64, direct.to_i64_bits()).try()
+    ))).try();
+    fields.loop((f) {
+        (!lo.copied(f.ty)).then(() {
+            lo.describe_live(
+                descriptors,
+                live,
+                data,
+                f.ty,
+                f.offset,
+                span
+            ).try();
+        });
+    });
+    count = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.LoadValue(Load(
+        out: count,
+        base: live,
+        offset: 0
+    ))).try();
+    Ok(count)
+}
+
+// Describe the strs of the value of `ty` at `offset` in the payload `data`
+// that its variants, as tagged at run time, hold.
+describe_live = (
+    lo          :: Lowerer,
+    descriptors : usize,
+    live        : usize,
+    data        : usize,
+    ty          : TyId,
+    offset      : usize,
+    span        : Span
+) Res<LowerError> {
+    none = lo.nested_strs(ty).try() == 0;
+    (none || lo.is_str(ty)).match({
+        true  => none.match({
+            true  => Ok,
+            false => lo.describe_at(descriptors, live, data, ty, offset, span),
+        }),
+        false => {
+            s = lo.shape(ty).try();
+            s.form.match({
+                Record(fields)   => {
+                    fields.loop((f) {
+                        lo.describe_live(
+                            descriptors,
+                            live,
+                            data,
+                            f.ty,
+                            offset + f.offset,
+                            span
+                        ).try();
+                    });
+                    Ok
+                },
+                Variants(tagged) => {
+                    tag = lo.slot_of(Scalar.U32).try();
+                    lo.add(Instruction.LoadValue(Load(
+                        out: tag,
+                        base: data,
+                        offset: offset
+                    ))).try();
+                    done = lo.label().try();
+                    tagged.variants.loop((h, i, v) {
+                        v.payload.when_ok((t) {
+                            (lo.nested_strs(t).try() > 0).then(() {
+                                test = lo.slot_of(Scalar.Bool).try();
+                                lo.add(Instruction.BinaryValue(Binary(
+                                    out: test,
+                                    left: tag,
+                                    right: lo.word_const(
+                                        Scalar.U32,
+                                        i.to_i64_bits()
+                                    ).try(),
+                                    op: Op.Equal,
+                                    span: span
+                                ))).try();
+                                yes = lo.label().try();
+                                no  = lo.label().try();
+                                lo.branch_to(test, yes, no).try();
+                                lo.start(yes);
+                                lo.describe_live(
+                                    descriptors,
+                                    live,
+                                    data,
+                                    t,
+                                    offset + tagged.payload,
+                                    span
+                                ).try();
+                                lo.jump(done).try();
+                                lo.start(no);
+                            });
+                        });
+                    });
+                    lo.jump(done).try();
+                    lo.start(done);
+                    Ok
+                },
+                _                => Ok,
+            })
+        },
+    })
+}
+
+// One descriptor, at index *live, for the str at `offset` in the payload
+// `data`; *live then counts it.
+describe_at = (
+    lo          :: Lowerer,
+    descriptors : usize,
+    live        : usize,
+    data        : usize,
+    ty          : TyId,
+    offset      : usize,
+    span        : Span
+) Res<LowerError> {
+    count = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.LoadValue(Load(
+        out: count,
+        base: live,
+        offset: 0
+    ))).try();
+    base = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.Cast(Convert(out: base, input: descriptors))).try();
+    skip = lo.word_op(
+        Op.Mul,
+        count,
+        lo.word_const(Scalar.U64, SLICE_BYTES.to_i64_bits()).try(),
+        span
+    ).try();
+    at   = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.Cast(Convert(
+        out: at,
+        input: lo.word_op(Op.Add, base, skip, span).try()
+    ))).try();
+    text = lo.read(Place(
+        base: Base.Through(data),
+        offset: offset,
+        ty: ty
+    )).try();
+    lo.describe(at, 0, text, offset, span).try();
+    next = lo.word_op(
+        Op.Add,
+        count,
+        lo.word_const(Scalar.U64, 1).try(),
+        span
+    ).try();
+    lo.add(Instruction.StoreValue(Store(base: live, offset: 0, value: next)))
+}
+
+word_op = (lo :: Lowerer, op: Op, left: usize, right: usize, span: Span)
+          Res<usize, LowerError> {
+    out = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: out,
+        left: left,
+        right: right,
+        op: op,
+        span: span
+    ))).try();
+    Ok(out)
+}
+
 is_str = (lo :: Lowerer, ty: TyId) bool {
     lo.check.types.at(ty).match({ Prim(p) => p.name.eq("str"), _ => false })
 }
@@ -1073,7 +1296,7 @@ transferable = (
         span,
         "an actor payload without a concrete mailbox transfer"
     )).try();
-    (lo.copied(formal) || moved || !lo.check.actor_payload_unsafe(formal).try(LowerError.OutOfMemory))
+    (lo.copied(formal) || moved || lo.check.actor_described(formal).try(LowerError.OutOfMemory) || !lo.check.actor_payload_unsafe(formal).try(LowerError.OutOfMemory))
         .ensure(unsupported(
             span,
             "an actor payload without a concrete mailbox transfer"

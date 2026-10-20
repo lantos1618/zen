@@ -106,6 +106,7 @@ SemaFault* =
     | HeldOutOfRange: HeldFault        // a literal-held binding's value does not fit its use
     | UntypedVariable: TypeFault       // a `::=` binding of an untyped number used as a narrower integer
     | ActorPayload: NameFault          // payload storage cannot cross a mailbox
+    | TurnViewStored: NameFault        // a received str kept past its turn
     | InvalidNumericConversion: NameFault
     | InvalidPrimitive: NameFault
     | InvalidPrinter: NameFault
@@ -271,6 +272,7 @@ message* = (fault: SemaFault) str {
         HeldOutOfRange(_)            => "out of range: a binding of a number with no written type holds that number, and the type wanted here cannot hold it",
         UntypedVariable(_)           => "a variable of a number with no written type is an i64, and the value it holds at run time may not fit the type wanted here",
         ActorPayload(_)              => "actor message payload is not transferable: owned allocator-backed graphs need receiver-arena transfer",
+        TurnViewStored(_)            => "a str received in a message is a view into the message, which is reused when the turn ends: it may not be stored through `self` or another borrowed parameter — copy it into memory the actor owns",
         InvalidEnumRepresentation(_) => "a represented enum's final payload catch-all must use a fixed-width integer type",
         InvalidEnumDiscriminant(_)   => "invalid enum discriminant: every known variant needs one unique compile-time integer; one payload catch-all may appear last",
         DuplicateEnumDiscriminant(_) => "duplicate enum discriminant: decoding one integer must select exactly one variant",
@@ -528,6 +530,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         HeldOutOfRange(f)            => out.write_held(types, f),
         UntypedVariable(f)           => out.write_untyped_variable(types, f),
         ActorPayload(f)              => out.write_name(f),
+        TurnViewStored(f)            => out.write_name(f),
         InvalidEnumRepresentation(f) => out.write_name(f),
         InvalidEnumDiscriminant(f)   => out.write_name(f),
         DuplicateEnumDiscriminant(f) => out.write_pair(f),

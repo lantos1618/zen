@@ -1723,7 +1723,7 @@ refuse_actor_payloads = (
                     None    => false,
                     Ok(arg) => c.actor_consumed_argument(arg.value),
                 });
-                (!transferred && c.actor_payload_unsafe(a.ty).try()).then(() {
+                (!transferred && !c.actor_described(a.ty).try() && c.actor_payload_unsafe(a.ty).try()).then(() {
                     spelling = c.types.name_of(a.ty).try();
                     c.report(
                         a.span.file,

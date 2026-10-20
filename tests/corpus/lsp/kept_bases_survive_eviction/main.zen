@@ -1,6 +1,7 @@
-// The server keeps at most four user bases and two std bases. Six open
+// The server keeps at most four user bases and two std bases. Five open
 // graphs, each importing a different std module, are edited in turn, so every
-// edit evicts a base, and a std base is dropped with the user bases over it.
+// edit evicts a user base. Opening a std module drops the std base with the
+// user bases over it, and every turn reports that no user base outlives it.
 // Each edit must still publish exactly its own change, and a leaf broken on
 // disk must be seen even though a kept base was built from it.
 
@@ -20,7 +21,6 @@ G1*: str = "{ l1 } = app.l1\n{ println } = std.io\n\nvalue = () i32 { l1() }\n"
 G2*: str = "{ l2 } = app.l2\n{ Alloc } = std.mem\n\nvalue = () i32 { l2() }\n"
 G3*: str = "{ l3 } = app.l3\n{ write_text } = std.json\n\nvalue = () i32 { l3() }\n"
 G4*: str = "{ l4 } = app.l4\n{ Env } = std.env\n\nvalue = () i32 { l4() }\n"
-G5*: str = "{ l5 } = app.l5\n{ Range } = std.core\n\nvalue = () i32 { l5() }\n"
 
 // Each graph with an undefined name added.
 BAD0*: str = "{ l0 } = app.l0\n{ str } = std.text\n\nvalue = () i32 { l0() }\n\nbroken = () i32 { absent }\n"
@@ -28,7 +28,6 @@ BAD1*: str = "{ l1 } = app.l1\n{ println } = std.io\n\nvalue = () i32 { l1() }\n
 BAD2*: str = "{ l2 } = app.l2\n{ Alloc } = std.mem\n\nvalue = () i32 { l2() }\n\nbroken = () i32 { absent }\n"
 BAD3*: str = "{ l3 } = app.l3\n{ write_text } = std.json\n\nvalue = () i32 { l3() }\n\nbroken = () i32 { absent }\n"
 BAD4*: str = "{ l4 } = app.l4\n{ Env } = std.env\n\nvalue = () i32 { l4() }\n\nbroken = () i32 { absent }\n"
-BAD5*: str = "{ l5 } = app.l5\n{ Range } = std.core\n\nvalue = () i32 { l5() }\n\nbroken = () i32 { absent }\n"
 
 // `tests/run.py` stages a directory test into `<work>/src` and runs the
 // program from `<work>`, so these are the paths the server will open.
@@ -37,14 +36,15 @@ URI1*: str = "file://src/app/g1.zen"
 URI2*: str = "file://src/app/g2.zen"
 URI3*: str = "file://src/app/g3.zen"
 URI4*: str = "file://src/app/g4.zen"
-URI5*: str = "file://src/app/g5.zen"
 LEAF_PATH*: str = "src/app/l3.zen"
 LEAF*: str = "l3* = () i32 { 3 }\n"
 LEAF_BROKEN*: str = "l3* = () i32 { gone }\n"
+STD_PATH*: str = "src/std/core/num.zen"
+STD_URI*: str = "file://src/std/core/num.zen"
 LEAF_CHANGED*: str = "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\",\"params\":{\"changes\":[{\"uri\":\"file://src/app/l3.zen\",\"type\":2}]}}"
 
-GRAPHS: usize = 6
-TURNS: usize = 12
+GRAPHS: usize = 5
+TURNS: usize = 10
 
 ROOT_URI*: str = "file://."
 INITIALIZED*: str = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}"
@@ -56,11 +56,11 @@ main = (env: Env) Res<i32, AllocError> {
     clean ::= a.Vec<str>();
     bad   ::= a.Vec<str>();
     uris.add(URI0).try(); uris.add(URI1).try(); uris.add(URI2).try();
-    uris.add(URI3).try(); uris.add(URI4).try(); uris.add(URI5).try();
+    uris.add(URI3).try(); uris.add(URI4).try();
     clean.add(G0).try(); clean.add(G1).try(); clean.add(G2).try();
-    clean.add(G3).try(); clean.add(G4).try(); clean.add(G5).try();
+    clean.add(G3).try(); clean.add(G4).try();
     bad.add(BAD0).try(); bad.add(BAD1).try(); bad.add(BAD2).try();
-    bad.add(BAD3).try(); bad.add(BAD4).try(); bad.add(BAD5).try();
+    bad.add(BAD3).try(); bad.add(BAD4).try();
 
     first ::= a.String().try();
     open_session(a, first).try();
@@ -73,11 +73,11 @@ main = (env: Env) Res<i32, AllocError> {
             first
         ).try();
     });
-    batch(s, a, "six clean graphs opened", first.view()).try();
+    batch(s, a, "five clean graphs opened", first.view()).try();
 
     // Break each graph, then fix it, one graph per turn.
     Range(0, TURNS).loop((h, turn) {
-        at     = (turn / 2) % 6;
+        at     = (turn / 2) % GRAPHS;
         broken = turn % 2 == 0;
         text   = broken.match({
             true  => bad.get(at).value_or(""),
@@ -93,6 +93,7 @@ main = (env: Env) Res<i32, AllocError> {
             broken.match({ true => "broken", false => "fixed" })
         );
         walk(out.view());
+        println("    layered {}", s.layered());
     });
 
     env.fs.write(LEAF_PATH, LEAF_BROKEN).match({
@@ -110,6 +111,17 @@ main = (env: Env) Res<i32, AllocError> {
     back ::= a.String().try();
     write_frame(LEAF_CHANGED, back).try();
     batch(s, a, "the leaf of g3 restored", back.view()).try();
+
+    std_file = env.fs.read(a, STD_PATH).match({
+        Ok(t)  => t,
+        Err(_) => a.String().try(),
+    });
+    opened ::= a.String().try();
+    open_doc(a, STD_URI, std_file.view(), opened).try();
+    batch(s, a, "a std module opened unchanged", opened.view()).try();
+    closed ::= a.String().try();
+    close_doc(a, STD_URI, closed).try();
+    batch(s, a, "the std module closed", closed.view()).try();
 
     again ::= a.String().try();
     change_doc(a, URI0, G0, again).try();
@@ -149,6 +161,16 @@ open_doc = (a: Alloc, uri: str, text: str, into :: String)
     write_frame(body.view(), into)
 }
 
+close_doc = (a: Alloc, uri: str, into :: String) Res<AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add("}}}").try();
+    write_frame(body.view(), into)
+}
+
 // Full sync carries the complete buffer in contentChanges[0].text.
 change_doc = (a: Alloc, uri: str, text: str, into :: String)
              Res<AllocError> {
@@ -171,6 +193,7 @@ batch = (s :: Server, a: Alloc, what: str, input: str) Res<AllocError> {
     serve(s, input, out).try();
     println("--- {}", what);
     walk(out.view());
+    println("    layered {}", s.layered());
 }
 
 // Print every frame body so frame count and ordering remain observable.

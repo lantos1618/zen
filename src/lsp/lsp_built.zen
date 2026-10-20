@@ -58,8 +58,22 @@ STD_BASES: usize = 2
 USER_BASES: usize = 4
 
 // A kept base. `id` names it, `under` names the std base a user base is
-// checked on top of, and `entry` is the open document it was built for.
-Kept = { id: usize, under: usize, entry: str, base: WorkspaceBase }
+// checked on top of, `entry` is the open document it was built for, and
+// `opened` the documents open when a std base was built.
+Kept = {
+    id: usize,
+    under: usize,
+    entry: str,
+    opened: Vec<str>,
+    base: WorkspaceBase
+}
+
+// Whether `docs` opens exactly the paths in `opened`.
+same_docs = (opened: Vec<str>, docs: Map<str, str>) bool {
+    opened.len == docs.len() && opened.find((p) {
+        docs.get(p).match({ Ok(_) => false, None => true })
+    }).match({ Ok(_) => false, None => true })
+}
 
 // Kept bases, each owned by the arena at its index; most recently used last.
 Bases = {
@@ -122,10 +136,21 @@ Built* = {
     stds :: Bases,
     users :: Bases,
     ids :: usize = 0,
+    // A std base that no check could use when it was built; another is not
+    // built for the same entry and open documents while it holds.
+    missed :: usize = 0,
 
     cur :: Res<Inner>,
 
     stale :: bool = false,
+
+    // Whether every user base is over a kept std base.
+    layered* = (self: @Self) bool {
+        self.users.views.find((u) {
+            self.stds.views.find((k) { k.id == u.under })
+                .match({ Ok(_) => false, None => true })
+        }).match({ Ok(_) => false, None => true })
+    }
 
     matches* = (self: @Self, root: str, entry: str) bool {
         self.stale.match({
@@ -193,10 +218,12 @@ Built* = {
                         docs
                     ).try(),
                 });
-                // A std base that failed and still holds would fail again.
-                refused                    = self.stds.views.find(
-                    (k) { !k.base.clean }
-                )
+                // A std base that failed, or that no check could use, and
+                // still holds would do so again.
+                refused                    = self.stds.views.find((k) {
+                    !k.base.clean || (k.id == self.missed && k.entry.eq(entry)
+                        && same_docs(k.opened, docs))
+                })
                     .match({ Ok(_) => true, None => false });
                 fresh: Res<WorkspaceCheck> = layered.match({
                     Ok(checked) => Ok(checked),
@@ -349,6 +376,7 @@ Built* = {
             true  => {
                 base       = made.ok_or(AllocError.OutOfMemory).try();
                 kept_entry = entry.dup(owner).try();
+                opened     = owner.Vec<str>();
                 self.ids   = self.ids + 1;
                 self.users.add(
                     consume owner,
@@ -356,6 +384,7 @@ Built* = {
                         id: self.ids,
                         under: layer.id,
                         entry: kept_entry,
+                        opened: opened,
                         base: base
                     )
                 ).try();
@@ -379,16 +408,39 @@ Built* = {
                 Ok(None)
             },
             Ok(base) => {
+                kept_entry = entry.dup(owner).try();
+                opened ::= owner.Vec<str>();
+                docs.pairs((h, path, text) {
+                    opened.add(path.dup(owner).try()).try();
+                });
                 self.ids = self.ids + 1;
-                layer    = Kept(id: self.ids, under: 0, entry: "", base: base);
+                layer    = Kept(
+                    id: self.ids,
+                    under: 0,
+                    entry: kept_entry,
+                    opened: opened,
+                    base: base
+                );
                 self.stds.add(consume owner, layer).try();
                 loop(() { self.stds.views.len > STD_BASES }, (h) {
                     self.drop_std(0);
                 });
-                base.clean.match({
-                    false => Ok(None),
-                    true  => self.on_layer(env, dir, root, entry, docs, layer),
-                })
+                checked: Res<WorkspaceCheck> = base.clean.match({
+                    false => None,
+                    true  => self.on_layer(
+                        env,
+                        dir,
+                        root,
+                        entry,
+                        docs,
+                        layer
+                    ).try(),
+                });
+                checked.match({
+                    None  => { self.missed = layer.id; },
+                    Ok(_) => (),
+                });
+                Ok(checked)
             },
         })
     }

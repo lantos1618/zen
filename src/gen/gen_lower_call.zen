@@ -1767,7 +1767,10 @@ foreign_call = (
                Res<Value, LowerError> {
     lo.c_calls.ensure(unsupported(
         span,
-        "a C function on a target without C"
+        lo.alloc.String(
+            "the C function `{}` on a target without C",
+            callee.f.name.text
+        ).match({ Ok(t) => t.view(), Err(_) => "a C function on a target without C" })
     )).try();
     (callee.f.tparams.len == 0).ensure(unsupported(
         span,

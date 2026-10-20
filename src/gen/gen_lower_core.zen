@@ -2457,7 +2457,10 @@ Lowerer* = {
             None         => {
                 self.c_calls.ensure(unsupported(
                     span,
-                    "a C header constant on a target without C"
+                    self.alloc.String(
+                        "the C header constant `{}` on a target without C",
+                        macro
+                    ).match({ Ok(t) => t.view(), Err(_) => "a C header constant on a target without C" })
                 )).try();
                 header = c_header(self.tree, binding);
                 valid_c_header(header).ensure(unsupported(span, "a C header path with a byte an include name cannot hold")).try();

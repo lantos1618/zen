@@ -1,0 +1,38 @@
+--- six clean graphs opened
+    {"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"hoverProvider":true,"definitionProvider":true,"documentSymbolProvider":true,"documentFormattingProvider":true,"completionProvider":{"triggerCharacters":["."]},"codeActionProvider":{"codeActionKinds":["quickfix"]},"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","string","number","comment","operator","variable","type","function","parameter"],"tokenModifiers":[]},"full":true}},"serverInfo":{"name":"zen","version":"0"}}}
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g5.zen","diagnostics":[]}}
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g4.zen","diagnostics":[]}}
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g3.zen","diagnostics":[]}}
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g2.zen","diagnostics":[]}}
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g1.zen","diagnostics":[]}}
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g0.zen","diagnostics":[]}}
+--- g0 broken
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g0.zen","diagnostics":[{"range":{"start":{"line":5,"character":18},"end":{"line":5,"character":24}},"severity":1,"source":"zen","message":"undefined name: no binding of this name is in scope `absent`"}]}}
+--- g0 fixed
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g0.zen","diagnostics":[]}}
+--- g1 broken
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g1.zen","diagnostics":[{"range":{"start":{"line":5,"character":18},"end":{"line":5,"character":24}},"severity":1,"source":"zen","message":"undefined name: no binding of this name is in scope `absent`"}]}}
+--- g1 fixed
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g1.zen","diagnostics":[]}}
+--- g2 broken
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g2.zen","diagnostics":[{"range":{"start":{"line":5,"character":18},"end":{"line":5,"character":24}},"severity":1,"source":"zen","message":"undefined name: no binding of this name is in scope `absent`"}]}}
+--- g2 fixed
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g2.zen","diagnostics":[]}}
+--- g3 broken
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g3.zen","diagnostics":[{"range":{"start":{"line":5,"character":18},"end":{"line":5,"character":24}},"severity":1,"source":"zen","message":"undefined name: no binding of this name is in scope `absent`"}]}}
+--- g3 fixed
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g3.zen","diagnostics":[]}}
+--- g4 broken
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g4.zen","diagnostics":[{"range":{"start":{"line":5,"character":18},"end":{"line":5,"character":24}},"severity":1,"source":"zen","message":"undefined name: no binding of this name is in scope `absent`"}]}}
+--- g4 fixed
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g4.zen","diagnostics":[]}}
+--- g5 broken
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g5.zen","diagnostics":[{"range":{"start":{"line":5,"character":18},"end":{"line":5,"character":24}},"severity":1,"source":"zen","message":"undefined name: no binding of this name is in scope `absent`"}]}}
+--- g5 fixed
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/g5.zen","diagnostics":[]}}
+--- the leaf of g3 broken on disk
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/l3.zen","diagnostics":[{"range":{"start":{"line":0,"character":15},"end":{"line":0,"character":19}},"severity":1,"source":"zen","message":"undefined name: no binding of this name is in scope `gone`"}]}}
+--- the leaf of g3 restored
+    {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/l3.zen","diagnostics":[]}}
+--- g0 rewritten unchanged, nothing new to say
+    (no frames)

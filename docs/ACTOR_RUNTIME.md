@@ -59,7 +59,9 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
   variants at any depth (not inside `Res`, arrays or unions). The send
   checks the tags of the value it sends and copies the bytes of each str the
   live variants hold, so a message holding none costs nothing extra. The
-  receiver's str is a view into the message, valid for the turn.
+  receiver's str is a view into the message, valid for the turn. Storing a
+  received str (or a binding drawn from one) through `self` is a compile
+  error; copy it into memory the actor owns.
 - A consumed `std.actor.Bytes` is not copied: the message carries its
   pointer, length and capacity, and the receiver owns the pool block. Bytes
   is Drop, so the sender has no second name left for it. The turn frees it

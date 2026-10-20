@@ -475,11 +475,23 @@ postfix_consume = (
     p.bump().try();
     open = p.here_span();
     p.expect(TokenKind.ParenOpen, "expected `()` after `.consume`").try();
-    p.expect_close(
-        TokenKind.ParenClose,
-        "unclosed `(`: this `.consume` is never closed",
-        open
-    ).try();
+    p.at_kind(TokenKind.ParenClose).match({
+        true  => Ok,
+        false => {
+            p.error_at("`.consume()` takes no arguments", open).try();
+            running ::= true;
+            running.loop((h) {
+                (p.at_kind(TokenKind.ParenClose) || p.at_eof()).match({
+                    true  => { running = false; },
+                    false => { p.expr().try(); },
+                });
+                running = running && p.eat(TokenKind.Comma).try();
+            });
+            Ok
+        },
+    }).try();
+    p.expect_close(TokenKind.ParenClose, "expected `)` after `.consume(`", open)
+        .try();
     p.add_expr(ExprKind.Consume(Consume(operand: operand)), m.bare());
 }
 

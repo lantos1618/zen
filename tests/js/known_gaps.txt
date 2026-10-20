@@ -40,6 +40,7 @@ tests/corpus/actor/watch_reports_how_an_actor_ended # UNSUPPORTED: error: unsupp
 tests/corpus/backends/c_ir_pilot/main # UNSUPPORTED: main.zen:4:22: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
 tests/corpus/backends/c_ir_scalar_alias/main # UNSUPPORTED: main.zen:4:130: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
 tests/corpus/backends/c_ir_result_pointer/main # UNSUPPORTED: main.zen:5:108: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/backends/legacy_c_prints_nan_without_sign/main # UNSUPPORTED: main.zen:5:13: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
 tests/corpus/bitwise/secret_words_take_public_counts # UNSUPPORTED: std/ct/ct.zen:48:34: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.
 tests/corpus/bitwise/u128_words # UNSUPPORTED: :0:0: error: unsupported by this backend: u128 values
 tests/corpus/casts-conversions/float_narrowing_rounds_and_exact_conversions_check/main # UNSUPPORTED: main.zen:24:30: error: unsupported by this backend: f32 values

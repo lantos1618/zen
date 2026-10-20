@@ -228,7 +228,7 @@ Diagnostics.impl(Drop, {
 // rebuilds it inside `said_arena` once the value has its final home.
 Diagnostics* = (env: Env, a: Alloc) Diagnostics {
     Diagnostics(
-        built: env.Built(),
+        built: env.Built(a),
         said_arena: env.mem.alloc(),
         said: a.Map<str, str>()
     )

@@ -247,9 +247,13 @@ Build* = {
         self.walk_queue(seen, done.len).try();
     }
 
-    // Parse `units` in order, with what they import, and no entry.
-    walk_units* = (self :: @Self, units: Vec<Unit>) Res<AllocError> {
-        self.walk_queue(units.dup(self.alloc).try(), 0)
+    // Parse `units` in order, with what they import, and no entry, when the
+    // tree already holds `done`, an import-closed set of units.
+    walk_units* = (self :: @Self, done: Vec<Unit>, units: Vec<Unit>)
+                  Res<AllocError> {
+        seen ::= done.dup(self.alloc).try();
+        units.loop((u) { seen.add(u).try(); });
+        self.walk_queue(seen, done.len)
     }
 
     walk_queue = (self :: @Self, seen :: Vec<Unit>, first: usize)
@@ -1106,31 +1110,49 @@ check_workspace_at = (
 // The checked modules of a workspace that no open buffer reaches, kept so
 // later checks parse and check only the rest. Only a base without
 // diagnostics is kept, so its answers do not depend on the modules added.
+// A base that is not `clean` is kept only to know that a later attempt
+// would fail too while it holds; nothing is checked on it.
 WorkspaceBase* = {
     b: Build,
     c: Checker,
     done: Settled,
     units: Vec<Unit>,
+    clean*: bool,
 }
 
-// A base for checking `entry` with `docs` open, owned by `keep`; None when
-// no module qualifies. `scratch` holds the walk that finds the modules.
-workspace_base* = (
+// The units a walk of the workspace reaches that no open buffer reaches,
+// with the walk's import links. On `under` the walk starts from its units,
+// which `clean` leaves out.
+Split = { root: str, std_root: str, clean: Vec<Unit>, links: Vec<Link> }
+
+split_workspace = (
     env       : Env,
     scratch   : Alloc,
-    keep      : Alloc,
     directory : str,
     root      : str,
     entry     : str,
-    docs      : Map<str, str>
-) Res<Res<WorkspaceBase>, AllocError> {
+    docs      : Map<str, str>,
+    under     : Res<WorkspaceBase>
+) Res<Split, AllocError> {
     p = prepare_workspace(env, scratch, directory, root, entry, docs).try();
     probe ::= p.b;
     probe.overlay  = p.over;
     probe.speaking = false;
     probe.track_links();
-    probe.walk(p.unit).try();
-    links = probe.links.value_or(scratch.Vec<Link>());
+    links ::= scratch.Vec<Link>();
+    below ::= scratch.Map<str, bool>();
+    under.match({
+        None      => probe.walk(p.unit).try(),
+        Ok(layer) => {
+            probe.tree = layer.b.tree.dup(scratch).try();
+            probe.walk_from(p.unit, layer.units).try();
+            layer.b.links.value_or(scratch.Vec<Link>()).loop((l) {
+                links.add(l).try();
+            });
+            layer.units.loop((u) { below.set(u.path, true).try(); });
+        },
+    });
+    probe.links.value_or(scratch.Vec<Link>()).loop((l) { links.add(l).try(); });
     // Every unit that is open, or reaches one through its imports.
     dirty ::= scratch.Map<str, bool>();
     dirty.set(p.unit.path, true).try();
@@ -1146,31 +1168,92 @@ workspace_base* = (
             });
         });
     });
-    clean  ::= scratch.Vec<Unit>();
-    stdlib ::= scratch.Vec<Unit>();
+    clean ::= scratch.Vec<Unit>();
     probe.walked.value_or(scratch.Vec<Unit>()).loop((u) {
-        (!dirty.get(u.path).value_or(false)).then(() {
+        (!dirty.get(u.path).value_or(false)
+            && !below.get(u.path).value_or(false)).then(() {
             clean.add(u).try();
-            u.name.starts_with("std.").then(() { stdlib.add(u).try(); });
         });
     });
-    whole = base_of(env, keep, p.root, probe.std_root, clean, links).try();
-    whole.match({
-        Ok(base) => Ok(Ok(base)),
-        None     => base_of(env, keep, p.root, probe.std_root, stdlib, links),
-    })
+    Ok(Split(
+        root: p.root,
+        std_root: probe.std_root,
+        clean: clean,
+        links: links
+    ))
 }
 
-// Check `units` alone when they import nothing outside themselves.
+// A base, owned by `keep`, of the standard library modules that checking
+// `entry` with `docs` open reaches and no open buffer reaches; None when
+// there are none. `scratch` holds the walk that finds them.
+std_base* = (
+    env       : Env,
+    scratch   : Alloc,
+    keep      : Alloc,
+    directory : str,
+    root      : str,
+    entry     : str,
+    docs      : Map<str, str>
+) Res<Res<WorkspaceBase>, AllocError> {
+    none: Res<WorkspaceBase> = None;
+    s                        = split_workspace(
+        env,
+        scratch,
+        directory,
+        root,
+        entry,
+        docs,
+        none
+    ).try();
+    stdlib ::= scratch.Vec<Unit>();
+    s.clean.loop((u) {
+        u.name.starts_with("std.").then(() { stdlib.add(u).try(); });
+    });
+    base_of(env, keep, s.root, s.std_root, none, stdlib, s.links)
+}
+
+// A base, owned by `keep`, of the other modules no open buffer reaches,
+// checked on top of `under`, whose owner must outlive `keep`.
+user_base* = (
+    under     : WorkspaceBase,
+    env       : Env,
+    scratch   : Alloc,
+    keep      : Alloc,
+    directory : str,
+    root      : str,
+    entry     : str,
+    docs      : Map<str, str>
+) Res<Res<WorkspaceBase>, AllocError> {
+    layer: Res<WorkspaceBase> = Ok(under);
+    s                         = split_workspace(
+        env,
+        scratch,
+        directory,
+        root,
+        entry,
+        docs,
+        layer
+    ).try();
+    base_of(env, keep, s.root, s.std_root, layer, s.clean, s.links)
+}
+
+// Check `units` on top of `under` when they import nothing outside both;
+// None when there are no such units or their inputs cannot be replayed.
 base_of = (
     env      : Env,
     keep     : Alloc,
     root     : str,
     std_root : str,
+    under    : Res<WorkspaceBase>,
     units    : Vec<Unit>,
     links    : Vec<Link>
 ) Res<Res<WorkspaceBase>, AllocError> {
+    done: Vec<Unit> = under.match({
+        None      => keep.Vec<Unit>(),
+        Ok(layer) => layer.units,
+    });
     inside ::= keep.Map<str, bool>();
+    done.loop((u) { inside.set(u.path, true).try(); });
     units.loop((u) { inside.set(u.path, true).try(); });
     leaks = links.find((l) {
         inside.get(l.from).value_or(false) && !inside.get(l.to).value_or(false)
@@ -1193,17 +1276,35 @@ base_of = (
                     rel: u.rel.dup(keep).try()
                 )).try();
             });
-            b.walk_units(kept).try();
-            c ::= keep.Checker(b.tree).try();
-            c.check_all().try();
+            under.match({
+                None      => (),
+                Ok(layer) => {
+                    b.tree  = layer.b.tree.dup(keep).try();
+                    b.links = Ok(
+                        layer.b.links.value_or(keep.Vec<Link>()).dup(keep).try()
+                    );
+                },
+            });
+            b.walk_units(done, kept).try();
+            c ::= under.match({
+                None      => keep.Checker(b.tree).try(),
+                Ok(layer) => layer.c.extended(keep, b.tree).try(),
+            });
+            under.match({
+                None      => c.check_all().try(),
+                Ok(layer) => c.check_after(layer.done).try(),
+            });
+            all ::= done.dup(keep).try();
+            kept.loop((u) { all.add(u).try(); });
             replayable = b.inputs.match({ Ok(i) => i.exact, None => false });
             clean      = b.faults == 0 && b.diag_count() == 0 && c.diag_count() == 0;
-            Ok((clean && replayable).match({
+            Ok(replayable.match({
                 true  => Ok(WorkspaceBase(
                     b: b,
                     c: c,
                     done: c.settled(),
-                    units: kept
+                    units: all,
+                    clean: clean
                 )),
                 false => None,
             }))

@@ -1,0 +1,28 @@
+// A u128 passed to and returned from a call keeps both halves. `twice`
+// recurses, so it is never inlined and its parameter and result cross a
+// real call; Vec<u128>.add and .get with a runtime index do the same.
+{ Res, Ok } = std.core
+{ truncate_u64 } = std.core.num
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+halves = (label: str, v: u128) {
+    println("{}: {} {}", label, (v >> 64).truncate_u64(), v.truncate_u64());
+}
+
+twice = (x: u128, n: usize) u128 {
+    (n == 0).match({ true => x, false => twice(x << 1, n - 1) })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    big: u128 = 0xFFFFFFFFFFFFFFFF;
+    halves("twice", twice((big << 8) | 5, 4));
+    v ::= alloc.Vec<u128>();
+    v.add(1).try();
+    v.add((big << 8) | 5).try();
+    at: usize = env.argv.len;
+    v.get(at).match({ Ok(x) => halves("get", x), None => println("get none") });
+    Ok(0);
+}

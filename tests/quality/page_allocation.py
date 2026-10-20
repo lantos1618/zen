@@ -33,37 +33,62 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0)
 }
 '''
-prefix = '''#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
+prefix = '''#include <stdint.h>
 #include <stdbool.h>
-static bool aligned(const unsigned char *p) { return ((uintptr_t)p & 15u) == 0; }
-static size_t page_allocations;
-static void *counted_malloc(size_t n) {
-    page_allocations++;
-    return n < 24 ? NULL : malloc(n);
-}
-#define malloc counted_malloc
+#include <stddef.h>
+#include <sys/types.h>
+bool aligned(const unsigned char *p) { return ((uintptr_t)p & 15u) == 0; }
+static size_t page_maps;
+#define mmap counted_mmap
+#define _exit counted_exit
 '''
 suffix = '''
-int main(int argc, char **argv) {
-    int result = zen_original_main(argc, argv);
-    if(result || page_allocations != 4) { fprintf(stderr, "result=%d allocations=%zu\\n", result, page_allocations); return 1; }
-    puts("PASS: overflowing page headers rejected before allocation; ordinary page and aligned Arena allocation succeed");
-    return 0;
+#include <stdio.h>
+#undef mmap
+#undef _exit
+void *mmap(void *, size_t, int, int, int, off_t);
+void _exit(int) __attribute__((noreturn));
+void *counted_mmap(void *at, size_t n, int prot, int flags, int fd, off_t off) {
+    page_maps++;
+    return mmap(at, n, prot, flags, fd, off);
+}
+void counted_exit(int status) {
+    if(status || page_maps != 3) { fprintf(stderr, "status=%d maps=%zu\\n", status, page_maps); _exit(1); }
+    puts("PASS: overflowing page headers rejected before mapping; ordinary page and aligned Arena allocation succeed");
+    fflush(stdout);
+    _exit(0);
 }
 '''
+
+
+def header_guard(text):
+    # The page header size `h` is followed by the refusal limit `usize.MAX - h`.
+    return re.search(r'= \(uint64_t\)INT64_C\((\d+)\);\n  (v\d+) = \(uint64_t\)INT64_C\(-(\d+)\);\n  (v\d+) = (v\d+) > \2;', text)
+
+
+def unaligned(text):
+    pattern = r'= \(uint64_t\)INT64_C\((\d+)\);\n(  v\d+ = \(uint64_t\)INT64_C\(-\d+\);\n  v\d+ = v\d+ > v\d+;)'
+    return re.sub(pattern, lambda m: f'= (uint64_t)INT64_C({int(m.group(1)) - 8});\n{m.group(2)}', text)
+
+
+def unchecked(text):
+    found = header_guard(text)
+    text = text.replace(found.group(0), found.group(0).replace(f'{found.group(4)} = {found.group(5)} > {found.group(2)};', f'{found.group(4)} = 0;'), 1)
+    return text.replace('  if (bytes > SIZE_MAX - 16) return 0;\n', '', 1)
+
+
 with tempfile.TemporaryDirectory(prefix='zen-page-allocation-') as folder:
     work = Path(folder)
     (work / 'main.zen').write_text(program)
     generated = work / 'generated.c'
     subprocess.run([str(args.zen.resolve()), 'build', str(work), '--emit-c', '-o', str(generated)],
                    env=dict(os.environ, ZEN_STD=str(args.std.resolve())), check=True, timeout=120)
-    source = prefix + generated.read_text().replace('int main(', 'int zen_original_main(') + suffix
+    source = prefix + generated.read_text() + suffix
+    assert header_guard(source), 'Page header guard not found'
     for name, text, passing in (
         ('checked', source, True),
-        ('unaligned-control', re.sub(r'\(sizeof\(([^)]+)\) \+ 15u\) & ~\(size_t\)15u', r'sizeof(\1)', source), False),
-        ('unchecked-control', re.sub(r'\(zg_t\d+ > SIZE_MAX - zg_page_header\d+\) \? NULL : ', '', source), False),
+        ('unaligned-control', unaligned(source), False),
+        ('unchecked-control', unchecked(source), False),
     ):
         if not passing:
             assert text != source, 'Page guard not found'

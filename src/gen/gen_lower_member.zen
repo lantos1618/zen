@@ -1470,19 +1470,40 @@ os_mem_call = (
             Ok(out)
         },
         "page"    => {
-            size         = lo.argument_value(
+            size    = lo.argument_value(
                 args.get(0).value_or(Source.Absent),
                 lo.prim("usize").try(),
                 span
             ).try();
-            ok_ty        = lo.payload_type(ty, "Ok").try();
-            page_ty      = lo.pointee_of(ok_ty).try();
-            header       = size_of(lo.class_of(page_ty).try());
+            ok_ty   = lo.payload_type(ty, "Ok").try();
+            page_ty = lo.pointee_of(ok_ty).try();
+            // The header is rounded to 16 so `base` is 16-aligned.
+            header       = (size_of(lo.class_of(page_ty).try()) + 15) / 16 * 16;
             header_bytes = lo.word_const(
                 Scalar.U64,
                 header.to_i64_bits()
             ).try();
-            total        = lo.slot_of(Scalar.U64).try();
+            // A size the header would carry past usize.MAX is refused like
+            // a failed mapping, before anything is mapped.
+            limit = lo.word_const(
+                Scalar.U64,
+                0 - 1 - header.to_i64_bits()
+            ).try();
+            over  = lo.slot_of(Scalar.Bool).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: over,
+                left: size.slot,
+                right: limit,
+                op: Op.Greater,
+                span: nowhere()
+            ))).try();
+            bad  = lo.label().try();
+            good = lo.label().try();
+            done = lo.label().try();
+            fits = lo.label().try();
+            lo.branch_to(over, bad, fits).try();
+            lo.start(fits);
+            total = lo.slot_of(Scalar.U64).try();
             lo.add(Instruction.BinaryValue(Binary(
                 out: total,
                 left: size.slot,
@@ -1502,9 +1523,6 @@ os_mem_call = (
                 op: Op.Equal,
                 span: nowhere()
             ))).try();
-            bad  = lo.label().try();
-            good = lo.label().try();
-            done = lo.label().try();
             lo.branch_to(failed, bad, good).try();
             lo.start(bad);
             err_ty  = lo.payload_type(ty, "Err").try();

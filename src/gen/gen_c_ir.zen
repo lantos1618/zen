@@ -2516,6 +2516,7 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add(
         "static inline ZR_U ZR_U uint64_t zr_map(uint64_t bytes) {\n"
     ).try();
+    out.add("  if (bytes > SIZE_MAX - 16) return 0;\n").try();
     out.add(
         "  void *p = mmap(0, (size_t)bytes + 16, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n"
     ).try();

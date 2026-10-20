@@ -164,7 +164,7 @@ lspcheck: build
 ## VERIFY_JIT= drops jitcorpus from verify; CI runs it as its own job.
 VERIFY_JIT ?= jitcorpus
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings nativecheck $(VERIFY_JIT) jscheck test stdcheck archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
+verify: warnings nativecheck $(VERIFY_JIT) jscheck test stdcheck archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck actorseedcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
 
 .PHONY: ctcheck
 ## ctcheck: the constant-time tooling's self-test (tools/ct/check.zen): the
@@ -533,10 +533,21 @@ clean-all: clean
 help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
 
-.PHONY: actorcheck tracecheck
+.PHONY: actorcheck actorseedcheck tracecheck
 actorcheck: build
 	$(PY) tests/quality/page_allocation.py --zen ./zen
 	$(PY) tests/run.py --zen ./zen --cc "$(CC)" --jobs "$(TEST_J)" --no-result-cache --filter actor/
+
+## actorseedcheck: the actor corpus again on the seeded schedule of each of
+## ACTOR_SEEDS (docs/ACTOR_RUNTIME.md), so a test whose output depends on one
+## interleaving fails here. A test's own .env still overrides the seed.
+ACTOR_SEEDS ?= 1 2 3
+actorseedcheck: build
+	@set -e; for seed in $(ACTOR_SEEDS); do \
+	  echo "ZEN_ACTOR_SEED=$$seed"; \
+	  ZEN_ACTOR_SEED=$$seed $(PY) tests/run.py --zen ./zen --cc "$(CC)" --jobs "$(TEST_J)" \
+	    --no-result-cache --filter actor/; \
+	done
 
 tracecheck: build
 	$(PY) tests/library/trace/run.py --zen ./zen

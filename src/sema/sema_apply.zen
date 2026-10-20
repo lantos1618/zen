@@ -427,7 +427,8 @@ settle_construction = (
                     inst: one.checked.inst,
                     result: want,
                     signature: one.checked.signature,
-                    body: one.checked.body
+                    body: one.checked.body,
+                    member: one.checked.member
                 ))
             ).try();
             Ok(want)
@@ -497,7 +498,8 @@ settle_generic_call = (
                                 params: params,
                                 receiver: None
                             )),
-                            body: one.checked.body
+                            body: one.checked.body,
+                            member: one.checked.member
                         ))
                     ).try();
                     Ok(want)

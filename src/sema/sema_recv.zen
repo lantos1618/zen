@@ -5,7 +5,7 @@
 { str } = std.text
 { TyId, TyNamed } = sema.sema_ty
 { decl_at } = sema.sema_def
-{ Checker, Ctx } = sema.sema_check
+{ Checker } = sema.sema_check
 { SemaFault, NameFault, LendFault } = sema.sema_diag
 { Own, path_root, place_type } = sema.sema_own
 { is_construction } = sema.sema_scope
@@ -13,10 +13,10 @@
 { is_bound_ty } = sema.sema_bound
 { Res, Ok, None } = std.core
 
-check_receiver* = (c :: Checker, o :: Own, k: Call, ctx: Ctx)
+check_receiver* = (c :: Checker, o :: Own, id: ExprId, k: Call)
                   Res<AllocError> {
     c.tree.expr_at(k.callee).kind.match({
-        Access(a) => c.check_method_call(o, a, k),
+        Access(a) => c.check_method_call(o, id, a, k),
         _         => Ok,
     })
 }
@@ -131,14 +131,11 @@ field_is_lent = (c: Checker, ty: TyId, name: str) bool {
 
 LentCallee = { f: Function, off: usize, member: bool }
 
-// The declaration whose parameters the arguments bind to: a member reached
-// through a value, or the function resolution selected.
+// The declaration whose parameters the arguments bind to: the member the
+// call selected on a value, or the function resolution selected.
 lent_callee = (c :: Checker, o :: Own, id: ExprId, k: Call) Res<LentCallee> {
     member: Res<Function> = c.tree.expr_at(k.callee).kind.match({
-        Access(a) => c.own_member(c.place_type(o, a.base), a.name.text).match({
-            Ok(m) => m.kind.match({ Function(f) => Ok(f), _ => None }),
-            None  => None,
-        }),
+        Access(a) => c.selected_member(o, id, a.base),
         _         => None,
     });
     member.match({
@@ -179,16 +176,16 @@ check_lent = (c :: Checker, o :: Own, f: Function, i: usize, value: ExprId)
     })
 }
 
-check_method_call = (c :: Checker, o :: Own, a: Access, k: Call)
+check_method_call = (c :: Checker, o :: Own, id: ExprId, a: Access, k: Call)
                     Res<AllocError> {
     c.path_root(o, a.base).match({
         None     => Ok,
-        Ok(root) => c.wants_mutable(
-            c.place_type(o, a.base),
-            a.name.text
-        ).match({
-            true  => c.require_mutable(o, a),
-            false => c.check_snapshotted(o, k, root),
+        Ok(root) => c.checked_call(id).match({
+            None  => Ok,
+            Ok(_) => c.wants_mutable(o, id, a.base).match({
+                true  => c.require_mutable(o, a),
+                false => c.check_snapshotted(o, k, root),
+            }),
         }),
     })
 }
@@ -225,8 +222,7 @@ snapshotted = (c :: Checker, o :: Own, arg: ExprId, root: usize) Res<str> {
         Call(k) => c.tree.expr_at(k.callee).kind.match({
             Access(a) => c.path_root(o, a.base).match({
                 None  => None,
-                Ok(i) => ((i == root)
-                    && c.wants_mutable(c.place_type(o, a.base), a.name.text))
+                Ok(i) => ((i == root) && c.wants_mutable(o, arg, a.base))
                     .match({ true => Ok(a.name.text), false => None }),
             }),
             _         => None,
@@ -297,20 +293,35 @@ field_link = (c: Checker, ty: TyId, name: str) Res<str> {
     c.field_mutable(ty, name).match({ true => None, false => Ok(name) })
 }
 
-wants_mutable = (c: Checker, ty: TyId, name: str) bool {
-    c.own_member(ty, name).match({
+// Whether the member the call at `id` selected takes a `::` receiver.
+wants_mutable = (c :: Checker, o :: Own, id: ExprId, base: ExprId) bool {
+    c.selected_member(o, id, base).match({
         None  => false,
-        Ok(m) => m.receiver_is_mutable(),
+        Ok(f) => writes_self(f),
     })
+}
+
+// The member function the call at `id` selected on `base`, when `base`'s
+// own named type declares it: members overload by arity, so this is the
+// overload the call chose, not the first one declared under its name.
+selected_member* = (c :: Checker, o :: Own, id: ExprId, base: ExprId)
+                   Res<Function> {
+    f = c.checked_call(id).try().member.try();
+    c.own_member(c.place_type(o, base), f.name.text).try();
+    Ok(f)
 }
 
 receiver_is_mutable = (m: Member) bool {
     m.kind.match({
-        Function(f) => f.params.get(0).match({
-            None  => false,
-            Ok(p) => p.name.text.eq("self") && p.mutable,
-        }),
+        Function(f) => writes_self(f),
         _           => false,
+    })
+}
+
+writes_self = (f: Function) bool {
+    f.params.get(0).match({
+        None  => false,
+        Ok(p) => p.name.text.eq("self") && p.mutable,
     })
 }
 

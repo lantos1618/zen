@@ -83,6 +83,8 @@ CheckedCall* = {
     result*: TyId,
     signature*: Res<CallSignature>,
     body*: Res<BlockId>,
+    // The struct or enum member function a member call selected.
+    member*: Res<Function>,
 }
 
 // An absent entry has no recorded call check. In-progress and

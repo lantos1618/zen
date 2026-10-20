@@ -62,7 +62,6 @@ tests/corpus/cli/project_commands_start_at_build_zen # UNSUPPORTED: project_comm
 tests/corpus/cli/project_test_targets/main # UNSUPPORTED: main.zen:1:19: nothing is at that path: tried `zen/zen_project.zen` and `zen/zen_project/zen_project
 tests/corpus/cli/value_flags_do_not_swallow_options # UNSUPPORTED: value_flags_do_not_swallow_options.zen:5:12: nothing is at that path: tried `zen.zen` and `zen/zen.z
 tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main # UNSUPPORTED: main.zen:30:13: error: unsupported by this backend: this expression in a native executable
-tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main # UNSUPPORTED: main.zen:24:9: error: unsupported by this backend: alternatives of a value without them (`i64`)
 tests/corpus/codegen/a_recorded_call_never_falls_back_to_another_declaration # UNSUPPORTED: a_recorded_call_never_falls_back_to_another_declaration.zen:4:45: nothing is at that path: tried `se
 tests/corpus/codegen/a_unit_try_in_tail_position_builds_its_res/main # UNSUPPORTED: main.zen:23:9: error: unsupported by this backend: this expression in a native executable
 tests/corpus/codegen/c_abi_integer_spelling # UNSUPPORTED: c_abi_integer_spelling.zen:23:30: error: unsupported by this backend: the compiler-provided operatio
@@ -197,7 +196,6 @@ tests/corpus/sema/member_call_facts_require_valid_signatures # UNSUPPORTED: memb
 tests/corpus/sema/numeric_conversion_contract # UNSUPPORTED: numeric_conversion_contract.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema
 tests/corpus/sema/primitive_contract # UNSUPPORTED: primitive_contract.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_che
 tests/corpus/sema/rejected_calls_publish_no_selection # UNSUPPORTED: rejected_calls_publish_no_selection.zen:3:11: nothing is at that path: tried `sema/sema_check.zen` a
-tests/corpus/sema/statement_tail_is_not_a_value # UNSUPPORTED: :0:0: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i
 tests/corpus/sema/type_observations_are_indexed_and_monotone # UNSUPPORTED: type_observations_are_indexed_and_monotone.zen:3:11: nothing is at that path: tried `sema/sema_check
 tests/corpus/sema/type_observations_survive_unknown_context # UNSUPPORTED: type_observations_survive_unknown_context.zen:3:16: nothing is at that path: tried `sema/sema_check.
 tests/corpus/sema/usage_report/main # UNSUPPORTED: main.zen:4:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.

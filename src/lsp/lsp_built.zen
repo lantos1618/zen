@@ -148,8 +148,9 @@ Built* = {
     invalidate* = (self :: @Self) { self.stale = true; }
 
     // Check on a kept user base that still holds, preferring one built for
-    // this entry; else on a new user base over a kept std base; else on a
-    // new std base. Check the whole workspace when no base qualifies.
+    // this entry; else on a kept std base, or a new one, keeping a user base
+    // over it for later turns. Check the whole workspace when no base
+    // qualifies.
     check = (self :: @Self, env: Env, root: str, entry: str,
              docs: Map<str, str>) Res<WorkspaceCheck, AllocError> {
         env.fs.cwd(self.arena).match({
@@ -313,34 +314,37 @@ Built* = {
         Ok(found)
     }
 
-    // Check on `layer`, through a new user base over it when the rest of the
-    // modules no open buffer reaches are clean; that base is kept.
+    // Check on `layer`, and keep a user base over it of the modules that
+    // check reached that no open buffer reaches, when they are clean.
     on_layer = (self :: @Self, env: Env, dir: str, root: str, entry: str,
                 docs: Map<str, str>, layer: Kept)
                Res<Res<WorkspaceCheck>, AllocError> {
-        owner ::= env.mem.alloc();
-        made  = user_base(
-            layer.base,
+        checked = layer.base.check_workspace_after(
             env,
             self.arena,
-            owner,
             dir,
             root,
             entry,
             docs
         ).try();
+        checked.match({
+            None      => Ok(None),
+            Ok(found) => {
+                self.keep_users(env, entry, layer, found).try();
+                Ok(Ok(found))
+            },
+        })
+    }
+
+    keep_users = (self :: @Self, env: Env, entry: str, layer: Kept,
+                  checked: WorkspaceCheck) Res<AllocError> {
+        owner ::= env.mem.alloc();
+        made  = user_base(layer.base, checked, env, self.arena, owner).try();
         clean = made.match({ Ok(base) => base.clean, None => false });
         clean.match({
             false => {
                 _ = consume owner;
-                layer.base.check_workspace_after(
-                    env,
-                    self.arena,
-                    dir,
-                    root,
-                    entry,
-                    docs
-                )
+                Ok
             },
             true  => {
                 base       = made.ok_or(AllocError.OutOfMemory).try();
@@ -358,14 +362,7 @@ Built* = {
                 loop(() { self.users.views.len > USER_BASES }, (h) {
                     self.users.remove(0);
                 });
-                base.check_workspace_after(
-                    env,
-                    self.arena,
-                    dir,
-                    root,
-                    entry,
-                    docs
-                )
+                Ok
             },
         })
     }

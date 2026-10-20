@@ -1636,7 +1636,12 @@ C = {
                 false => self.out.fmt("v{}", slot).try(),
             });
         });
-        self.out.add(");\n")
+        self.out.add(");\n").try();
+        // A unit result is still a slot a match arm may answer with.
+        same(result, Scalar.Unit).match({
+            true  => self.out.fmt("  v{} = 0;\n", call.out),
+            false => Ok,
+        })
     }
 
     declare_foreign = (self :: @Self, f: Func, call: ForeignCall)

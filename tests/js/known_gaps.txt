@@ -233,3 +233,4 @@ tests/corpus/actor/seed_faults_fail_turns_through_watch # UNSUPPORTED: error: un
 tests/corpus/actor/seed_faults_answer_full_and_refuse_spawns # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/join_waits_for_stopped # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/received_buffers_lent_or_kept # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/refused_sends_free_their_bytes # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma

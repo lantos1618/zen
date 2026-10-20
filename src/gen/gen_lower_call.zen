@@ -132,7 +132,8 @@ construction = (
     span : Span
 ) Res<Value, LowerError> {
     ty = lo.settled_type(id).try();
-    s  = lo.shape(ty).try();
+    lo.not_namespace(ty, span).try();
+    s = lo.shape(ty).try();
     lo.placed(id, ty).match({
         Ok(into) => {
             s.form.match({
@@ -1336,6 +1337,24 @@ construct_at = (
         });
     });
     Ok
+}
+
+// A `c.bind` namespace names C functions; it has no value to construct.
+not_namespace = (lo :: Lowerer, ty: TyId, span: Span) Res<LowerError> {
+    namespace = lo.struct_decl(ty).match({
+        Ok(d)  => !d.s.native_record && d.s.native_header.match({
+            Ok(_) => true,
+            None  => false,
+        }),
+        Err(_) => false,
+    });
+    namespace.match({
+        false => Ok,
+        true  => Err(unsupported(
+            span,
+            "constructing a native binding namespace"
+        )),
+    })
 }
 
 StructDecl = { id: DeclId, s: Struct }

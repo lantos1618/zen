@@ -21,8 +21,20 @@ with tempfile.TemporaryDirectory(prefix='zen-comparison-operands-') as folder:
                    env=dict(os.environ, ZEN_STD=str(args.std.resolve())), check=True, timeout=120)
     source = emitted.read_text()
     spill = re.search(r'uint8_t (zg_s\d+);\n\s*\1 = \([^\n]+\)\[0\];', source)
-    assert spill, 'Expected held byte-pointer read'
-    broken = source[:spill.start()] + source[spill.start():].replace('uint8_t ', 'bool ', 1)
+    if spill:
+        broken = source[:spill.start()] + source[spill.start():].replace('uint8_t ', 'bool ', 1)
+    else:
+        # IR-C declares every value at the top of its function and reads
+        # bytes through `za_uint8_t`; take the first read after the 199 store.
+        stored = source.find('= (uint8_t)INT64_C(199);')
+        assert stored >= 0, 'Expected the first byte store'
+        held = re.compile(r'\n\s*(v\d+) = \*\(const za_uint8_t \*\)'
+                          r'\(\(const unsigned char \*\)\(uintptr_t\)v\d+ \+ 0u\);').search(source, stored)
+        assert held, 'Expected held byte-pointer read'
+        decl = f'ZR_U uint8_t {held.group(1)} ZR_Z;'
+        at = source.rfind(decl, 0, held.start())
+        assert at >= 0, 'Expected the held read to be declared as a byte'
+        broken = source[:at] + f'ZR_U _Bool {held.group(1)} ZR_Z;' + source[at + len(decl):]
     for name, text, passing in (('typed', source, True), ('bool-spill-control', broken, False)):
         path = work / (name + '.c')
         binary = path.with_suffix('')

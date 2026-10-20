@@ -4,7 +4,7 @@
 { str, String, dup } = std.text
 { Vec, Map } = std.collections
 { Alloc, AllocError, Arena } = std.mem
-{ Res, Ok, None, Drop, Range } = std.core
+{ Res, Ok, None, Drop, Range, loop } = std.core
 { Span } = std.source
 { Note } = std.parse.parse_diag
 { Checker } = sema.sema_check
@@ -53,6 +53,12 @@ copy_into = (span: Span, a: Alloc) Res<Span, AllocError> {
     Ok(Span(file: span.file.dup(a).try(), start: span.start, end: span.end))
 }
 
+// Bases one `base_arena` builds before it is retired.
+BASES_PER_ARENA: usize = 4
+
+// A kept base and the entry it was built for, both owned by `base_arena`.
+Kept = { entry: str, base: WorkspaceBase }
+
 Inner = {
     root: str,          // the compilation root, copied into the arena
     entry: str,         // the open document, relative to the root
@@ -66,9 +72,11 @@ Inner = {
 Built* = {
     arena :: Arena,
 
-    // Owns `base`, which outlives the per-check arena.
+    // Owns every kept base. `bases` is most recently used last; `built`
+    // counts the bases built since the arena was last retired.
     base_arena :: Arena,
-    base :: Res<WorkspaceBase> = None,
+    bases :: Res<Vec<Kept>> = None,
+    built :: usize = 0,
 
     cur :: Res<Inner>,
 
@@ -94,8 +102,9 @@ Built* = {
 
     invalidate* = (self :: @Self) { self.stale = true; }
 
-    // Check on the kept base while it holds, rebuilding it when it does
-    // not; check the whole workspace when no base qualifies.
+    // Check on a kept base that still holds, preferring one built for this
+    // entry, else on a newly built base; check the whole workspace when no
+    // base qualifies.
     check = (self :: @Self, env: Env, root: str, entry: str,
              docs: Map<str, str>) Res<WorkspaceCheck, AllocError> {
         env.fs.cwd(self.arena).match({
@@ -107,53 +116,143 @@ Built* = {
                 docs
             ),
             Ok(directory) => {
-                dir   = directory.view();
-                holds = self.base.match({
-                    None     => false,
-                    Ok(base) => base.base_holds(
-                        env,
-                        self.arena,
-                        dir,
-                        root,
-                        docs
-                    ).try(),
-                });
-                (!holds).then(() {
-                    self.forget_base(env);
-                    self.base = workspace_base(
-                        env,
-                        self.arena,
-                        self.base_arena,
-                        dir,
-                        root,
-                        entry,
-                        docs
-                    ).try();
-                });
-                turn: Res<WorkspaceCheck> = self.base.match({
-                    None     => None,
-                    Ok(base) => base.check_workspace_after(
-                        env,
-                        self.arena,
-                        dir,
-                        root,
-                        entry,
-                        docs
-                    ).try(),
-                });
-                turn.match({
+                dir                        = directory.view();
+                same                       = self.on_kept(
+                    env,
+                    dir,
+                    root,
+                    entry,
+                    docs,
+                    true
+                ).try();
+                other: Res<WorkspaceCheck> = same.match({
                     Ok(checked) => Ok(checked),
-                    None        => {
-                        self.forget_base(env);
-                        check_workspace(env, self.arena, root, entry, docs)
-                    },
+                    None        => self.on_kept(
+                        env,
+                        dir,
+                        root,
+                        entry,
+                        docs,
+                        false
+                    ).try(),
+                });
+                fresh: Res<WorkspaceCheck> = other.match({
+                    Ok(checked) => Ok(checked),
+                    None        => self.on_new(
+                        env,
+                        dir,
+                        root,
+                        entry,
+                        docs
+                    ).try(),
+                });
+                fresh.match({
+                    Ok(checked) => Ok(checked),
+                    None        => check_workspace(
+                        env,
+                        self.arena,
+                        root,
+                        entry,
+                        docs
+                    ),
                 })
             },
         })
     }
 
-    forget_base = (self :: @Self, env: Env) {
-        self.base = None;
+    // Check on the most recently used kept base whose entry is (or, when
+    // `same` is false, is not) `entry`. A base that no longer holds is
+    // dropped; one the program no longer reaches whole is kept for later.
+    on_kept = (self :: @Self, env: Env, dir: str, root: str, entry: str,
+               docs: Map<str, str>, same: bool)
+              Res<Res<WorkspaceCheck>, AllocError> {
+        all   ::= self.kept_bases();
+        found :: Res<WorkspaceCheck> = None;
+        done  ::= false;
+        at    ::= all.len;
+        loop(() { at > 0 && !done }, (h) {
+            at = at - 1;
+            k  = all.get(at).ok_or(AllocError.OutOfMemory).try();
+            (k.entry.eq(entry) == same).then(() {
+                holds = k.base.base_holds(
+                    env,
+                    self.arena,
+                    dir,
+                    root,
+                    docs
+                ).try();
+                holds.match({
+                    false => { _ = all.take(at); },
+                    true  => k.base.check_workspace_after(
+                        env,
+                        self.arena,
+                        dir,
+                        root,
+                        entry,
+                        docs
+                    ).try().match({
+                        None        => (),
+                        Ok(checked) => {
+                            _ = all.take(at);
+                            all.add(k).try();
+                            found = Ok(checked);
+                            done  = true;
+                        },
+                    }),
+                });
+            });
+        });
+        self.bases = Ok(all);
+        Ok(found)
+    }
+
+    // Build a base for this check and check on it. The arena is retired
+    // first once it has built BASES_PER_ARENA bases, so bases dropped as
+    // stale cannot accumulate in it.
+    on_new = (self :: @Self, env: Env, dir: str, root: str, entry: str,
+              docs: Map<str, str>) Res<Res<WorkspaceCheck>, AllocError> {
+        (self.built >= BASES_PER_ARENA).then(() { self.forget_bases(env); });
+        self.built = self.built + 1;
+        made       = workspace_base(
+            env,
+            self.arena,
+            self.base_arena,
+            dir,
+            root,
+            entry,
+            docs
+        ).try();
+        made.match({
+            None     => Ok(None),
+            Ok(base) => {
+                all ::= self.kept_bases();
+                all.add(Kept(
+                    entry: entry.dup(self.base_arena).try(),
+                    base: base
+                )).try();
+                self.bases = Ok(all);
+                base.check_workspace_after(
+                    env,
+                    self.arena,
+                    dir,
+                    root,
+                    entry,
+                    docs
+                )
+            },
+        })
+    }
+
+    kept_bases = (self :: @Self) Vec<Kept> {
+        self.bases.match({
+            Ok(all) => all,
+            None    => self.base_arena.Vec<Kept>(),
+        })
+    }
+
+    forget_bases = (self :: @Self, env: Env) {
+        self.bases = None;
+        self.built = 0;
         fresh ::= env.mem.alloc();
         self.base_arena.drop();
         self.base_arena = consume fresh;

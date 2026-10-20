@@ -1143,6 +1143,9 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
 // A checker in `a` over `tree`, which extends this checker's tree. It keeps
 // every answer and diagnostic this checker settled, so only the modules the
 // extension adds still need checking; this checker is left unchanged.
+// The copy's containers are its own, but the values they hold (instance
+// memos, walk lists, store summaries) are shared with this checker: the
+// extension may replace an entry, never mutate a value it reached here.
 extended* = (c: Checker, a: Alloc, tree: Ast) Res<Checker, AllocError> {
     world ::= a.World(tree).try();
     world.keep_grants(c.world).try();

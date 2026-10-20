@@ -1303,6 +1303,33 @@ base_of = (
     })
 }
 
+// Whether an open buffer is a module of the stdlib the workspace selects.
+opens_std* = (
+    env       : Env,
+    scratch   : Alloc,
+    directory : str,
+    root      : str,
+    docs      : Map<str, str>
+) Res<bool, AllocError> {
+    absolute_root = anchored_path(scratch, directory, root).try();
+    std_root      = std_root_for(env, scratch);
+    std_marker ::= scratch.String("{}/std/std.zen", absolute_root).try();
+    std_base = (env.fs.exists(std_marker.view()) || std_root.is_empty())
+        .match({
+            true  => absolute_root,
+            false => anchored_path(scratch, directory, std_root).try(),
+        });
+    opened ::= false;
+    docs.pairs((h, path, text) {
+        full = anchored_path(scratch, directory, path).try();
+        (full.under(std_base)
+            && relative_to(std_base, full).starts_with("std/")).then(() {
+            opened = true;
+        });
+    });
+    Ok(opened)
+}
+
 // Whether `base` still holds for the workspace: same root, no open buffer
 // among its modules, and every file and probe it read answers the same.
 base_holds* = (

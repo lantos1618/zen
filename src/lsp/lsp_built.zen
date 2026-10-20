@@ -9,7 +9,7 @@
 { Note } = std.parse.parse_diag
 { Checker } = sema.sema_check
 { message, write_detail } = sema.sema_diag
-{ Build, check_workspace, WorkspaceCheck, WorkspaceBase } = zen.zen_build
+{ Build, check_workspace, WorkspaceCheck, WorkspaceBase, opens_std } = zen.zen_build
 { std_base, user_base, base_holds, check_workspace_after } = zen.zen_build
 { Classed } = lsp.lsp_colour
 { classify } = lsp.lsp_names
@@ -58,22 +58,8 @@ STD_BASES: usize = 2
 USER_BASES: usize = 4
 
 // A kept base. `id` names it, `under` names the std base a user base is
-// checked on top of, `entry` is the open document it was built for, and
-// `opened` the documents open when a std base was built.
-Kept = {
-    id: usize,
-    under: usize,
-    entry: str,
-    opened: Vec<str>,
-    base: WorkspaceBase
-}
-
-// Whether `docs` opens exactly the paths in `opened`.
-same_docs = (opened: Vec<str>, docs: Map<str, str>) bool {
-    opened.len == docs.len() && opened.find((p) {
-        docs.get(p).match({ Ok(_) => false, None => true })
-    }).match({ Ok(_) => false, None => true })
-}
+// checked on top of, and `entry` is the open document it was built for.
+Kept = { id: usize, under: usize, entry: str, base: WorkspaceBase }
 
 // Kept bases, each owned by the arena at its index; most recently used last.
 Bases = {
@@ -136,9 +122,6 @@ Built* = {
     stds :: Bases,
     users :: Bases,
     ids :: usize = 0,
-    // A std base that no check could use when it was built; another is not
-    // built for the same entry and open documents while it holds.
-    missed :: usize = 0,
 
     cur :: Res<Inner>,
 
@@ -189,60 +172,62 @@ Built* = {
             Ok(directory) => {
                 dir = directory.view();
                 self.drop_stale(env, dir, root, docs).try();
-                same                         = self.on_users(
-                    env,
-                    dir,
-                    root,
-                    entry,
-                    docs,
-                    true
-                ).try();
-                other: Res<WorkspaceCheck>   = same.match({
-                    Ok(checked) => Ok(checked),
-                    None        => self.on_users(
-                        env,
-                        dir,
-                        root,
-                        entry,
-                        docs,
-                        false
-                    ).try(),
-                });
-                layered: Res<WorkspaceCheck> = other.match({
-                    Ok(checked) => Ok(checked),
-                    None        => self.on_stds(
-                        env,
-                        dir,
-                        root,
-                        entry,
-                        docs
-                    ).try(),
-                });
-                // A std base that failed, or that no check could use, and
-                // still holds would do so again.
-                refused                    = self.stds.views.find((k) {
-                    !k.base.clean || (k.id == self.missed && k.entry.eq(entry)
-                        && same_docs(k.opened, docs))
-                })
-                    .match({ Ok(_) => true, None => false });
-                fresh: Res<WorkspaceCheck> = layered.match({
-                    Ok(checked) => Ok(checked),
-                    None        => refused.match({
-                        true  => None,
-                        false => self.on_new(env, dir, root, entry, docs).try(),
-                    }),
-                });
-                fresh.match({
-                    Ok(checked) => Ok(checked),
-                    None        => check_workspace(
+                // An open std module edits std itself, so no kept base
+                // is worth trying: check in full.
+                std_open = opens_std(env, self.arena, dir, root, docs).try();
+                std_open.match({
+                    true  => check_workspace(
                         env,
                         self.arena,
                         root,
                         entry,
                         docs
                     ),
+                    false => self.on_kept(env, dir, root, entry, docs),
                 })
             },
+        })
+    }
+
+    // Check on a kept base, else on a new std base, else in full.
+    on_kept = (self :: @Self, env: Env, dir: str, root: str, entry: str,
+               docs: Map<str, str>) Res<WorkspaceCheck, AllocError> {
+        same                         = self.on_users(
+            env,
+            dir,
+            root,
+            entry,
+            docs,
+            true
+        ).try();
+        other: Res<WorkspaceCheck>   = same.match({
+            Ok(checked) => Ok(checked),
+            None        => self.on_users(
+                env,
+                dir,
+                root,
+                entry,
+                docs,
+                false
+            ).try(),
+        });
+        layered: Res<WorkspaceCheck> = other.match({
+            Ok(checked) => Ok(checked),
+            None        => self.on_stds(env, dir, root, entry, docs).try(),
+        });
+        // A std base that failed and still holds would fail again.
+        refused                    = self.stds.views.find((k) { !k.base.clean })
+            .match({ Ok(_) => true, None => false });
+        fresh: Res<WorkspaceCheck> = layered.match({
+            Ok(checked) => Ok(checked),
+            None        => refused.match({
+                true  => None,
+                false => self.on_new(env, dir, root, entry, docs).try(),
+            }),
+        });
+        fresh.match({
+            Ok(checked) => Ok(checked),
+            None        => check_workspace(env, self.arena, root, entry, docs),
         })
     }
 
@@ -376,7 +361,6 @@ Built* = {
             true  => {
                 base       = made.ok_or(AllocError.OutOfMemory).try();
                 kept_entry = entry.dup(owner).try();
-                opened     = owner.Vec<str>();
                 self.ids   = self.ids + 1;
                 self.users.add(
                     consume owner,
@@ -384,7 +368,6 @@ Built* = {
                         id: self.ids,
                         under: layer.id,
                         entry: kept_entry,
-                        opened: opened,
                         base: base
                     )
                 ).try();
@@ -408,39 +391,16 @@ Built* = {
                 Ok(None)
             },
             Ok(base) => {
-                kept_entry = entry.dup(owner).try();
-                opened ::= owner.Vec<str>();
-                docs.pairs((h, path, text) {
-                    opened.add(path.dup(owner).try()).try();
-                });
                 self.ids = self.ids + 1;
-                layer    = Kept(
-                    id: self.ids,
-                    under: 0,
-                    entry: kept_entry,
-                    opened: opened,
-                    base: base
-                );
+                layer    = Kept(id: self.ids, under: 0, entry: "", base: base);
                 self.stds.add(consume owner, layer).try();
                 loop(() { self.stds.views.len > STD_BASES }, (h) {
                     self.drop_std(0);
                 });
-                checked: Res<WorkspaceCheck> = base.clean.match({
-                    false => None,
-                    true  => self.on_layer(
-                        env,
-                        dir,
-                        root,
-                        entry,
-                        docs,
-                        layer
-                    ).try(),
-                });
-                checked.match({
-                    None  => { self.missed = layer.id; },
-                    Ok(_) => (),
-                });
-                Ok(checked)
+                base.clean.match({
+                    false => Ok(None),
+                    true  => self.on_layer(env, dir, root, entry, docs, layer),
+                })
             },
         })
     }

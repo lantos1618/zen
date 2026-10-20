@@ -5,7 +5,8 @@
 
 // A generic function spawning a generic actor must record the concrete
 // actor state type of the instantiation being lowered, including for the
-// stopped lifecycle hook and a self-addressed behavior.
+// stopped lifecycle hook and a self-addressed behavior. The last turn stops
+// the actor itself, so the turn count does not depend on the schedule.
 Weight = { value = (self :: @Self) u64 }
 Light = { n: u64 }
 Light.impl(Weight, { value = (self :: @Self) u64 { self.n } })
@@ -19,7 +20,10 @@ Holder<W: Weight> = {
 Holder.impl(Actor, {
     turn = (self :: @Self, ctx: Context, me: Ref<Holder<W>>, left: u64) {
         self.turns = self.turns + 1;
-        (left > 1).then(() { me.turn(me, left - 1).ignore(); });
+        (left > 1).match({
+            true  => me.turn(me, left - 1).ignore(),
+            false => me.stop(),
+        });
     }
     stopped = (self :: @Self, ctx: Context) {
         total: u64 = self.total();
@@ -30,8 +34,7 @@ spin = <W: Weight>(env: Env, item: W, turns: u64) Res<ActorStartError
     | ActorError> {
     actor = env.spawn(Holder<W>(item: item)).try();
     actor.turn(actor, turns).try();
-    env.threads.sleep(50);
-    actor.stop(); actor.join();
+    actor.join();
 }
 main = (env: Env) Res<i32, ActorStartError | ActorError> {
     spin(env, Light(n: 2), 3).try();

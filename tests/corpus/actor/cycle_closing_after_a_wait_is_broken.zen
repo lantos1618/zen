@@ -2,17 +2,56 @@
 // -> A closes only after A has started waiting, and A also waits on C. A
 // sender waits on one receiver at a time, so B's send finds the cycle and
 // goes through over the bound instead of waiting for ever. Every message
-// arrives once, in order, and all three actors finish.
+// arrives once, in order, and all three actors finish. Each peer reports to
+// a log actor once it has all its messages, and the log prints when it has
+// heard from all three, so the peers may finish in any order.
 
-{ Res, Ok, loop } = std.core
+{ Res, Ok, None, loop } = std.core
 { Env } = std.env
 { Actor, Ref, ActorError, ActorStartError, Context } = std.actor
 { println } = std.io
 
 COUNT: u64 = 2000
 
+Tally = { got: u64, out_of_order: u64 }
+
+Log = {
+    first :: Res<Tally> = None,
+    second :: Res<Tally> = None,
+    third :: Res<Tally> = None,
+}
+
+show = (name: u64, tally: Tally) {
+    println(
+        "peer {} got {} out of order {}",
+        name,
+        tally.got,
+        tally.out_of_order
+    );
+}
+
+Log.impl(Actor, {
+    finished = (self :: @Self, ctx: Context, name: u64, got: u64, out_of_order: u64) {
+        tally = Tally(got: got, out_of_order: out_of_order);
+        (name == 1).then(() { self.first = Ok(tally); });
+        (name == 2).then(() { self.second = Ok(tally); });
+        (name == 3).then(() { self.third = Ok(tally); });
+        self.first.when_ok((a) {
+            self.second.when_ok((b) {
+                self.third.when_ok((c) {
+                    show(1, a);
+                    show(2, b);
+                    show(3, c);
+                });
+            });
+        });
+    }
+})
+
 Peer = {
     name: u64,
+    log: Ref<Log>,
+    got :: u64 = 0,
     next :: u64 = 0,
     out_of_order :: u64 = 0,
 }
@@ -40,24 +79,20 @@ Peer.impl(Actor, {
             () { self.out_of_order = self.out_of_order + 1; }
         );
         self.next = n + 1;
-    }
-
-    stopped = (self :: @Self, ctx: Context) {
-        println(
-            "peer {} got {} out of order {}",
-            self.name,
-            self.next,
-            self.out_of_order
-        );
+        self.got  = self.got + 1;
+        (self.got == COUNT).then(() {
+            self.log.finished(self.name, self.got, self.out_of_order).ignore();
+        });
     }
 })
 
 Error = ActorStartError | ActorError
 
 main = (env: Env) Res<i32, Error> {
-    a = env.spawn(Peer(name: 1)).try();
-    b = env.spawn(Peer(name: 2)).try();
-    c = env.spawn(Peer(name: 3)).try();
+    log = env.spawn(Log()).try();
+    a   = env.spawn(Peer(name: 1, log: log)).try();
+    b   = env.spawn(Peer(name: 2, log: log)).try();
+    c   = env.spawn(Peer(name: 3, log: log)).try();
     a.flood_two(b, c).try();
     b.flood(a).try();
     Ok(0)

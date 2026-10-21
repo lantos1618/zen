@@ -283,7 +283,14 @@ Func* = {
     secrets* :: Res<Vec<Secrecy>> = None,
     // The result is written Secret, so callers may not treat it as public.
     secret_result* :: bool = false,
+    // Which word parameters hold an address and what they address, which
+    // a C renderer names for tools/ct's calling shapes; None where none do.
+    reaches* :: Res<Vec<Reach>> = None,
 }
+
+// What a parameter word reaches: nothing, any extent (a Ptr<T>), or one
+// value of the class behind it (a `::` parameter).
+Reach* = { Word | Anywhere | Behind: Scalar }
 
 // A parameter's secrecy: `Value` holds secret bits itself, `Pointee`
 // addresses them.

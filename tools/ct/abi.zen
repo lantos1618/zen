@@ -62,6 +62,52 @@ Marked* = {
 Layout* = { size*: usize, align*: usize, vector*: bool }
 
 MARK: str = "/* zen:secret"
+ADDRESS: str = "/* zen:address"
+
+// `v3` or `zp3`: IR-C's name for a parameter it has no source name for.
+ir_name = (w: str) bool {
+    digits = w.starts_with("zp").match({ true => w.slice(2, w.len), false => w.starts_with("v").match({ true => w.slice(1, w.len), false => "" }) });
+    digits.len > 0 && digits.parse_usize().match({ Ok(_) => true, None => false })
+}
+
+// IR-C passes Ptr<T> and `::` parameters as uint64_t words and names them
+// in ` /* zen:address zu_l3buf=zb16_1 zu_l3key=* */` with the C type of the
+// value behind them (`*`: a Ptr<T>, whose extent the symbol gives).
+address_section = (line: str) str {
+    line.find(ADDRESS).match({
+        None   => "",
+        Ok(at) => line.slice(at, line.len).find("*/").match({
+            Ok(end) => line.slice(at, at + end + 2),
+            None    => "",
+        }),
+    })
+}
+
+// The parameters with each addressed word retyped as gen_c's pointer.
+addressed = (
+    a      : Alloc,
+    line   : str,
+    params : Vec<Param>
+) Res<Vec<Param>, AllocError> {
+    section = address_section(line);
+    out ::= a.Vec<Param>();
+    params.loop((p) {
+        ctype ::= p.ctype;
+        section.split(' ').loop((w) {
+            w.find("=").when_ok((eq) {
+                w.slice(0, eq).eq(p.name).then(() {
+                    pointee = w.slice(eq + 1, w.len);
+                    ctype   = pointee.eq("*").match({
+                        true  => "uint8_t *",
+                        false => a.String("{} *", pointee).try().view(),
+                    });
+                });
+            });
+        });
+        out.add(Param(ctype: ctype, name: p.name)).try();
+    });
+    Ok(out)
+}
 
 // Every marked definition in the file, in file order.
 marked_functions* = (a: Alloc, c: str) Res<Vec<Marked>, AllocError> {
@@ -177,7 +223,8 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
     words.split(' ').loop((w) {
         // gen_c spells parameters `zu_`/`zg_`; IR-C keeps those names for
         // free functions and spells others `v<n>`, or `zp<n>` when lent.
-        (w.len > 0 && !w.eq("public-result") && !w.eq("*/")).then(() {
+        bare = w.starts_with("*").match({ true => w.slice(1, w.len), false => w });
+        (bare.starts_with("zu_") || bare.starts_with("zg_") || ir_name(bare)).then(() {
             w.starts_with("*").match({
                 true  => pointee.add(w.slice(1, w.len)),
                 false => secret.add(w),
@@ -187,7 +234,11 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
     Ok(Marked(
         symbol: symbol,
         result: strip_qualifiers(returned),
-        params: params,
+        params: addressed(
+            a,
+            line,
+            params
+        ).match({ Ok(v) => v, Err(_) => params }),
         secret: secret,
         pointee: pointee,
         pointee2: a.Vec<str>(),
@@ -268,6 +319,7 @@ scalar_layout = (ctype: str) Res<Layout> {
             "long"          => Ok(Layout(size: 8, align: 8, vector: false)),
             "double"        => Ok(Layout(size: 8, align: 8, vector: true)),
             "zg_u128"       => Ok(Layout(size: 16, align: 16, vector: false)),
+            "zr_u128"       => Ok(Layout(size: 16, align: 16, vector: false)),
             "zg_str"        => Ok(Layout(size: 16, align: 8, vector: false)),
             _               => vector_layout(ctype),
         }),
@@ -817,7 +869,7 @@ manifest_functions* = (
 parse_plain = (a: Alloc, raw: str) Res<Marked> {
     line   = plain_definition(a, raw).match({ Ok(l) => Ok(l), Err(_) => None }).try();
     at     = line.rfind(')').try();
-    marked = a.String("{} {} */ {", line.slice(0, at + 1), MARK).match({ Ok(s) => Ok(s), Err(_) => None }).try();
+    marked = a.String("{} {} {} */ {", line.slice(0, at + 1), address_section(line), MARK).match({ Ok(s) => Ok(s), Err(_) => None }).try();
     parse_definition(a, marked.view())
 }
 

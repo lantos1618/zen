@@ -277,7 +277,40 @@ C = {
             }).try();
         });
         self.out.add(')').try();
+        self.address_marker(index, function).try();
         self.secret_marker(index, function)
+    }
+
+    // ` /* zen:address zu_l3buf=zb16_1 zu_l3key=* */`: the word parameters
+    // that hold an address, with the C type of the one value behind it, or
+    // `*` for a Ptr<T>, so tools/ct sees them as gen_c's pointer
+    // parameters.
+    address_marker = (self :: @Self, index: usize, function: Func)
+                     Res<(), AllocError> {
+        function.reaches.match({
+            None        => Ok,
+            Ok(reaches) => {
+                self.out.add(" /* zen:address").try();
+                reaches.loop((h, i, r) {
+                    r.match({
+                        Word       => (),
+                        Anywhere   => {
+                            self.out.add(" ").try();
+                            self.param_label(function, index, i).try();
+                            self.out.add("=*").try();
+                        },
+                        Behind(ty) => {
+                            self.need(ty).try();
+                            self.out.add(" ").try();
+                            self.param_label(function, index, i).try();
+                            self.out.add("=").try();
+                            self.out.ctype(ty).try();
+                        },
+                    });
+                });
+                self.out.add(" */")
+            },
+        })
     }
 
     callee_name = (self :: @Self, index: usize) Res<(), AllocError> {

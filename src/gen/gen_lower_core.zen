@@ -31,7 +31,7 @@
 { written_secret, written_pointer } = sema.sema_secret
 { Branch, Instruction, Func, Program, BasicBlock, Terminator, NativeRecord, NativeMeasure } = gen.gen_ir
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
-{ Guards, TagGuard, PayloadRead, SysValue, NativeValue, Secrecy } = gen.gen_ir
+{ Guards, TagGuard, PayloadRead, SysValue, NativeValue, Secrecy, Reach } = gen.gen_ir
 { SysConstant } = gen.gen_sys
 { word, integer, float, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
@@ -3758,6 +3758,7 @@ Lowerer* = {
         f.params.loop((p) { params.add(p).try(LowerError.OutOfMemory); });
         kinds   ::= self.alloc.Vec<LocalKind>();
         secrecy ::= self.alloc.Vec<Secrecy>();
+        reach   ::= self.alloc.Vec<Reach>();
         params.loop((p) {
             ty = p.type.ok_or(unsupported(
                 p.span,
@@ -3779,6 +3780,16 @@ Lowerer* = {
             })).try(LowerError.OutOfMemory);
             t          = self.callee_type(callee, ty).try();
             capability = self.shape(t).try().class.match({ Unit => self.is_capability(t), _ => false });
+            reach.add(capability.match({
+                true  => Reach.Word,
+                false => p.mutable.match({
+                    true  => Reach.Behind(self.shape(t).try().class),
+                    false => written_pointer(
+                        self.check,
+                        ty
+                    ).match({ true => Reach.Anywhere, false => Reach.Word }),
+                }),
+            })).try(LowerError.OutOfMemory);
             capability.match({
                 true  => {
                     // Capabilities carry no data; a callee still receives
@@ -3880,6 +3891,12 @@ Lowerer* = {
                 (s) { s.match({ Public => false, _ => true }) }
             ).match({ Ok(_) => true, None => false })).match({
                 true  => Ok(secrecy),
+                false => None,
+            }),
+            reaches: (f.params.len == parameters && reach.find(
+                (r) { r.match({ Word => false, _ => true }) }
+            ).match({ Ok(_) => true, None => false })).match({
+                true  => Ok(reach),
                 false => None,
             }),
             secret_result: f.ret.match({ Ok(t) => written_secret(

@@ -11,6 +11,8 @@ import sys
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -137,6 +139,37 @@ class ParallelRunnerTests(unittest.TestCase):
             blocked = self.invoke(*arguments, "--filter", "corpus/*")
             self.assertEqual(blocked[0], 2)
             self.assertEqual(blocked[2], 0)
+
+    def test_compiler_module_tests_run_at_most_heavy_jobs_at_once(self):
+        src = self.root / "src"
+        (src / "std").mkdir(parents=True)
+        (src / "lsp").mkdir()
+        for index, test in enumerate(self.tests):
+            imports = "{ Server } = lsp.lsp_serve\n" if index % 2 == 0 else ""
+            test.source.write_text(imports + "{ str } = std.text\nmain = () {}\n")
+        tool = runner.Toolchain("fixture", ["unused-compiler"], src_root=src)
+        self.assertEqual([runner.is_heavy(test, tool) for test in self.tests],
+                         [index % 2 == 0 for index in range(len(self.tests))])
+        lock = threading.Lock()
+        running = {"heavy": 0, "most": 0, "light": 0}
+        def outcome(test, *_):
+            kind = "heavy" if runner.is_heavy(test, tool) else "light"
+            with lock:
+                running[kind] += 1
+                running["most"] = max(running["most"], running["heavy"])
+            time.sleep(0.05)
+            with lock:
+                running[kind] -= 1
+            return runner.Result(test, True)
+        output = io.StringIO()
+        with patch.object(runner, "discover", return_value=self.collection), \
+             patch.object(runner, "make_toolchain", return_value=tool), \
+             patch.object(runner.shutil, "which", return_value="unused-cc"), \
+             patch.object(runner, "run_one", side_effect=outcome), \
+             redirect_stdout(output), redirect_stderr(output):
+            code = runner.main(["--jobs", "6", "--heavy-jobs", "1", "--stage", "4"])
+        self.assertEqual(code, 0, output.getvalue())
+        self.assertEqual(running["most"], 1)
 
     def test_shards_partition_filtered_tests_independent_of_discovery_order(self):
         patterns = ["corpus/*", "must-fail/a/*", "corpus/a/*"]

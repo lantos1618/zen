@@ -28,10 +28,10 @@
 { is_drop_type } = sema.sema_drop
 { Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { sym_fn, sym_local } = gen.gen_name
-{ written_secret } = sema.sema_secret
+{ written_secret, written_pointer } = sema.sema_secret
 { Branch, Instruction, Func, Program, BasicBlock, Terminator, NativeRecord, NativeMeasure } = gen.gen_ir
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
-{ Guards, TagGuard, PayloadRead, SysValue, NativeValue } = gen.gen_ir
+{ Guards, TagGuard, PayloadRead, SysValue, NativeValue, Secrecy } = gen.gen_ir
 { SysConstant } = gen.gen_sys
 { word, integer, float, same, width } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
@@ -3756,16 +3756,27 @@ Lowerer* = {
         ret_ty = f.ret.match({ Ok(t) => self.callee_type(callee, t), None => Ok(self.unit_ty) }).try();
         params ::= self.alloc.Vec<Param>();
         f.params.loop((p) { params.add(p).try(LowerError.OutOfMemory); });
-        kinds ::= self.alloc.Vec<LocalKind>();
+        kinds   ::= self.alloc.Vec<LocalKind>();
+        secrecy ::= self.alloc.Vec<Secrecy>();
         params.loop((p) {
             ty = p.type.ok_or(unsupported(
                 p.span,
                 "an inferred parameter type"
             )).try();
-            // tools/ct seeds its taint analysis from gen_c's Secret markers.
-            (!written_secret(self.check, ty, callee.module))
-                .ensure(unsupported(p.span, "a Secret parameter"))
-                .try();
+            // tools/ct seeds its taint analysis from the C renderer's Secret
+            // markers; no other backend has that analysis.
+            secret = written_secret(self.check, ty, callee.module);
+            (!secret || self.c_calls).ensure(unsupported(
+                p.span,
+                "a Secret parameter"
+            )).try();
+            secrecy.add(secret.match({
+                false => Secrecy.Public,
+                true  => written_pointer(
+                    self.check,
+                    ty
+                ).match({ true => Secrecy.Pointee, false => Secrecy.Value }),
+            })).try(LowerError.OutOfMemory);
             t          = self.callee_type(callee, ty).try();
             capability = self.shape(t).try().class.match({ Unit => self.is_capability(t), _ => false });
             capability.match({
@@ -3864,7 +3875,18 @@ Lowerer* = {
             )),
             symbol: symbol,
             locals: locals,
-            targets: capability_targets(self, callee).try().view()
+            targets: capability_targets(self, callee).try().view(),
+            secrets: (f.params.len == parameters && secrecy.find(
+                (s) { s.match({ Public => false, _ => true }) }
+            ).match({ Ok(_) => true, None => false })).match({
+                true  => Ok(secrecy),
+                false => None,
+            }),
+            secret_result: f.ret.match({ Ok(t) => written_secret(
+                self.check,
+                t,
+                callee.module
+            ), None => false })
         ))
     }
 

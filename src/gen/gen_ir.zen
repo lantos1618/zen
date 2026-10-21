@@ -278,7 +278,16 @@ Func* = {
     // C renderer compiles the function for; "" for baseline code.
     targets* :: str = "",
     locals* :: Res<Vec<str>> = None,
+    // Which parameters are written std.ct.Secret, which a C renderer marks
+    // for tools/ct's taint analysis; None where none is.
+    secrets* :: Res<Vec<Secrecy>> = None,
+    // The result is written Secret, so callers may not treat it as public.
+    secret_result* :: bool = false,
 }
+
+// A parameter's secrecy: `Value` holds secret bits itself, `Pointee`
+// addresses them.
+Secrecy* = { Public | Value | Pointee }
 
 // A payload is only meaningful for the alternative a tagged value holds, and
 // reading it as another alternative reinterprets bytes. The lowering says

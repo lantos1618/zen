@@ -276,7 +276,8 @@ C = {
                 },
             }).try();
         });
-        self.out.add(')')
+        self.out.add(')').try();
+        self.secret_marker(index, function)
     }
 
     callee_name = (self :: @Self, index: usize) Res<(), AllocError> {
@@ -1764,31 +1765,31 @@ C = {
         self.out.add("  {\n").try();
         result.then(() { self.out.fmt("    zg_{} zr;\n", k).try(); });
         call.op.match({
-            VectorAdd      => self.lanewise(call, "+"),
-            VectorSub      => self.lanewise(call, "-"),
-            VectorMul      => self.lanewise(call, "*"),
-            BitXor         => self.lanewise(call, "^"),
-            BitAnd         => self.lanewise(call, "&"),
-            BitOr          => self.lanewise(call, "|"),
-            ShiftLeft      => self.lane_shift(call, "<<"),
-            ShiftRight     => self.lane_shift(call, ">>"),
-            RotateLeft     => self.lane_rotate(call, "<<", ">>"),
-            RotateRight    => self.lane_rotate(call, ">>", "<<"),
-            VectorMulLow32 => {
+            VectorAdd         => self.lanewise(call, "+"),
+            VectorSub         => self.lanewise(call, "-"),
+            VectorMul         => self.lanewise(call, "*"),
+            BitXor            => self.lanewise(call, "^"),
+            BitAnd            => self.lanewise(call, "&"),
+            BitOr             => self.lanewise(call, "|"),
+            ShiftLeft         => self.lane_shift(call, "<<"),
+            ShiftRight        => self.lane_shift(call, ">>"),
+            RotateLeft        => self.lane_rotate(call, "<<", ">>"),
+            RotateRight       => self.lane_rotate(call, ">>", "<<"),
+            VectorMulLow32    => {
                 self.vector_local("za", call.operand, a).try();
                 self.vector_local("zb", call.operand, b).try();
                 self.out.fmt("    zr = ZG_MUL_LOW32_{}(za, zb);\n", lane_count(
                     k
                 ))
             },
-            VectorSplat    => self.vector_of(call, true),
-            VectorLanes    => self.vector_of(call, false),
-            VectorLoad     => self.out.fmt(
+            VectorSplat       => self.vector_of(call, true),
+            VectorLanes       => self.vector_of(call, false),
+            VectorLoad        => self.out.fmt(
                 "    memcpy(&zr, (const unsigned char *)(uintptr_t)v{} + v{}, sizeof zr);\n",
                 a,
                 b
             ),
-            VectorStore    => {
+            VectorStore       => {
                 self.vector_local("za", call.operand, a).try();
                 self.out.fmt(
                     "    memcpy((unsigned char *)(uintptr_t)v{} + v{}, &za, sizeof za);\n",
@@ -1796,13 +1797,13 @@ C = {
                     c
                 )
             },
-            VectorLane     => {
+            VectorLane        => {
                 self.vector_local("za", call.operand, a).try();
                 self.out.fmt("    v{} = (", call.out).try();
                 ctype(self.out, slot_ty(f, call.out)).try();
                 self.out.fmt(")za[v{}];\n", b)
             },
-            VectorWithLane => {
+            VectorWithLane    => {
                 self.vector_local("za", call.operand, a).try();
                 self.out.fmt(
                     "    zr = za;\n    zr[v{}] = ({})v{};\n",
@@ -1811,45 +1812,47 @@ C = {
                     c
                 )
             },
-            VectorShuffle  => self.shuffle(call, false),
-            VectorShuffle2 => self.shuffle(call, true),
-            VectorCast     => {
+            VectorShuffle     => self.shuffle(call, false),
+            VectorShuffle2    => self.shuffle(call, true),
+            VectorCast        => {
                 self.vector_local("za", call.operand, a).try();
                 self.out.fmt("    zr = (zg_{})za;\n", k)
             },
-            CpuHas         => self.out.fmt(
+            CpuHas            => self.out.fmt(
                 "    v{} = (zg_{}() != 0);\n",
                 call.out,
                 call.name
             ),
-            AddCarry       => self.out.fmt(
+            AddCarry          => self.out.fmt(
                 "    uint64_t zp[2];\n    zp[0] = zg_add_carry(v{}, v{}, v{}, &zp[1]);\n    memcpy(&v{}, zp, sizeof zp);\n",
                 a,
                 b,
                 c,
                 call.out
             ),
-            SubBorrow      => self.out.fmt(
+            SubBorrow         => self.out.fmt(
                 "    uint64_t zp[2];\n    zp[0] = zg_sub_borrow(v{}, v{}, v{}, &zp[1]);\n    memcpy(&v{}, zp, sizeof zp);\n",
                 a,
                 b,
                 c,
                 call.out
             ),
-            MulLimbs       => self.out.fmt(
+            ValueBarrier      => self.barrier(f, call, ""),
+            DeclassifyBarrier => self.barrier(f, call, "/* zen:declassify"),
+            MulLimbs          => self.out.fmt(
                 "    uint64_t za[4], zb[4], zp[8];\n    memcpy(za, &v{}, sizeof za);\n    memcpy(zb, &v{}, sizeof zb);\n    zg_mul_limbs(za, zb, zp);\n    memcpy(&v{}, zp, sizeof zp);\n",
                 a,
                 b,
                 call.out
             ),
-            SquareLimbs    => self.out.fmt(
+            SquareLimbs       => self.out.fmt(
                 "    uint64_t za[4], zp[8];\n    memcpy(za, &v{}, sizeof za);\n    zg_square_limbs(za, zp);\n    memcpy(&v{}, zp, sizeof zp);\n",
                 a,
                 call.out
             ),
             // The capability-gated instructions: the floor helper of the
             // same name over the data operands.
-            _              => {
+            _                 => {
                 self.vector_local("za", call.operand, a).try();
                 self.vector_local("zb", call.operand, b).try();
                 (call.args.len > 2).then(() {
@@ -1864,6 +1867,98 @@ C = {
             self.out.fmt("    memcpy(&v{}, &zr, sizeof zr);\n", call.out).try();
         });
         self.out.add("  }\n")
+    }
+
+    // BoringSSL's value_barrier_w: an empty asm that claims to rewrite its
+    // register operand, so the optimizer can prove nothing about the value
+    // and masks built from it stay masks. A u128 passes as two 64-bit
+    // halves. A declassification names its registers in the asm text for
+    // tools/ct and marks the bytes defined for ctgrind.
+    barrier = (self :: @Self, f: Func, call: MachineCall, marker: str)
+              Res<(), AllocError> {
+        o        = call.out;
+        wide     = call.kind.eq("u128");
+        template = marker.is_empty().match({
+            true  => "",
+            false => wide.match({ true => " %0 %1 */", false => " %0 */" }),
+        });
+        self.out.fmt("    v{} = v{};\n", o, nth(call, 0)).try();
+        wide.match({
+            false => self.out.fmt(
+                "    __asm__(\"{}{}\" : \"+r\"(v{}));\n",
+                marker,
+                template,
+                o
+            ),
+            true  => {
+                self.out.fmt(
+                    "    uint64_t zg_lo = (uint64_t)v{}, zg_hi = (uint64_t)(v{} >> 64);\n",
+                    o,
+                    o
+                ).try();
+                self.out.fmt(
+                    "    __asm__(\"{}{}\" : \"+r\"(zg_lo), \"+r\"(zg_hi));\n    v{} = ((",
+                    marker,
+                    template,
+                    o
+                ).try();
+                ctype(self.out, slot_ty(f, o)).try();
+                self.out.add(")zg_hi << 64) | zg_lo;\n")
+            },
+        }).try();
+        (!marker.is_empty()).match({
+            true  => self.out.fmt("    ZG_CT_PUBLIC(v{});\n", o),
+            false => Ok,
+        })
+    }
+
+    // ` /* zen:secret zu_key *zu_out public-result */` after a parameter
+    // list names the parameters written std.ct.Secret, `*` where C holds
+    // the secret bytes behind the pointer, so tools/ct can seed its taint
+    // analysis. `public-result`: sema's discipline makes the result public.
+    secret_marker = (self :: @Self, index: usize, function: Func)
+                    Res<(), AllocError> {
+        function.secrets.match({
+            None        => Ok,
+            Ok(secrets) => {
+                self.out.add(" /* zen:secret").try();
+                secrets.loop((h, i, s) {
+                    s.match({
+                        Public  => (),
+                        Value   => {
+                            self.out.add(
+                                self.by_pointer(
+                                    index,
+                                    i
+                                ).match({ true => " *", false => " " })
+                            ).try();
+                            self.param_label(function, index, i).try();
+                        },
+                        Pointee => {
+                            self.out.add(" *").try();
+                            self.param_label(function, index, i).try();
+                        },
+                    });
+                });
+                (!function.secret_result).then(
+                    () { self.out.add(" public-result").try(); }
+                );
+                self.out.add(" */")
+            },
+        })
+    }
+
+    param_label = (self :: @Self, function: Func, index: usize, i: usize)
+                  Res<(), AllocError> {
+        local       = param_name(function, i);
+        prefix: str = self.by_pointer(
+            index,
+            i
+        ).match({ true => "zp", false => "v" });
+        (local.len > 0).match({
+            true  => self.out.add(local),
+            false => self.out.fmt("{}{}", prefix, i),
+        })
     }
 
     vector_local = (self :: @Self, name: str, kind: str, slot: usize)

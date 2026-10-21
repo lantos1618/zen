@@ -84,12 +84,20 @@ ALWAYS_INLINE*: str = "inline __attribute__((always_inline)) "
 ZG_INLINE: str = "ZG_INLINE "
 UNUSED: str = "__attribute__((unused)) "
 plain_definition* = (a: Alloc, line: str) Res<str, AllocError> {
-    without(a, without(a, without(a, line, ALWAYS_INLINE).try(), ZG_INLINE).try(), UNUSED)
+    without(
+        a,
+        without(a, without(a, line, ALWAYS_INLINE).try(), ZG_INLINE).try(),
+        UNUSED
+    )
 }
 
 without = (a: Alloc, line: str, attribute: str) Res<str, AllocError> {
     line.find(attribute).match({
-        Ok(at) => a.String("{}{}", line.slice(0, at), line.slice(at + attribute.len, line.len)).match({
+        Ok(at) => a.String(
+            "{}{}",
+            line.slice(0, at),
+            line.slice(at + attribute.len, line.len)
+        ).match({
             Ok(s)  => Ok(s.view()),
             Err(e) => Err(e),
         }),
@@ -102,14 +110,14 @@ without = (a: Alloc, line: str, attribute: str) Res<str, AllocError> {
 // `static __attribute__((unused)) int zg_cpu_masked(...)` and its
 // `__attribute__((target("aes")))` helpers).
 param_open* = (line: str) Res<usize> {
-    at :: usize = 0;
+    at    :: usize = 0;
     found :: Res<usize> = None;
     loop(() { at < line.len }, (h) {
         line.slice(at, line.len).starts_with("__attribute__").match({
             true  => {
                 // Skip to the parenthesis that closes the attribute.
                 depth ::= 0;
-                j :: usize = at + 13;
+                j     :: usize = at + 13;
                 loop(() { j < line.len }, (h2) {
                     c = line.index(j);
                     (c == '(').then(() { depth = depth + 1; });
@@ -142,8 +150,8 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
     space  = head.rfind(' ').try();
     symbol = head.slice(space + 1, head.len);
     result = head.slice(0, space).trim().try();
-    params ::= a.Vec<Param>();
-    returned ::= result;
+    params       ::= a.Vec<Param>();
+    returned     ::= result;
     result_param ::= false;
     line.slice(open + 1, close).split(',').loop((part) {
         text = part.trim().value_or("");
@@ -156,7 +164,10 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
                     returned     = ctype.slice(0, ctype.len - 1).trim().value_or(ctype);
                     result_param = true;
                 },
-                false => { params.add(Param(ctype: ctype, name: name)).match({ _ => () }); },
+                false => { params.add(Param(
+                    ctype: ctype,
+                    name: name
+                )).match({ _ => () }); },
             });
         });
     });
@@ -164,8 +175,9 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
     pointee ::= a.Vec<str>();
     words = line.slice(mark + MARK.len, line.len);
     words.split(' ').loop((w) {
-        (w.starts_with("zu_") || w.starts_with("*zu_") || w.starts_with("zg_")
-            || w.starts_with("*zg_")).then(() {
+        // gen_c spells parameters `zu_`/`zg_`; IR-C keeps those names for
+        // free functions and spells others `v<n>`, or `zp<n>` when lent.
+        (w.len > 0 && !w.eq("public-result") && !w.eq("*/")).then(() {
             w.starts_with("*").match({
                 true  => pointee.add(w.slice(1, w.len)),
                 false => secret.add(w),
@@ -315,11 +327,11 @@ aggregate = (
     to    : usize,
     union : bool
 ) Res<Layout> {
-    size :: usize = 0;
-    align :: usize = 1;
-    vector       ::= true;
-    i            ::= from;
-    ok           ::= true;
+    size   :: usize = 0;
+    align  :: usize = 1;
+    vector ::= true;
+    i      ::= from;
+    ok     ::= true;
     loop(() { i < to && ok }, (h) {
         line   = body.get(i).value_or("");
         nested = line.eq("union {") || line.eq("struct {");
@@ -359,7 +371,11 @@ aggregate = (
         });
     });
     ok.ensure().try();
-    Ok(Layout(size: round_up(size, align), align: align, vector: vector && size > 0))
+    Ok(Layout(
+        size: round_up(size, align),
+        align: align,
+        vector: vector && size > 0
+    ))
 }
 
 max = (
@@ -394,41 +410,54 @@ X86_ARGS = [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9")
 // Placed.regs the count; Stack the entry-relative offset of its bytes;
 // the *Pointer forms a hidden pointer to a copy (arm64 aggregates over 16
 // bytes and 32-byte vectors).
-Where = { | Gpr: usize | Vreg: usize | Stack: usize | GprPointer: usize | StackPointer: usize }
+Where = { | Gpr: usize
+    | Vreg: usize
+    | Stack: usize
+    | GprPointer: usize
+    | StackPointer: usize }
 
 Placed = { param: Param, layout: Layout, at: Where, regs: usize }
 
 // Every parameter's location under the target's calling convention.
-placements = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<Placed>, AllocError> {
+placements = (
+    a   : Alloc,
+    isa : Isa,
+    c   : str,
+    m   : Marked
+) Res<Vec<Placed>, AllocError> {
     out   ::= a.Vec<Placed>();
-    next :: usize = 0;
+    next  :: usize = 0;
     vnext :: usize = 0;
     // Stack arguments start above the return address on x86-64 and at the
     // stack pointer on arm64.
     stack :: usize = isa.match({ X86 => 8, Arm => 0 });
     limit: usize = isa.match({ X86 => 6, Arm => 8 });
-    x86 = isa.match({ X86 => true, Arm => false });
+    x86          = isa.match({ X86 => true, Arm => false });
     ((x86 || m.result_param) && hidden_result(a, isa, c, m.result, m.avx) > 0).then(() { next = 1; });
     m.params.loop((p) {
         l = layout_of(a, c, p.ctype).match({ Ok(v) => v, None => Layout(size: 8, align: 8, vector: false) });
         // Registers a vector-class parameter needs: one per vector on
         // arm64 (a homogeneous aggregate of up to four), one on x86-64.
-        vregs = x86.match({
+        vregs        = x86.match({
             true  => 1,
             false => (l.size > 16 && l.size % 16 == 0 && l.size <= 64).match({ true => l.size / 16, false => 1 }),
         });
-        fits_vreg = l.vector && x86.match({
-            true  => l.size <= 16 || (l.size <= 32 && m.avx && l.align >= 16 && vector_type(p.ctype)),
-            false => l.size <= 16 || (l.size <= 64 && l.size % 16 == 0 && !vector_type(p.ctype)),
+        fits_vreg    = l.vector && x86.match({
+            true  => l.size <= 16 || (l.size <= 32 && m.avx && l.align >= 16 && vector_type(
+                p.ctype
+            )),
+            false => l.size <= 16 || (l.size <= 64 && l.size % 16 == 0 && !vector_type(
+                p.ctype
+            )),
         });
         where: Where = (fits_vreg && vnext + vregs <= 8).match({
             true  => {
-                w = Where.Vreg(vnext);
+                w     = Where.Vreg(vnext);
                 vnext = vnext + vregs;
                 w
             },
             false => {
-                regs     = (l.size + 7) / 8;
+                regs = (l.size + 7) / 8;
                 // arm64 puts a 16-byte-aligned pair in an even register pair.
                 (!x86 && !l.vector && l.align == 16 && next % 2 == 1 && l.size <= 16).then(() {
                     next = next + 1;
@@ -437,14 +466,17 @@ placements = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<Placed>, AllocError
                 in_regs  = !l.vector && l.size <= 16 && next + regs <= limit;
                 (in_regs || (indirect && next < limit)).match({
                     true  => {
-                        w = indirect.match({ true => Where.GprPointer(next), false => Where.Gpr(next) });
+                        w    = indirect.match({ true => Where.GprPointer(next), false => Where.Gpr(next) });
                         next = next + indirect.match({ true => 1, false => regs });
                         w
                     },
                     false => {
                         stack = round_up(stack, l.align.max(8));
-                        w = indirect.match({ true => Where.StackPointer(stack), false => Where.Stack(stack) });
-                        stack = stack + indirect.match({ true => 8, false => round_up(l.size, 8) });
+                        w     = indirect.match({ true => Where.StackPointer(stack), false => Where.Stack(stack) });
+                        stack = stack + indirect.match({ true => 8, false => round_up(
+                            l.size,
+                            8
+                        ) });
                         (!x86 && !l.vector).then(() { next = limit; });
                         (!x86 && l.vector).then(() { vnext = 8; });
                         w
@@ -452,7 +484,7 @@ placements = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<Placed>, AllocError
                 })
             },
         });
-        count = where.match({
+        count        = where.match({
             Gpr(_)  => (l.size + 7) / 8,
             Vreg(_) => vregs,
             _       => 1,
@@ -472,7 +504,9 @@ capability = (a: Alloc, c: str, ctype: str) bool {
 }
 
 // A std.simd vector type itself (not a struct that contains vectors).
-vector_type = (ctype: str) bool { vector_layout(ctype).match({ Ok(_) => true, None => false }) }
+vector_type = (ctype: str) bool { vector_layout(
+    ctype
+).match({ Ok(_) => true, None => false }) }
 
 // The register holding the address a result returned through memory goes to.
 result_reg = (isa: Isa, m: Marked) str {
@@ -482,8 +516,13 @@ result_reg = (isa: Isa, m: Marked) str {
 // Bytes a result of C type `result` returns through a hidden pointer, or 0.
 hidden_result = (a: Alloc, isa: Isa, c: str, result: str, avx: bool) usize {
     layout_of(a, c, result).match({
-        None    => 0,
-        Ok(l)   => in_result_registers(isa, l, vector_type(result), avx).match({ true => 0, false => l.size }),
+        None  => 0,
+        Ok(l) => in_result_registers(
+            isa,
+            l,
+            vector_type(result),
+            avx
+        ).match({ true => 0, false => l.size }),
     })
 }
 
@@ -495,43 +534,49 @@ in_result_registers = (isa: Isa, l: Layout, vector: bool, avx: bool) bool {
 }
 
 seed_of* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Seed, AllocError> {
-    values   ::= a.Vec<str>();
-    pointers ::= a.Vec<str>();
-    slots    ::= a.Vec<i64>();
-    pslots   ::= a.Vec<i64>();
+    values    ::= a.Vec<str>();
+    pointers  ::= a.Vec<str>();
+    slots     ::= a.Vec<i64>();
+    pslots    ::= a.Vec<i64>();
     pointers2 ::= a.Vec<str>();
     // The hidden result pointer addresses memory that will hold the
     // result, which the body may build there and read back. A public
     // result returned that way must not have secrets stored into it.
-    hidden = hidden_result(a, isa, c, m.result, m.avx) > 0;
+    hidden     = hidden_result(a, isa, c, m.result, m.avx) > 0;
     hidden_reg = result_reg(isa, m);
     hidden.then(() { pointers.add(hidden_reg).try(); });
     placements(a, isa, c, m).try().loop((pl) {
         marked_value = pl.param.name.is_in(m.secret);
-        point2 = pl.param.name.is_in(m.pointee2);
+        point2       = pl.param.name.is_in(m.pointee2);
         // A by-value aggregate the C backend lends as `const T *`: the
         // secret bytes are behind the pointer.
         lent  = pl.param.ctype.starts_with("const ") && pl.param.ctype.ends_with("*");
         value = marked_value && !lent;
         point = pl.param.name.is_in(m.pointee) || (marked_value && lent);
         pl.at.match({
-            Gpr(i)          => Range(0, pl.regs).loop((k) {
+            Gpr(i)           => Range(0, pl.regs).loop((k) {
                 reg = reg_name(a, isa, i + k).try();
                 value.then(() { values.add(reg).try(); });
                 point.then(() { pointers.add(reg).try(); });
                 point2.then(() { pointers2.add(reg).try(); });
             }),
-            Vreg(i)         => Range(0, pl.regs).loop((k) {
-                value.then(() { values.add(vector_name(a, isa, i + k).try()).try(); });
+            Vreg(i)          => Range(0, pl.regs).loop((k) {
+                value.then(
+                    () { values.add(vector_name(a, isa, i + k).try()).try(); }
+                );
             }),
-            Stack(at)       => {
+            Stack(at)        => {
                 point.then(() { pslots.add(wide(at)).try(); });
                 value.then(() {
                     Range(0, (pl.layout.size + 7) / 8).loop((k) { slots.add(wide(at + k * 8)).try(); });
                 });
             },
-            GprPointer(i)   => { (value || point).then(() { pointers.add(reg_name(a, isa, i).try()).try(); }); },
-            StackPointer(at) => { (value || point).then(() { pslots.add(wide(at)).try(); }); },
+            GprPointer(i)    => { (value || point).then(
+                () { pointers.add(reg_name(a, isa, i).try()).try(); }
+            ); },
+            StackPointer(at) => { (value || point).then(
+                () { pslots.add(wide(at)).try(); }
+            ); },
         });
     });
     Ok(Seed(
@@ -548,7 +593,12 @@ seed_of* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Seed, AllocError> {
 // public-result: the integer result register (or pair), or the first
 // vector register. A result through a hidden pointer is memory, which the
 // analysis does not follow.
-result_registers* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<str>, AllocError> {
+result_registers* = (
+    a   : Alloc,
+    isa : Isa,
+    c   : str,
+    m   : Marked
+) Res<Vec<str>, AllocError> {
     out ::= a.Vec<str>();
     m.public_result.then(() {
         layout_of(a, c, m.result).when_ok((l) {
@@ -564,7 +614,11 @@ result_registers* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<str>, AllocE
                         X86 => (l.size == 1).match({ true => "rax/1", false => "rax" }),
                         Arm => "x0",
                     })).try();
-                    (l.size > 8).then(() { out.add(isa.match({ X86 => "rdx", Arm => "x1" })).try(); });
+                    (l.size > 8).then(
+                        () { out.add(
+                            isa.match({ X86 => "rdx", Arm => "x1" })
+                        ).try(); }
+                    );
                 });
             });
         });
@@ -661,7 +715,10 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
                             false => w.starts_with("**").match({
                                 true  => pointee2.add(w.slice(2, w.len)).try(),
                                 false => w.starts_with("*").match({
-                                    true  => pointee.add(w.slice(1, w.len)).try(),
+                                    true  => pointee.add(w.slice(
+                                        1,
+                                        w.len
+                                    )).try(),
                                     false => secret.add(w).try(),
                                 }),
                             }),
@@ -778,14 +835,21 @@ Mangled = {
 
     number = (self :: @Self) Res<usize> {
         start = self.at;
-        loop(() { self.at < self.text.len && is_digit(self.text.index(self.at)) }, (h) { self.at = self.at + 1; });
+        loop(
+            () { self.at < self.text.len && is_digit(self.text.index(
+                self.at
+            )) },
+            (h) { self.at = self.at + 1; }
+        );
         (self.at > start).ensure().try();
         self.text.slice(start, self.at).parse_usize()
     }
 
     count = (self :: @Self) Res<usize> {
         n = self.number().try();
-        (self.at < self.text.len && self.text.index(self.at) == '_').ensure().try();
+        (self.at < self.text.len && self.text.index(
+            self.at
+        ) == '_').ensure().try();
         self.at = self.at + 1;
         Ok(n)
     }
@@ -806,7 +870,7 @@ Mangled = {
 
     skip_type = (self :: @Self) Res<()> {
         (self.at < self.text.len).ensure().try();
-        tag = self.text.index(self.at);
+        tag     = self.text.index(self.at);
         self.at = self.at + 1;
         (tag == 'z' || tag == 'q').match({
             true  => Ok,
@@ -818,7 +882,9 @@ Mangled = {
                         ok ::= true;
                         Range(0, k).loop((h, i) { self.component().match({ Ok(_) => (), None => { ok = false; h.break(); } }); });
                         ok.ensure().try();
-                        (self.at < self.text.len && self.text.index(self.at) == 'I').match({
+                        (self.at < self.text.len && self.text.index(
+                            self.at
+                        ) == 'I').match({
                             true  => {
                                 self.at = self.at + 1;
                                 self.types()
@@ -861,9 +927,9 @@ pointer_params = (a: Alloc, symbol: str) Res<Vec<bool>> {
     Range(0, k).loop((i) { m.component().match({ _ => () }); });
     (m.at < symbol.len && symbol.index(m.at) == 'O').ensure().try();
     m.at = m.at + 1;
-    n = m.count().try();
+    n    = m.count().try();
     out ::= a.Vec<bool>();
-    ok ::= true;
+    ok  ::= true;
     Range(0, n).loop((h, i) {
         out.add(symbol.slice(m.at, symbol.len).starts_with(PTR_CODE)).match({ _ => () });
         m.skip_type().match({ Ok(_) => (), None => { ok = false; h.break(); } });
@@ -900,17 +966,17 @@ call_shapes* = (
 }
 
 shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
-    x86      = isa.match({ X86 => true, Arm => false });
-    hidden   = hidden_result(a, isa, c, m.result, m.avx);
-    gprs :: usize = ((x86 || m.result_param) && hidden > 0).match({ true => 1, false => 0 });
-    vectors :: usize = 0;
-    stack :: usize = 0;
+    x86    = isa.match({ X86 => true, Arm => false });
+    hidden = hidden_result(a, isa, c, m.result, m.avx);
+    gprs     :: usize = ((x86 || m.result_param) && hidden > 0).match({ true => 1, false => 0 });
+    vectors  :: usize = 0;
+    stack    :: usize = 0;
     writable ::= a.Vec<Writable>();
     extents  ::= a.Vec<Writable>();
     ignored  ::= a.Vec<str>();
     // A `::` or lent parameter names exactly one value; a Ptr<T> any extent.
     kinds: Res<Vec<bool>> = pointer_params(a, m.symbol);
-    decoded = kinds.match({ Ok(k) => k.len == m.params.len, None => false });
+    decoded               = kinds.match({ Ok(k) => k.len == m.params.len, None => false });
     pointer_args ::= a.Vec<str>();
     base: usize = isa.match({ X86 => 8, Arm => 0 });
     placements(a, isa, c, m).try().loop((pl) {
@@ -924,13 +990,22 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
                         Ok(k) => k.get(placed_index(m, pl.param.name)).value_or(true),
                         None  => true,
                     });
-                    pointee = pl.param.ctype.slice(0, pl.param.ctype.len - 1).trim().value_or("");
-                    bytes = unbounded.match({
+                    pointee   = pl.param.ctype.slice(0, pl.param.ctype.len - 1).trim().value_or("");
+                    bytes     = unbounded.match({
                         true  => 0,
-                        false => layout_of(a, c, pointee).match({ Ok(l) => l.size, None => 0 }),
+                        false => layout_of(
+                            a,
+                            c,
+                            pointee
+                        ).match({ Ok(l) => l.size, None => 0 }),
                     });
                     writable.add(Writable(index: i, bytes: bytes)).try();
-                    (bytes > 0).then(() { extents.add(Writable(index: i, bytes: bytes)).try(); });
+                    (bytes > 0).then(
+                        () { extents.add(Writable(
+                            index: i,
+                            bytes: bytes
+                        )).try(); }
+                    );
                 });
                 // A lent by-value parameter: exactly one value behind it.
                 (pl.param.ctype.ends_with("*") && pl.param.ctype.starts_with("const ")).then(() {
@@ -939,7 +1014,9 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
                 });
             },
             Vreg(i)          => { vectors = vectors.max(i + pl.regs); },
-            Stack(at)        => { stack = stack.max(at + round_up(pl.layout.size, 8) - base); },
+            Stack(at)        => { stack = stack.max(
+                at + round_up(pl.layout.size, 8) - base
+            ); },
             GprPointer(i)    => {
                 gprs = gprs.max(i + 1);
                 pointer_args.add(reg_name(a, isa, i).try()).try();
@@ -957,11 +1034,18 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
         pair: result.match({ Ok(l) => !l.vector && l.size > 8 && l.size <= 16, None => false }),
         vector_result: result.match({ Ok(l) => l.vector && hidden == 0, None => false }),
         vector_results: result.match({
-            Ok(l) => (l.vector && hidden == 0).match({ true => result_vectors(isa, l, vector_type(m.result)), false => 0 }),
+            Ok(l) => (l.vector && hidden == 0).match({ true => result_vectors(
+                isa,
+                l,
+                vector_type(m.result)
+            ), false => 0 }),
             None  => 0,
         }),
         hidden: hidden,
-        hidden_reg: (hidden > 0).match({ true => result_reg(isa, m), false => "" }),
+        hidden_reg: (hidden > 0).match({ true => result_reg(
+            isa,
+            m
+        ), false => "" }),
         writable: writable,
         extents: extents,
         ignored: ignored,

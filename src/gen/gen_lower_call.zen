@@ -1618,12 +1618,14 @@ is_vector_name = (name: str) bool {
 // Scalar spellings of the shared names (`bit_xor` on words) are not.
 machine_lowered = (op: MachineOp, kind: str, operand: str) bool {
     op.match({
-        CpuHas      => true,
-        AddCarry    => true,
-        SubBorrow   => true,
-        MulLimbs    => true,
-        SquareLimbs => true,
-        _           => is_vector_name(kind) || is_vector_name(operand),
+        CpuHas            => true,
+        ValueBarrier      => true,
+        DeclassifyBarrier => true,
+        AddCarry          => true,
+        SubBorrow         => true,
+        MulLimbs          => true,
+        SquareLimbs       => true,
+        _                 => is_vector_name(kind) || is_vector_name(operand),
     })
 }
 

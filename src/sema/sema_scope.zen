@@ -530,7 +530,7 @@ check_arena_stored* = (
                 Ok(name) => c.frame_view_at(c.arena_source(o, value)).match({
                     None       => c.refuse(
                         c.tree.expr_at(target).span,
-                        SemaFault.ArenaStored(NameFault(name: name))
+                        o.stored_fault(c.arena_source(o, value), name)
                     ),
                     Ok(formed) => c.refuse_frame_view(
                         o,

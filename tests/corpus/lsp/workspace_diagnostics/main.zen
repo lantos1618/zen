@@ -39,7 +39,7 @@ main = (env: Env) Res<i32, AllocError | FsError> {
     uris.add(uri).try();
     buffers ::= a.Map<str, str>();
     buffers.set(uri, edited.view()).try();
-    built ::= env.Built();
+    built ::= env.Built(a);
     built.ensure(env, "src", "./std/core/num.zen", uris, buffers).try();
     built.spots().match({
         None      => println("missing workspace diagnostics"),

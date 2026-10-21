@@ -48,13 +48,27 @@ check_module* = (c :: Checker, mi: usize) Res<AllocError> {
 }
 
 check_all* = (c :: Checker) Res<AllocError> {
-    c.check_union_imports().try();
-    c.check_numeric_conversions().try();
-    Range(0, c.world.count()).loop((h, mi) {
+    c.check_after(Settled(modules: 0, jobs: 0))
+}
+
+// How much of a checker's tree its module checks covered.
+Settled* = { modules*: usize, jobs*: usize }
+
+settled* = (c: Checker) Settled {
+    Settled(modules: c.world.count(), jobs: c.own_checks.len)
+}
+
+// Checks the modules a checker `extended` from a checked one adds. Program-wide
+// passes run again over the whole tree; their earlier diagnostics are
+// already reported, so only new ones are added.
+check_after* = (c :: Checker, done: Settled) Res<AllocError> {
+    c.check_union_imports(done.modules).try();
+    c.check_numeric_conversions(done.modules).try();
+    Range(done.modules, c.world.count()).loop((h, mi) {
         c.check_module(mi).try();
     });
     c.report_unsettled_widths().try();
-    c.finish_ownership().try();
+    c.finish_ownership(done.jobs).try();
     // Layout and depth require the complete cross-module declaration graph.
     c.check_layout().try();
     c.check_depth().try();

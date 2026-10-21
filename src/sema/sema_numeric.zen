@@ -28,8 +28,9 @@ NumericConversion* = {
     kind*: ConversionKind,
 }
 
-check_numeric_conversions* = (c :: Checker) Res<AllocError> {
-    Range(0, c.world.count()).loop((h, mi) {
+check_numeric_conversions* = (c :: Checker, first: usize)
+                             Res<AllocError> {
+    Range(first, c.world.count()).loop((h, mi) {
         c.world.table_at(mi).match({
             None      => (),
             Ok(table) => table.defs.loop(

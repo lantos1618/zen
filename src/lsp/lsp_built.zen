@@ -4,12 +4,13 @@
 { str, String, dup } = std.text
 { Vec, Map } = std.collections
 { Alloc, AllocError, Arena } = std.mem
-{ Res, Ok, None, Drop, Range } = std.core
+{ Res, Ok, None, Drop, Range, loop } = std.core
 { Span } = std.source
 { Note } = std.parse.parse_diag
 { Checker } = sema.sema_check
 { message, write_detail } = sema.sema_diag
-{ Build, check_workspace } = zen.zen_build
+{ Build, check_workspace, WorkspaceCheck, WorkspaceBase, opens_std } = zen.zen_build
+{ std_base, user_base, base_holds, check_workspace_after } = zen.zen_build
 { Classed } = lsp.lsp_colour
 { classify } = lsp.lsp_names
 { uri_at, path_of } = lsp.lsp_uri
@@ -52,6 +53,57 @@ copy_into = (span: Span, a: Alloc) Res<Span, AllocError> {
     Ok(Span(file: span.file.dup(a).try(), start: span.start, end: span.end))
 }
 
+// Bases kept per layer; past this the least recently used is dropped.
+STD_BASES: usize = 2
+USER_BASES: usize = 4
+
+// A kept base. `id` names it, `under` names the std base a user base is
+// checked on top of, and `entry` is the open document it was built for.
+Kept = { id: usize, under: usize, entry: str, base: WorkspaceBase }
+
+// Kept bases, each owned by the arena at its index; most recently used last.
+Bases = {
+    owners :: Vec<Arena>,
+    views :: Vec<Kept>,
+
+    add = (self :: @Self, owner :: Arena, kept: Kept) Res<AllocError> {
+        self.owners.reserve(1).try();
+        self.views.reserve(1).try();
+        self.owners.add(consume owner).try();
+        self.views.add(kept)
+    }
+
+    remove = (self :: @Self, at: usize) {
+        self.views.take(at).match({ Ok(_) => (), None => () });
+        self.owners.take(at).match({
+            Ok(owner) => { _ = consume owner; },
+            None      => (),
+        });
+    }
+
+    // Move the base at `at` to the most recently used end.
+    touch = (self :: @Self, at: usize) Res<AllocError> {
+        self.views.take(at).match({
+            None     => Ok,
+            Ok(kept) => self.owners.take(at).match({
+                None      => Ok,
+                Ok(owner) => self.add(consume owner, kept),
+            }),
+        })
+    }
+
+    clear = (self :: @Self) {
+        loop(
+            () { self.views.len > 0 },
+            (h) { self.remove(self.views.len - 1); }
+        );
+    }
+}
+
+Bases = (a: Alloc) Bases {
+    Bases(owners: a.Vec<Arena>(), views: a.Vec<Kept>())
+}
+
 Inner = {
     root: str,          // the compilation root, copied into the arena
     entry: str,         // the open document, relative to the root
@@ -65,9 +117,23 @@ Inner = {
 Built* = {
     arena :: Arena,
 
+    // Std bases, which see no user module, and user bases, each checked on
+    // top of a std base and dropped before it.
+    stds :: Bases,
+    users :: Bases,
+    ids :: usize = 0,
+
     cur :: Res<Inner>,
 
     stale :: bool = false,
+
+    // Whether every user base is over a kept std base.
+    layered* = (self: @Self) bool {
+        self.users.views.find((u) {
+            self.stds.views.find((k) { k.id == u.under })
+                .match({ Ok(_) => false, None => true })
+        }).match({ Ok(_) => false, None => true })
+    }
 
     matches* = (self: @Self, root: str, entry: str) bool {
         self.stale.match({
@@ -89,6 +155,256 @@ Built* = {
 
     invalidate* = (self :: @Self) { self.stale = true; }
 
+    // Check on a kept user base that still holds, preferring one built for
+    // this entry; else on a kept std base, or a new one, keeping a user base
+    // over it for later turns. Check the whole workspace when no base
+    // qualifies.
+    check = (self :: @Self, env: Env, root: str, entry: str,
+             docs: Map<str, str>) Res<WorkspaceCheck, AllocError> {
+        env.fs.cwd(self.arena).match({
+            Err(_)        => check_workspace(
+                env,
+                self.arena,
+                root,
+                entry,
+                docs
+            ),
+            Ok(directory) => {
+                dir = directory.view();
+                self.drop_stale(env, dir, root, docs).try();
+                // An open std module edits std itself, so no kept base
+                // is worth trying: check in full.
+                std_open = opens_std(env, self.arena, dir, root, docs).try();
+                std_open.match({
+                    true  => check_workspace(
+                        env,
+                        self.arena,
+                        root,
+                        entry,
+                        docs
+                    ),
+                    false => self.on_kept(env, dir, root, entry, docs),
+                })
+            },
+        })
+    }
+
+    // Check on a kept base, else on a new std base, else in full.
+    on_kept = (self :: @Self, env: Env, dir: str, root: str, entry: str,
+               docs: Map<str, str>) Res<WorkspaceCheck, AllocError> {
+        same                         = self.on_users(
+            env,
+            dir,
+            root,
+            entry,
+            docs,
+            true
+        ).try();
+        other: Res<WorkspaceCheck>   = same.match({
+            Ok(checked) => Ok(checked),
+            None        => self.on_users(
+                env,
+                dir,
+                root,
+                entry,
+                docs,
+                false
+            ).try(),
+        });
+        layered: Res<WorkspaceCheck> = other.match({
+            Ok(checked) => Ok(checked),
+            None        => self.on_stds(env, dir, root, entry, docs).try(),
+        });
+        // A std base that failed and still holds would fail again.
+        refused                    = self.stds.views.find((k) { !k.base.clean })
+            .match({ Ok(_) => true, None => false });
+        fresh: Res<WorkspaceCheck> = layered.match({
+            Ok(checked) => Ok(checked),
+            None        => refused.match({
+                true  => None,
+                false => self.on_new(env, dir, root, entry, docs).try(),
+            }),
+        });
+        fresh.match({
+            Ok(checked) => Ok(checked),
+            None        => check_workspace(env, self.arena, root, entry, docs),
+        })
+    }
+
+    // Drop every std base that no longer holds, with the bases over it.
+    drop_stale = (self :: @Self, env: Env, dir: str, root: str,
+                  docs: Map<str, str>) Res<AllocError> {
+        at ::= self.stds.views.len;
+        loop(() { at > 0 }, (h) {
+            at    = at - 1;
+            k     = self.stds.views.get(at).ok_or(AllocError.OutOfMemory).try();
+            holds = k.base.base_holds(env, self.arena, dir, root, docs).try();
+            (!holds).then(() { self.drop_std(at); });
+        });
+        Ok
+    }
+
+    // Drop the std base at `at` after every user base over it.
+    drop_std = (self :: @Self, at: usize) {
+        id = self.stds.views.get(at).match({ Ok(k) => k.id, None => 0 });
+        i ::= self.users.views.len;
+        loop(() { i > 0 }, (h) {
+            i = i - 1;
+            self.users.views.get(i).match({
+                Ok(k) => { (k.under == id).then(
+                    () { self.users.remove(i); }
+                ); },
+                None  => (),
+            });
+        });
+        self.stds.remove(at);
+    }
+
+    // Check on the most recently used user base whose entry is (or, when
+    // `same` is false, is not) `entry`. A base that no longer holds is
+    // dropped; one the program no longer reaches whole is kept for later.
+    on_users = (self :: @Self, env: Env, dir: str, root: str, entry: str,
+                docs: Map<str, str>, same: bool)
+               Res<Res<WorkspaceCheck>, AllocError> {
+        found :: Res<WorkspaceCheck> = None;
+        done  ::= false;
+        at    ::= self.users.views.len;
+        loop(() { at > 0 && !done }, (h) {
+            at = at - 1;
+            k  = self.users.views.get(at).ok_or(AllocError.OutOfMemory).try();
+            (k.entry.eq(entry) == same).then(() {
+                holds = k.base.base_holds(
+                    env,
+                    self.arena,
+                    dir,
+                    root,
+                    docs
+                ).try();
+                holds.match({
+                    false => self.users.remove(at),
+                    true  => k.base.check_workspace_after(
+                        env,
+                        self.arena,
+                        dir,
+                        root,
+                        entry,
+                        docs
+                    ).try().match({
+                        None        => (),
+                        Ok(checked) => {
+                            self.users.touch(at).try();
+                            found = Ok(checked);
+                            done  = true;
+                        },
+                    }),
+                });
+            });
+        });
+        Ok(found)
+    }
+
+    // Check on the most recently used clean std base the program reaches.
+    on_stds = (self :: @Self, env: Env, dir: str, root: str, entry: str,
+               docs: Map<str, str>) Res<Res<WorkspaceCheck>, AllocError> {
+        found :: Res<WorkspaceCheck> = None;
+        done  ::= false;
+        at    ::= self.stds.views.len;
+        loop(() { at > 0 && !done }, (h) {
+            at = at - 1;
+            k  = self.stds.views.get(at).ok_or(AllocError.OutOfMemory).try();
+            k.base.clean.then(() {
+                self.on_layer(env, dir, root, entry, docs, k).try().match({
+                    None        => (),
+                    Ok(checked) => {
+                        self.stds.touch(at).try();
+                        found = Ok(checked);
+                        done  = true;
+                    },
+                });
+            });
+        });
+        Ok(found)
+    }
+
+    // Check on `layer`, and keep a user base over it of the modules that
+    // check reached that no open buffer reaches, when they are clean.
+    on_layer = (self :: @Self, env: Env, dir: str, root: str, entry: str,
+                docs: Map<str, str>, layer: Kept)
+               Res<Res<WorkspaceCheck>, AllocError> {
+        checked = layer.base.check_workspace_after(
+            env,
+            self.arena,
+            dir,
+            root,
+            entry,
+            docs
+        ).try();
+        checked.match({
+            None      => Ok(None),
+            Ok(found) => {
+                self.keep_users(env, entry, layer, found).try();
+                Ok(Ok(found))
+            },
+        })
+    }
+
+    keep_users = (self :: @Self, env: Env, entry: str, layer: Kept,
+                  checked: WorkspaceCheck) Res<AllocError> {
+        owner ::= env.mem.alloc();
+        made  = user_base(layer.base, checked, env, self.arena, owner).try();
+        clean = made.match({ Ok(base) => base.clean, None => false });
+        clean.match({
+            false => {
+                _ = consume owner;
+                Ok
+            },
+            true  => {
+                base       = made.ok_or(AllocError.OutOfMemory).try();
+                kept_entry = entry.dup(owner).try();
+                self.ids   = self.ids + 1;
+                self.users.add(
+                    consume owner,
+                    Kept(
+                        id: self.ids,
+                        under: layer.id,
+                        entry: kept_entry,
+                        base: base
+                    )
+                ).try();
+                loop(() { self.users.views.len > USER_BASES }, (h) {
+                    self.users.remove(0);
+                });
+                Ok
+            },
+        })
+    }
+
+    // Build a std base and check on it. One that is not clean is kept, so
+    // no build is tried again while it holds.
+    on_new = (self :: @Self, env: Env, dir: str, root: str, entry: str,
+              docs: Map<str, str>) Res<Res<WorkspaceCheck>, AllocError> {
+        owner ::= env.mem.alloc();
+        made = std_base(env, self.arena, owner, dir, root, entry, docs).try();
+        made.match({
+            None     => {
+                _ = consume owner;
+                Ok(None)
+            },
+            Ok(base) => {
+                self.ids = self.ids + 1;
+                layer    = Kept(id: self.ids, under: 0, entry: "", base: base);
+                self.stds.add(consume owner, layer).try();
+                loop(() { self.stds.views.len > STD_BASES }, (h) {
+                    self.drop_std(0);
+                });
+                base.clean.match({
+                    false => Ok(None),
+                    true  => self.on_layer(env, dir, root, entry, docs, layer),
+                })
+            },
+        })
+    }
+
     rebuild = (self :: @Self, env: Env, root: str, entry: str,
                uris: Vec<str>, docs: Map<str, str>) Res<AllocError> {
         // A refused rebuild must not expose values owned by the old arena.
@@ -109,13 +425,7 @@ Built* = {
             }).try();
         });
 
-        checked = check_workspace(
-            env,
-            self.arena,
-            kept_root,
-            kept_entry,
-            over
-        ).try();
+        checked = self.check(env, kept_root, kept_entry, over).try();
         spots ::= self.arena.Vec<Spot>();
         checked.b.parse_spots(self.arena, kept_root, spots).try();
         checked.c.sema_spots(self.arena, kept_root, spots).try();
@@ -264,11 +574,16 @@ restore_uris = (spots :: Vec<Spot>, a: Alloc, directory: str, uris: Vec<str>)
 }
 
 Built.impl(Drop, {
-    drop = (self :: @Self) { self.arena.drop(); }
+    drop = (self :: @Self) {
+        self.users.clear();
+        self.stds.clear();
+        self.arena.drop();
+    }
 })
 
-Built* = (env: Env) Built {
-    Built(arena: env.mem.alloc(), cur: None)
+// The two short vectors of kept bases live in the caller's allocator `a`.
+Built* = (env: Env, a: Alloc) Built {
+    Built(arena: env.mem.alloc(), stds: Bases(a), users: Bases(a), cur: None)
 }
 
 parse_spots = (b: Build, a: Alloc, root: str, spots :: Vec<Spot>)

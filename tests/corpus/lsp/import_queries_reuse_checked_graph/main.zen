@@ -1,19 +1,30 @@
 // Querying an imported module retains its entry's checked graph. Overlay
 // changes invalidate that graph, and independent entries still get checked.
 { Diagnostics, Shared } = lsp.lsp_diag
-{ Res, Ok } = std.core
+{ Res, Ok, Range } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
-entry_is = (shared: Shared, file: str) bool {
+// Whether the checked graph holds the module parsed from `file`.
+holds = (shared: Shared, file: str) bool {
     shared.c.match({
         None      => false,
-        Ok(check) => check.tree.module_at(0).match({
-            None       => false,
-            Ok(module) => module.span.file.eq(file),
-        }),
+        Ok(check) => {
+            found ::= false;
+            Range(0, check.tree.module_count()).loop((h, i) {
+                check.tree.module_at(i).when_ok((module) {
+                    module.span.file.eq(file).then(() { found = true; });
+                });
+            });
+            found
+        },
     })
+}
+
+// Whether the graph was checked from `file`'s entry rather than app.zen's.
+entry_is = (shared: Shared, file: str) bool {
+    holds(shared, file) && (file.eq("app/app.zen") || !holds(shared, "app/app.zen"))
 }
 
 main = (env: Env) Res<AllocError> {

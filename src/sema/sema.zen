@@ -27,7 +27,7 @@
 { CORE* }                                 = sema.sema_def
 
 // Checker state and type agreement.
-{ Checker*, Ctx*, Binding* }                 = sema.sema_check
+{ Checker*, Ctx*, Binding*, extended* }      = sema.sema_check
 { CheckedCall*, CallSignature*, CallResolution* } = sema.sema_check
 { Memos* }                                   = sema.sema_check
 { instance_key_of* }                         = sema.sema_instance
@@ -68,7 +68,7 @@
 { const_int*, fits* }                        = sema.sema_const
 
 // Whole-program semantic passes.
-{ check_all*, check_module*, check_function* } = sema.sema_decl
+{ check_all*, check_after*, Settled*, settled*, check_module*, check_function* } = sema.sema_decl
 { check_layout* }                            = sema.sema_layout
 
 // who owns a value

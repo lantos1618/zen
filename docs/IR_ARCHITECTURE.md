@@ -414,7 +414,14 @@ renderer with no semantic work:
   `std.sys` with the IR's -errno convention. Output buffering, trap reports,
   exit 134 and the exit hook follow the C runtime. `refused_by_jit` refuses
   threads, JavaScript host calls, printing f64 and f64
-  `%` before anything runs. On x86_64-linux the native corpus runner's `jit`
+  `%` before anything runs. It runs std.simd's `Instruction.Machine`
+  operations lane by lane on 16-aligned blocks, and `CpuHas` always answers
+  absent, so feature-gated code takes its portable path. The lowering's
+  `machines` capability (on for C and the jit, off for asm and JS) decides
+  whether a Machine call is emitted; asm and JS refuse it by name. std.ct's
+  barriers lower to `Instruction.Opaque`: IR-C renders its empty-asm
+  barrier, the jit runs it as an opaque identity, and asm and JS refuse it
+  by name, as they do Secret parameters (`IrFeature.Secrets`). On x86_64-linux the native corpus runner's `jit`
   target passes 870 of 1136 programs; 265 are refused and 1 needs a fixture
   that only tests/run.py stages. Before running, the interpreter applies the
   asm backend's `prepare` (with `simplify`), then `gen_jit_decode` encodes each

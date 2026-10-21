@@ -1320,7 +1320,7 @@ report_partial = (c :: Checker, o :: Own, i: usize) Res<AllocError> {
 // calls: the receiver rule, `@scope` as an argument, and closure bodies
 own_call = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
            Res<AllocError> {
-    c.check_receiver(o, k, ctx).try();
+    c.check_receiver(o, id, k).try();
     c.check_lent_args(o, id, k).try();
     c.check_lent_fields(o, id, k).try();
     c.check_scope_stored(id, k).try();
@@ -1458,7 +1458,7 @@ pin_view_args = (c :: Checker, o :: Own, k: Call) Res<AllocError> {
 own_args = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
            Res<AllocError> {
     repeats = c.repeating_body(id).try();
-    escapes = c.call_escapes(o, k);
+    escapes = c.call_escapes(o, id, k);
     outer   = o.deferring;
     (c.defers_body(o, k) && (outer == 0)).then(() {
         o.deferring     = o.vars.len;

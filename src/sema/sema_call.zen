@@ -101,6 +101,7 @@ CallCheck = {
     inst :: Inst,
     checked_signature :: Res<CallSignature>,
     body :: Res<BlockId>,
+    selected :: Res<Function>,
     edge :: Res<InstEdge>,
     member_edge :: Res<MemberEdge>,
     recv :: Res<TyId>,
@@ -606,11 +607,10 @@ CallCheck = {
                 _        => (),
             });
         });
-        self.body = c.member_fn(f.decl_owner, ac.name.text, f.decl_span).match({
-            None => None, Ok(fn) => fn.body,
-        });
-        ty        = self.written_found(c, ac, f, off).try();
-        got       = self.signature(c, ty, off, SignatureFit.Exact).try();
+        self.selected = c.member_fn(f.decl_owner, ac.name.text, f.decl_span);
+        self.body     = self.selected.match({ None => None, Ok(fn) => fn.body });
+        ty            = self.written_found(c, ac, f, off).try();
+        got           = self.signature(c, ty, off, SignatureFit.Exact).try();
         (c.diag_count() == mark).then(() {
             c.types.at(ty).match({
                 Fn(_) => {
@@ -914,6 +914,7 @@ CallCheck = (a: Alloc, id: ExprId, node: Expr, call: Call, ctx: Ctx)
         inst: a.Inst(),
         checked_signature: None,
         body: None,
+        selected: None,
         edge: None,
         member_edge: None,
         recv: None
@@ -962,7 +963,8 @@ call_type* = (c :: Checker, id: ExprId, node: Expr, call: Call, ctx: Ctx)
                     inst: check.inst,
                     result: got,
                     signature: check.checked_signature,
-                    body: check.body
+                    body: check.body,
+                    member: check.selected
                 ))
             )
         },

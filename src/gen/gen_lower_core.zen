@@ -212,6 +212,9 @@ Lowerer* = {
     // Whether the target links C: only then do bodyless declarations and
     // header constants lower to C calls; elsewhere they are refused.
     c_calls* :: bool = false,
+    // Whether the target runs `Machine` instructions (std.simd vectors, CPU
+    // feature tests, the capability-gated instructions): IR-C and the jit.
+    machines* :: bool = false,
     // A 32-byte vector type was shaped: calls are checked at the AVX2
     // boundary (`avx2_boundary`).
     wide_vectors* :: bool = false,
@@ -4342,11 +4345,12 @@ NameFinder.impl(WalkVisitor, {
 })
 
 lower_native* = (
-    alloc   : Alloc,
-    tree    : Ast,
-    check   : Checker,
-    entry   : usize,
-    c_calls : bool
+    alloc    : Alloc,
+    tree     : Ast,
+    check    : Checker,
+    entry    : usize,
+    c_calls  : bool,
+    machines : bool
 )
                 Res<Program, LowerError> {
     module = tree.module_at(entry).ok_or(unsupported(nowhere(), "a missing entry module")).try();
@@ -4385,6 +4389,7 @@ lower_native* = (
         defers: alloc.Vec<DeferEntry>(),
         vias: alloc.Vec<Res<TyId>>(),
         c_calls: c_calls,
+        machines: machines,
         natives: alloc.Vec<NativeRecord>(),
         made: alloc.Vec<TyId>(),
         broken: alloc.Vec<Broken>(),

@@ -1530,7 +1530,12 @@ machine_call = (
 ) Res<Value, LowerError> {
     kind    = lo.prim_name(p.result);
     operand = p.params.get(0).match({ Ok(t) => lo.prim_name(t), None => "" });
-    (lo.c_calls && machine_lowered(op, kind, operand)).ensure(unsupported(span, machine_refusal(op))).try();
+    runs    = op.match({
+        ValueBarrier      => lo.c_calls,
+        DeclassifyBarrier => lo.c_calls,
+        _                 => lo.machines,
+    });
+    (runs && machine_lowered(op, kind, operand)).ensure(unsupported(span, machine_refusal(op))).try();
     kept     = machine_operands(op, p.params.len);
     shuffles = op.match({ VectorShuffle => true, VectorShuffle2 => true, _ => false });
     lanes    = (vector_lanes(kind) == 0).match({ true => 1, false => vector_lanes(kind) });

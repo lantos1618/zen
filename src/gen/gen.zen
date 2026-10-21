@@ -209,6 +209,7 @@ Generation* = {
             self.tree,
             self.check,
             self.entry,
+            backend.match({ C => true, _ => false }),
             backend.match({ C => true, _ => false })
         )
     }
@@ -320,7 +321,14 @@ Generation* = {
     // this host, after the report says why.
     run* = (self: @Self, report :: String, argv: Vec<str>)
            Res<Res<i32>, AllocError> {
-        lower(self.alloc, self.tree, self.check, self.entry, false).match({
+        lower(
+            self.alloc,
+            self.tree,
+            self.check,
+            self.entry,
+            false,
+            true
+        ).match({
             Err(error)  => error.match({
                 OutOfMemory        => Err(AllocError.OutOfMemory),
                 Unsupported(fault) => {

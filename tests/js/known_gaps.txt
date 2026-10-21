@@ -224,6 +224,7 @@ tests/corpus/std/os_entropy # UNSUPPORTED: os_entropy.zen:5:23: error: unsupport
 tests/corpus/std/secret_discipline_accepts_constant_time_code # UNSUPPORTED: secret_discipline_accepts_constant_time_code.zen:56:42: error: unsupported by this backend: the mach
 tests/corpus/std/simd_bmi2 # UNSUPPORTED: std/simd.zen:214:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_features # UNSUPPORTED: simd_features.zen:93:25: error: unsupported by this backend: the std.simd operation lane
+tests/corpus/std/simd_lane_edges # UNSUPPORTED: simd_lane_edges.zen:12:13: error: unsupported by this backend: the std.simd operation add_wrap
 tests/corpus/std/simd_sha # UNSUPPORTED: std/simd.zen:229:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
 tests/corpus/std/simd_vectors # UNSUPPORTED: simd_vectors.zen:43:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements # UNSUPPORTED: std/math/math.zen:14:28: error: unsupported by this backend: alternatives of a value without them (`

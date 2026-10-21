@@ -24,14 +24,16 @@
 
 // Lower the program whose `main` is in module `entry`.
 lower* = (
-    alloc   : Alloc,
-    tree    : Ast,
-    check   : Checker,
-    entry   : usize,
+    alloc    : Alloc,
+    tree     : Ast,
+    check    : Checker,
+    entry    : usize,
     // The target links C (see Lowerer.c_calls).
-    c_calls : bool
+    c_calls  : bool,
+    // The target runs machine instructions (see Lowerer.machines).
+    machines : bool
 ) Res<Program, LowerError> {
-    lower_native(alloc, tree, check, entry, c_calls)
+    lower_native(alloc, tree, check, entry, c_calls, machines)
 }
 
 Fault* = { span*: Span, what*: str }

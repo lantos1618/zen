@@ -191,3 +191,25 @@ machine_refusal* = (op: MachineOp) str {
         SquareLimbs       => "the std.simd instruction square_limbs",
     })
 }
+
+// The byte size of a std.simd vector type spelled `kind` (`u32x4`), 0 for
+// any other spelling.
+vector_bytes* = (kind: str) usize {
+    kind.match({
+        "u8x16" => 16,
+        "u32x4" => 16,
+        "u64x2" => 16,
+        "u8x32" => 32,
+        "u32x8" => 32,
+        "u64x4" => 32,
+        _       => 0,
+    })
+}
+
+// The byte width of one lane of the vector type `kind`.
+lane_bytes* = (kind: str) usize {
+    kind.starts_with("u8x").match({
+        true  => 1,
+        false => kind.starts_with("u32x").match({ true => 4, false => 8 }),
+    })
+}

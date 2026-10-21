@@ -3,7 +3,6 @@
 # line its jit run prints. `make jitcorpus` fails when a listed test passes,
 # is refused, fails with any other line, or leaves the corpus, and when an
 # unlisted test fails: fix a gap, then delete its line.
-tests/corpus/actor/vector_state_is_16_aligned	vector_state_is_16_aligned.zen:22:24: error: unsupported by this backend: the std.simd operation splat_*
 tests/corpus/bitwise/secret_words_take_public_counts	secret_words_take_public_counts.zen:6:8: error: unsupported by this backend: a Secret parameter
 tests/corpus/codegen/c_abi_integer_spelling	c_abi_integer_spelling.zen:28:30: error: unsupported by this backend: the C function `abs` on a target without C
 tests/corpus/codegen/native_constants_in_different_functions_keep_their_own_values	native_constants_in_different_functions_keep_their_own_values.zen:22:18: error: unsupported by this backend: the C header constant `ZEN_TEST_ABSENT_FIRST` on a target without C
@@ -18,13 +17,7 @@ tests/corpus/net/tcp_connect/main	std/net/socket.zen:248:27: error: unsupported 
 tests/corpus/net/tls_connect/main	std/net/tls.zen:261:13: error: unsupported by this backend: the C function `SSL_shutdown` on a target without C
 tests/corpus/own/send_consumed_buffer	send_consumed_buffer.zen:58:38: error: unsupported by this backend: the C function `abort` on a target without C
 tests/corpus/proc_run/creation_mask/main	std/proc/proc.zen:213:28: error: unsupported by this backend: the C header constant `S_IRWXG` on a target without C
-tests/corpus/std/carry_limbs	std/simd.zen:218:22: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
 tests/corpus/std/constant_time	constant_time.zen:154:9: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.value_barrier`
 tests/corpus/std/secret_discipline_accepts_constant_time_code	std/ct/ct.zen:48:34: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.declassify_barrier`
 tests/corpus/std/os_entropy	std/entropy.zen:23:27: error: unsupported by this backend: the C function `arc4random_buf` on a target without C
-tests/corpus/std/simd_bmi2	std/simd.zen:215:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
-tests/corpus/std/simd_features	simd_features.zen:96:25: error: unsupported by this backend: the std.simd operation lane
-tests/corpus/std/simd_sha	std/simd.zen:230:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
-tests/corpus/std/simd_vectors	simd_vectors.zen:46:9: error: unsupported by this backend: the std.simd operation lanes_*
 tests/corpus/std/stats_rolling_measurements	std/math/math.zen:24:28: error: unsupported by this backend: the C function `sqrt` on a target without C
-tests/corpus/traps/simd_lane_out_of_bounds	simd_lane_out_of_bounds.zen:8:12: error: unsupported by this backend: the std.simd operation splat_*

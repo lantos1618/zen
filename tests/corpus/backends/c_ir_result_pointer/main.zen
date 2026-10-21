@@ -2,7 +2,7 @@
 // pointer. The caller may pass its own destination only when no argument
 // and no escaped address can reach that storage during the call; otherwise
 // the callee writes a spare that is copied into the destination afterwards.
-{ Program, Func, BasicBlock, Instruction, Terminator, Scalar, Layout, Const, Move, Invocation, Address } = gen.gen_ir
+{ Program, NativeRecord, Func, BasicBlock, Instruction, Terminator, Scalar, Layout, Const, Move, Invocation, Address } = gen.gen_ir
 { verify } = gen.gen_verify
 { emit_c } = gen.gen_c_ir
 { Res, Ok, Err, None } = std.core
@@ -117,7 +117,11 @@ main = (env: Env) Res<AllocError> {
     functions.add(escaped(a).try()).try();
     functions.add(entry(a).try()).try();
     functions.add(through(a).try()).try();
-    program = Program(functions: functions, entry: 3);
+    program = Program(
+        functions: functions,
+        entry: 3,
+        natives: a.Vec<NativeRecord>()
+    );
     valid   = program.verify(a).match({ Ok(_) => true, Err(_) => false });
     println("verified {}", valid);
     valid.then(() {

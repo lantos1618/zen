@@ -15,8 +15,16 @@
 { Res, None } = std.core
 { Ptr } = std.mem
 
-// Size and alignment of an aggregate slot, in bytes.
-Layout* = { size*: usize, align*: usize }
+// Size and alignment of an aggregate slot, in bytes. A native C record's
+// layout belongs to its header: `native` is 1 + its index in
+// `Program.natives`, and `size`/`align` are then unknown (0 and 1).
+Layout* = { size*: usize, align*: usize, native* :: usize = 0 }
+
+// A `c.record` whose size, alignment and field offsets only the C compiler
+// knows. `ctype` spells a scalar field's C type for the layout contract;
+// it is empty for a pointer field.
+NativeField* = { name*: str, ctype*: str }
+NativeRecord* = { spelling*: str, header*: str, fields*: Vec<NativeField> }
 
 // A slot's machine class. Integer slots hold their value extended to the
 // full machine word (signed types sign-extend, unsigned types, `Bool` and
@@ -185,6 +193,9 @@ ForeignCall* = {
 // class.
 NativeValue* = { out*: usize, header*: str, name*: str, fallback*: Res<i64> }
 
+// `sizeof` a native record, or `offsetof` one of its fields, as a U64.
+NativeMeasure* = { out*: usize, record*: usize, field*: Res<str> }
+
 Instruction* = { Constant: Const
     | Copy: Move
     | UnaryValue: Unary
@@ -223,7 +234,10 @@ Instruction* = { Constant: Const
     | CodeAddress: CodeRef
     | InvokeAt: IndirectCall
     | Foreign: ForeignCall
-    | NativeConst: NativeValue }
+    | NativeConst: NativeValue
+    | NativeLayout: NativeMeasure
+    // Zero every byte of a native record slot, hidden fields included.
+    | NativeClear: usize }
 
 // A terminator that ends the process with Zen's trap report.
 TrapKind* = { Overflow
@@ -278,6 +292,7 @@ Program* = {
     functions*: Vec<Func>,
     // The entry function takes no arguments.
     entry*: usize,
+    natives*: Vec<NativeRecord>,
 }
 
 // The trap report's `what`, as the C backend spells it.
@@ -352,7 +367,8 @@ same* = (left: Scalar, right: Scalar) bool {
         F32      => right.match({ F32 => true, _ => false }),
         F64      => right.match({ F64 => true, _ => false }),
         Block(l) => right.match({
-            Block(r) => l.size == r.size && l.align == r.align,
+            Block(r) => l.size == r.size && l.align == r.align
+                && l.native == r.native,
             _        => false,
         }),
     })

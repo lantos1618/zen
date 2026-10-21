@@ -12,7 +12,7 @@
 { Span } = std.source
 { Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print, Move } = gen.gen_ir
 { Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
-{ ForeignCall, NativeValue } = gen.gen_ir
+{ ForeignCall, NativeValue, NativeRecord, NativeMeasure } = gen.gen_ir
 { trap_message, width, signed, integer, float, same } = gen.gen_ir
 { IrFeature } = gen.gen_ir_feature
 { Sys, SysConstant, Platform, DarwinResult } = gen.gen_sys
@@ -71,6 +71,7 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         ends: a.Vec<usize>(),
         sizes: a.Vec<usize>(),
         next: a.Vec<usize>(),
+        natives: program.natives,
         ret_slot: 0,
         ret_ptr: false,
         copies: 0
@@ -92,6 +93,8 @@ C = {
     labels :: Vec<bool>,
     operands :: Vec<usize>,
     layouts :: Vec<Layout>,
+    // The program's `c.record`s: a native layout `k` is spelled `znk`.
+    natives :: Vec<NativeRecord>,
     symbols :: Vec<str>,
     // From `plan`: each function's first parameter in `borrowed`, where a
     // borrowed parameter is an aggregate the callee only reads, passed by
@@ -170,6 +173,7 @@ C = {
     ret_ptr :: bool,
 
     program = (self :: @Self, program: Program) Res<(), AllocError> {
+        self.records().try();
         self.plan(program).try();
         program.functions.loop((h, index, function) {
             self.signature(index, function).try();
@@ -567,6 +571,8 @@ C = {
                 self.escapes(v.args);
             },
             NativeConst(v)   => self.wrote(v.out),
+            NativeLayout(v)  => self.wrote(v.out),
+            NativeClear(s)   => self.wrote(s),
             Wait(s)          => self.wrote(s),
             VolatileLoad(v)  => self.wrote(v.out),
             VolatileStore(v) => {
@@ -859,7 +865,7 @@ C = {
     // The typedef for an aggregate class, once per layout.
     need = (self :: @Self, ty: Scalar) Res<(), AllocError> {
         ty.match({
-            Block(layout) => {
+            Block(layout) => (layout.native > 0).match({ true => Ok, false => {
                 known ::= false;
                 self.layouts.loop((seen) {
                     (seen.size == layout.size && seen.align == layout.align)
@@ -884,7 +890,7 @@ C = {
                         )
                     },
                 })
-            },
+            } }),
             _             => Ok,
         })
     }
@@ -1594,6 +1600,12 @@ C = {
             InvokeAt(value)      => self.indirect(f, value),
             Foreign(value)       => self.foreign(f, value),
             NativeConst(value)   => self.native_const(f, value),
+            NativeLayout(value)  => self.native_layout(value),
+            NativeClear(slot)    => self.out.fmt(
+                "  memset(&v{}, 0, sizeof v{});\n",
+                slot,
+                slot
+            ),
             // Outside `supports`; the driver refuses it before rendering.
             _                    => self.out.add(OUTSIDE),
         })
@@ -1682,6 +1694,46 @@ C = {
                 });
                 self.head.fmt(") __asm__(ZR_LABEL \"{}\");\n", call.symbol)
             },
+        })
+    }
+
+    // Each native record's header, a typedef naming it, and a contract
+    // that makes the C compiler refuse a scalar field whose written Zen type
+    // is not exactly the header's: a borrow of a wider field would overwrite
+    // its neighbours.
+    records = (self :: @Self) Res<(), AllocError> {
+        (self.natives.len > 0).then(() { self.include("stdbool.h").try(); });
+        self.natives.loop((h, i, record) {
+            self.include(record.header).try();
+            self.head.fmt("typedef {} zn{};\n", record.spelling, i + 1).try();
+            record.fields.loop((field) {
+                (field.ctype.len > 0).then(() {
+                    self.head.fmt(
+                        "extern char zg_native_scalar_field_type_mismatch[__builtin_types_compatible_p(__typeof__(((zn{} *)0)->{}), {}) ? 1 : -1];\n",
+                        i + 1,
+                        field.name,
+                        field.ctype
+                    ).try();
+                });
+            });
+        });
+        Ok
+    }
+
+    // `sizeof` a native record, or `offsetof` one of its fields.
+    native_layout = (self :: @Self, value: NativeMeasure) Res<(), AllocError> {
+        value.field.match({
+            Ok(field) => self.out.fmt(
+                "  v{} = (uint64_t)offsetof(zn{}, {});\n",
+                value.out,
+                value.record,
+                field
+            ),
+            None      => self.out.fmt(
+                "  v{} = (uint64_t)sizeof(zn{});\n",
+                value.out,
+                value.record
+            ),
         })
     }
 
@@ -2316,7 +2368,10 @@ descriptor = (stream: Stream) usize {
 
 ctype = (out :: String, ty: Scalar) Res<(), AllocError> {
     ty.match({
-        Block(l) => out.fmt("zb{}_{}", l.size, l.align),
+        Block(l) => (l.native > 0).match({
+            true  => out.fmt("zn{}", l.native),
+            false => out.fmt("zb{}_{}", l.size, l.align),
+        }),
         I32      => out.add("int32_t"),
         I8       => out.add("int8_t"),
         I16      => out.add("int16_t"),
@@ -2741,6 +2796,8 @@ mentions = (instruction: Instruction, visit: (slot: usize, read: bool) ()) {
             v.args.loop((slot) { visit(slot, true); });
         },
         NativeConst(v)   => visit(v.out, false),
+        NativeLayout(v)  => visit(v.out, false),
+        NativeClear(s)   => visit(s, false),
         Wait(s)          => visit(s, false),
         VolatileLoad(v)  => {
             visit(v.out, false);

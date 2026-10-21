@@ -1,4 +1,4 @@
-{ Program, Func, Scalar, BasicBlock, Terminator, Branch } = gen.gen_ir
+{ Program, NativeRecord, Func, Scalar, BasicBlock, Terminator, Branch } = gen.gen_ir
 { Layout, Address, Load, Guards, TagGuard, PayloadRead } = gen.gen_ir
 { Instruction, Const, Move, Unary, UnaryOp, Binary, Op, Invocation, Print } = gen.gen_ir
 { verify, message } = gen.gen_verify
@@ -52,7 +52,11 @@ Example = {
             blocks: blocks,
             result: self.result
         )).try();
-        Ok(Program(functions: functions, entry: 0))
+        Ok(Program(
+            functions: functions,
+            entry: 0,
+            natives: self.alloc.Vec<NativeRecord>()
+        ))
     }
 }
 
@@ -67,7 +71,15 @@ example = (a: Alloc) Res<Example, AllocError> {
 }
 
 structure = (a: Alloc) Res<AllocError> {
-    show("missing entry", Program(functions: a.Vec<Func>(), entry: 0), a);
+    show(
+        "missing entry",
+        Program(
+            functions: a.Vec<Func>(),
+            entry: 0,
+            natives: a.Vec<NativeRecord>()
+        ),
+        a
+    );
     e ::= example(a).try();
     show("valid scalars", e.program().try(), a);
     show("allocation", e.program().try(), Refuse());
@@ -151,7 +163,7 @@ calls = (a: Alloc) Res<AllocError> {
         blocks: blocks,
         result: Scalar.I32
     )).try();
-    p = Program(functions: functions, entry: 0);
+    p = Program(functions: functions, entry: 0, natives: a.Vec<NativeRecord>());
     show("initialized parameter", p, a);
     args.set(0, 2);
     show("call type", p, a);
@@ -216,7 +228,7 @@ flow_program = (a: Alloc, blocks: Vec<BasicBlock>) Res<Program, AllocError> {
         blocks: blocks,
         result: Scalar.I32
     )).try();
-    Ok(Program(functions: functions, entry: 0))
+    Ok(Program(functions: functions, entry: 0, natives: a.Vec<NativeRecord>()))
 }
 
 diamond = (a: Alloc, initialize: bool) Res<Program, AllocError> {
@@ -264,7 +276,11 @@ unreachable = (a: Alloc) Res<AllocError> {
         blocks: blocks,
         result: Scalar.I32
     )).try();
-    program = Program(functions: functions, entry: 0);
+    program = Program(
+        functions: functions,
+        entry: 0,
+        natives: a.Vec<NativeRecord>()
+    );
     show("unreachable read", program, a);
     code.set(0, Instruction.PrintValue(Print(value: 1, ty: Scalar.Bool)));
     show("unreachable type", program, a);
@@ -335,7 +351,7 @@ guarded = (
         result: Scalar.I32,
         guards: Ok(Guards(tests: tests, reads: reads))
     )).try();
-    Ok(Program(functions: functions, entry: 0))
+    Ok(Program(functions: functions, entry: 0, natives: a.Vec<NativeRecord>()))
 }
 
 main = (env: Env) Res<AllocError> {

@@ -13,7 +13,7 @@ tests/corpus/file-io/posix_stream/main	main.zen:78:6: error: unsupported by this
 tests/corpus/gen_zen/bodyless_free_function_is_extern/main	main.zen:17:11: error: unsupported by this backend: the C function `isdigit` on a target without C
 tests/corpus/math/power_and_rounding	std/math/math.zen:26:41: error: unsupported by this backend: the C function `pow` on a target without C
 tests/corpus/math/scalar	std/math/math.zen:19:27: error: unsupported by this backend: the C function `cos` on a target without C
-tests/corpus/net/dns_resolve/main	std/net/socket.zen:175:12: error: unsupported by this backend: a native C record
+tests/corpus/net/dns_resolve/main	std/net/socket.zen:10:1: error: unsupported by this backend: a native C record on a target without C
 tests/corpus/net/tcp_connect/main	std/net/socket.zen:248:27: error: unsupported by this backend: the C function `freeaddrinfo` on a target without C
 tests/corpus/net/tls_connect/main	std/net/tls.zen:261:13: error: unsupported by this backend: the C function `SSL_shutdown` on a target without C
 tests/corpus/own/send_consumed_buffer	send_consumed_buffer.zen:58:38: error: unsupported by this backend: the C function `abort` on a target without C

@@ -478,23 +478,31 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
         function.blocks.loop((block) {
             block.code.loop((instruction) {
                 instruction.match({
-                    Foreign(_)     => { found = Ok(AsmRefusal(
+                    Foreign(_)      => { found = Ok(AsmRefusal(
                         what: "calls of C functions",
                         function: function.name
                     )); },
-                    NativeConst(_) => { found = Ok(AsmRefusal(
+                    NativeConst(_)  => { found = Ok(AsmRefusal(
                         what: "constants from C headers",
                         function: function.name
                     )); },
-                    Host(_)        => { found = Ok(AsmRefusal(
+                    NativeLayout(_) => { found = Ok(AsmRefusal(
+                        what: "native C record layouts",
+                        function: function.name
+                    )); },
+                    NativeClear(_)  => { found = Ok(AsmRefusal(
+                        what: "native C record layouts",
+                        function: function.name
+                    )); },
+                    Host(_)         => { found = Ok(AsmRefusal(
                         what: "JavaScript host calls (js.bind)",
                         function: function.name
                     )); },
-                    Wait(_)        => { found = Ok(AsmRefusal(
+                    Wait(_)         => { found = Ok(AsmRefusal(
                         what: "JavaScript event waits (std.js.wait)",
                         function: function.name
                     )); },
-                    _              => (),
+                    _               => (),
                 });
             });
         });

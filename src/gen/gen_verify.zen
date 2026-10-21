@@ -246,6 +246,11 @@ Check = {
                 out = self.slot(value.out).try();
                 integer(out).ensure(self.fault(IrReason.Type))
             },
+            NativeLayout(value)  => self.expect(value.out, Scalar.U64),
+            NativeClear(slot)    => self.slot(slot).try().match({
+                Block(l) => (l.native > 0).ensure(self.fault(IrReason.Type)),
+                _        => Err(self.fault(IrReason.Type)),
+            }),
             SysConst(value)      => integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try(),
             Startup(value)       => {
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
@@ -382,7 +387,7 @@ Check = {
     // A slot of no bytes holds nothing that could be read uninitialized.
     empty = (self: @Self, slot: usize) bool {
         self.function.slots.get(slot).match({
-            Ok(ty) => ty.match({ Block(l) => l.size == 0, _ => false }),
+            Ok(ty) => ty.match({ Block(l) => l.size == 0 && l.native == 0, _ => false }),
             None   => false,
         })
     }
@@ -442,6 +447,8 @@ Check = {
                 Ok
             },
             NativeConst(_)       => Ok,
+            NativeLayout(_)      => Ok,
+            NativeClear(_)       => Ok,
             VolatileLoad(value)  => self.initialized(flags, value.base),
             VolatileStore(value) => {
                 self.initialized(flags, value.base).try();
@@ -511,6 +518,8 @@ write = (flags :: Init, instruction: Instruction) {
         Wait(slot)          => { flags.note(slot); },
         Foreign(value)      => { flags.note(value.out); },
         NativeConst(value)  => { flags.note(value.out); },
+        NativeLayout(value) => { flags.note(value.out); },
+        NativeClear(slot)   => { flags.note(slot); },
         VolatileLoad(value) => { flags.note(value.out); },
         AtomicLoad(value)   => { flags.note(value.out); },
         AtomicUpdate(value) => { flags.note(value.out); },
@@ -1090,6 +1099,8 @@ Payloads = {
                 (a) { self.forget_argument(state, a); }
             ),
             NativeConst(_)   => (),
+            NativeLayout(_)  => (),
+            NativeClear(_)   => (),
             Constant(_)      => (),
             Copy(_)          => (),
             UnaryValue(_)    => (),
@@ -1162,6 +1173,8 @@ written = (instruction: Instruction) Res<usize> {
         Wait(slot)       => Ok(slot),
         Foreign(v)       => Ok(v.out),
         NativeConst(v)   => Ok(v.out),
+        NativeLayout(v)  => Ok(v.out),
+        NativeClear(s)   => Ok(s),
         VolatileLoad(v)  => Ok(v.out),
         AtomicLoad(v)    => Ok(v.out),
         AtomicUpdate(v)  => Ok(v.out),

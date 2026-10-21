@@ -509,6 +509,8 @@ Propagate = {
                 typed: call.typed
             )),
             NativeConst(_)   => instruction,
+            NativeLayout(_)  => instruction,
+            NativeClear(_)   => instruction,
         }))
     }
 

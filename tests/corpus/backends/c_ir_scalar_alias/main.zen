@@ -1,7 +1,7 @@
 // A scalar can carry an alias of a pointer parameter across a call. The C
 // renderer must copy a block read through that parameter before lending it
 // to a by-value callee. A load through an unescaped local address can lend.
-{ Program, Func, BasicBlock, Instruction, Terminator, Scalar, Layout, Const, Move, Convert, Load, Store, Invocation, Address } = gen.gen_ir
+{ Program, NativeRecord, Func, BasicBlock, Instruction, Terminator, Scalar, Layout, Const, Move, Convert, Load, Store, Invocation, Address } = gen.gen_ir
 { verify } = gen.gen_verify
 { emit_c } = gen.gen_c_ir
 { Res, Ok, Err, None } = std.core
@@ -125,7 +125,11 @@ main = (env: Env) Res<AllocError> {
     functions.add(peek(a).try()).try();
     functions.add(local(a).try()).try();
     functions.add(entry(a).try()).try();
-    program = Program(functions: functions, entry: 4);
+    program = Program(
+        functions: functions,
+        entry: 4,
+        natives: a.Vec<NativeRecord>()
+    );
     valid   = program.verify(a).match({ Ok(_) => true, Err(_) => false });
     println("verified {}", valid);
     valid.then(() {

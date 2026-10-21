@@ -152,6 +152,8 @@ instruction_need = (instruction: Instruction) Res<IrFeature> {
         InvokeAt(_)        => Ok(IrFeature.Threads),
         Foreign(_)         => Ok(IrFeature.Native),
         NativeConst(_)     => Ok(IrFeature.Native),
+        NativeLayout(_)    => Ok(IrFeature.Native),
+        NativeClear(_)     => Ok(IrFeature.Native),
         _                  => Ok(IrFeature.Memory),
     })
 }

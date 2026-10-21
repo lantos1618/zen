@@ -5,7 +5,7 @@
 { assemble_and_link } = zen.zen_native
 { Generation, Layout, emit_assembly } = gen.gen
 { Codegen } = std.build
-{ Program, Func, BasicBlock, Instruction, Terminator, Const, Scalar, Binary, Op, Branch } = gen.gen_ir
+{ Program, NativeRecord, Func, BasicBlock, Instruction, Terminator, Const, Scalar, Binary, Op, Branch } = gen.gen_ir
 { nowhere } = std.source
 { lower } = gen.gen_lower
 { verify } = gen.gen_verify
@@ -272,7 +272,7 @@ cyclic_program = (a: Alloc, text: str) Res<Program, AllocError> {
         blocks: blocks,
         result: Scalar.I32
     )).try();
-    Ok(Program(functions: functions, entry: 0))
+    Ok(Program(functions: functions, entry: 0, natives: a.Vec<NativeRecord>()))
 }
 
 direct = (env: Env, a: Alloc) Res<bool, AllocError> {

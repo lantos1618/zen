@@ -473,6 +473,8 @@ JavaScript = {
             InvokeAt(_)          => self.out.add(OUTSIDE_SUPPORTS),
             Foreign(_)           => self.out.add(OUTSIDE_SUPPORTS),
             NativeConst(_)       => self.out.add(OUTSIDE_SUPPORTS),
+            NativeLayout(_)      => self.out.add(OUTSIDE_SUPPORTS),
+            NativeClear(_)       => self.out.add(OUTSIDE_SUPPORTS),
         })
     }
 

@@ -5,7 +5,7 @@
 { Env, FsError } = std.env
 { ProcError, ProcOutput } = std.proc
 { Span, Pos } = std.source
-{ Program, Func, Instruction, BasicBlock, Terminator, Const, Binary, Op, Invocation, Print, Scalar, Branch, Move } = gen.gen_ir
+{ Program, NativeRecord, Func, Instruction, BasicBlock, Terminator, Const, Binary, Op, Invocation, Print, Scalar, Branch, Move } = gen.gen_ir
 { Target } = gen.gen_asm
 { X86_64Linux } = gen.gen_asm_x86
 { Arm64, Arm64Os } = gen.gen_asm_arm64
@@ -188,7 +188,7 @@ abi = (a: Alloc) Res<Program, AllocError> {
     Range<usize>(7, 10).loop((parameters) {
         functions.add(weighted(a, parameters).try()).try();
     });
-    Ok(Program(functions: functions, entry: 0))
+    Ok(Program(functions: functions, entry: 0, natives: a.Vec<NativeRecord>()))
 }
 
 digit = (i: usize) i64 {
@@ -211,7 +211,7 @@ trapping = (a: Alloc, left: i64, op: Op, right: i64) Res<Program, AllocError> {
         blocks: blocks,
         result: Scalar.I32
     )).try();
-    Ok(Program(functions: functions, entry: 0))
+    Ok(Program(functions: functions, entry: 0, natives: a.Vec<NativeRecord>()))
 }
 
 reloads = (a: Alloc) Res<Func, AllocError> {

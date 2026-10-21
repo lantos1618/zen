@@ -12,8 +12,8 @@
 { Checker, Ctx, Inst, decl_at } = sema.sema
 { inst_of_named, owner_of, subst, type_from_ast } = sema.sema
 { union_reading } = sema.sema_union
-{ Scalar, Layout } = gen.gen_ir
-{ Lowerer } = gen.gen_lower_core
+{ Scalar, Layout, NativeRecord, NativeField, same } = gen.gen_ir
+{ Lowerer, valid_c_header } = gen.gen_lower_core
 { LowerError, unsupported } = gen.gen_lower
 { nowhere } = std.source
 
@@ -187,7 +187,8 @@ compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
             lo.tagged(cases)
         },
         Array(a) => {
-            elem   = lo.shape(a.elem).try();
+            elem = lo.shape(a.elem).try();
+            held(elem.class).try();
             stride = round_up(size_of(elem.class), align_of(elem.class));
             Ok(Shape(
                 class: Scalar.Block(Layout(
@@ -228,13 +229,9 @@ named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
                 decl.kind.match({
                     // A struct of functions without storage is a bound: its
                     // values are an implementor tag and a receiver pointer.
-                    // A `c.record` takes its layout from the C header; only
-                    // the legacy C backend checks and spells it.
+                    // A `c.record` takes its layout from the C header.
                     Struct(s) => s.native_record.match({
-                        true  => Err(unsupported(
-                            nowhere(),
-                            "a native C record"
-                        )),
+                        true  => lo.native_record(n, s),
                         false => behaviour_only(s).match({
                             true  => Ok(Shape(
                                 class: Scalar.Block(Layout(size: 16, align: 8)),
@@ -293,6 +290,111 @@ behaviour_only* = (s: Struct) bool {
     functions.match({ Ok(_) => true, None => false }) && fields.match({ Ok(_) => false, None => true })
 }
 
+// A `c.record`: the header owns its size, alignment and field offsets, so
+// its layout names the record and the C compiler measures it
+// (`NativeLayout`). Only a target with a C compiler can.
+native_record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
+    lo.c_calls.ensure(unsupported(
+        s.name.span,
+        "a native C record on a target without C"
+    )).try();
+    spelling = s.native_symbol.value_or("");
+    header   = s.native_header.value_or("");
+    valid ::= native_spelling(spelling) && s.tparams.len == 0
+        && valid_c_header(header);
+    fields = lo.field_types(n, s).try();
+    checks ::= lo.alloc.Vec<NativeField>();
+    placed ::= lo.alloc.Vec<FieldAt>();
+    fields.loop((field) {
+        class = lo.class_of(field.ty).try();
+        ctype = native_ctype(lo.prim_name(field.ty));
+        ctype.match({
+            Ok(c) => checks.add(NativeField(
+                name: field.name,
+                ctype: c
+            )).try(LowerError.OutOfMemory),
+            None  => same(class, Scalar.Ptr).match({
+                true  => checks.add(NativeField(
+                    name: field.name,
+                    ctype: ""
+                )).try(LowerError.OutOfMemory),
+                false => { valid = false; },
+            }),
+        });
+        placed.add(FieldAt(
+            name: field.name,
+            ty: field.ty,
+            offset: 0
+        )).try(LowerError.OutOfMemory);
+    });
+    valid.ensure(unsupported(
+        s.name.span,
+        "an invalid native record: expected a safe header type and scalar or pointer fields"
+    )).try();
+    index :: usize = 0;
+    lo.natives.loop((h, i, record) {
+        (record.spelling.eq(spelling) && record.header.eq(header)).then(() { index = i + 1; });
+    });
+    (index == 0).then(() {
+        lo.natives.add(NativeRecord(
+            spelling: spelling,
+            header: header,
+            fields: checks
+        )).try(LowerError.OutOfMemory);
+        index = lo.natives.len;
+    });
+    Ok(Shape(
+        class: Scalar.Block(Layout(size: 0, align: 1, native: index)),
+        form: Form.Record(placed)
+    ))
+}
+
+// A C type name: an identifier, or `struct` and one.
+native_spelling = (name: str) bool {
+    name.is_identifier() || (name.starts_with("struct ")
+        && name.slice(7, name.len).is_identifier())
+}
+
+// The C spelling of a scalar a native record field may have.
+native_ctype = (name: str) Res<str> {
+    name.match({
+        "i8"          => Ok("int8_t"),
+        "i16"         => Ok("int16_t"),
+        "i32"         => Ok("int32_t"),
+        "i64"         => Ok("int64_t"),
+        "u8"          => Ok("uint8_t"),
+        "u16"         => Ok("uint16_t"),
+        "u32"         => Ok("uint32_t"),
+        "u64"         => Ok("uint64_t"),
+        "usize"       => Ok("size_t"),
+        "c_char"      => Ok("char"),
+        "c_schar"     => Ok("signed char"),
+        "c_uchar"     => Ok("unsigned char"),
+        "c_short"     => Ok("short"),
+        "c_ushort"    => Ok("unsigned short"),
+        "c_int"       => Ok("int"),
+        "c_uint"      => Ok("unsigned int"),
+        "c_long"      => Ok("long"),
+        "c_ulong"     => Ok("unsigned long"),
+        "c_longlong"  => Ok("long long"),
+        "c_ulonglong" => Ok("unsigned long long"),
+        "f32"         => Ok("float"),
+        "f64"         => Ok("double"),
+        "bool"        => Ok("bool"),
+        _             => None,
+    })
+}
+
+is_native* = (class: Scalar) bool {
+    class.match({ Block(l) => l.native > 0, _ => false })
+}
+
+// A Zen aggregate lays its parts out at known offsets, which a native
+// record's unknown size would break.
+held = (class: Scalar) Res<LowerError> {
+    (!is_native(class)).ensure(unsupported(nowhere(), "a native C record inside a Zen value"))
+}
+
 // Fields in declaration order at natural alignment. A record whose fields
 // all occupy no bytes is itself unit-shaped.
 record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
@@ -301,7 +403,8 @@ record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
     cursor :: usize = 0;
     align  :: usize = 1;
     fields.loop((field) {
-        class  = lo.class_of(field.ty).try();
+        class = lo.class_of(field.ty).try();
+        held(class).try();
         a      = align_of(class);
         cursor = round_up(cursor, a);
         placed.add(FieldAt(
@@ -383,6 +486,7 @@ tagged = (lo :: Lowerer, cases: Vec<Case>) Res<Shape, LowerError> {
         ), false => None });
         payload.when_ok((p) {
             class = lo.class_of(p).try();
+            held(class).try();
             (size_of(class) > size).then(() { size = size_of(class); });
             (align_of(class) > align).then(() { align = align_of(class); });
         });

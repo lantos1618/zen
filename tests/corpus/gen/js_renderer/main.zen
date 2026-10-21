@@ -1,7 +1,7 @@
 // A trap preserves earlier output, arbitrary text bytes, and the operation's
 // source location. A large payload exercises Node's pending stdout writes.
 
-{ Program, Func, Instruction, Const, Unary, UnaryOp, Binary, Op, Scalar } = gen.gen_ir
+{ Program, NativeRecord, Func, Instruction, Const, Unary, UnaryOp, Binary, Op, Scalar } = gen.gen_ir
 { BasicBlock, Terminator } = gen.gen_ir
 { emit_js } = gen.gen_js
 { Span, Pos } = std.source
@@ -33,7 +33,11 @@ run = (env: Env, a: Alloc, code: Vec<Instruction>, before: str, fault: str)
         blocks: blocks,
         result: Scalar.I32,
     )).try();
-    program = Program(functions: functions, entry: 0);
+    program = Program(
+        functions: functions,
+        entry: 0,
+        natives: a.Vec<NativeRecord>()
+    );
     first   = emit_js(a, program).try();
     second  = emit_js(a, program).try();
     stable  = first.view().eq(second.view());

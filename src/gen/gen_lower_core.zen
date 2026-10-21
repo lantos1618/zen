@@ -29,7 +29,7 @@
 { Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { sym_fn, sym_local } = gen.gen_name
 { written_secret } = sema.sema_secret
-{ Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
+{ Branch, Instruction, Func, Program, BasicBlock, Terminator, NativeRecord, NativeMeasure } = gen.gen_ir
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, SysValue, NativeValue } = gen.gen_ir
 { SysConstant } = gen.gen_sys
@@ -212,6 +212,9 @@ Lowerer* = {
     // Whether the target links C: only then do bodyless declarations and
     // header constants lower to C calls; elsewhere they are refused.
     c_calls* :: bool = false,
+    // The `c.record`s values of this program have, in first-use order;
+    // a native `Layout` names one by 1 + its index.
+    natives* :: Vec<NativeRecord>,
     // Per real function: the tag tests and payload reads the verifier
     // checks against each other (gen_ir.Guards). `case_tests` remembers
     // which Bool slots hold a tag test until a branch consumes one.
@@ -576,6 +579,29 @@ Lowerer* = {
         self.offset_pointer(base, place.offset)
     }
 
+    // A U64 slot holding the bytes a value of `class` occupies; the C
+    // compiler measures a native record.
+    size_word* = (self :: @Self, class: Scalar) Res<usize, LowerError> {
+        class.match({
+            Block(l) => (l.native > 0).match({
+                true  => {
+                    out = self.slot_of(Scalar.U64).try();
+                    self.add(Instruction.NativeLayout(NativeMeasure(
+                        out: out,
+                        record: l.native,
+                        field: None
+                    ))).try();
+                    Ok(out)
+                },
+                false => self.word_const(Scalar.U64, l.size.to_i64_bits()),
+            }),
+            _        => self.word_const(
+                Scalar.U64,
+                size_of(class).to_i64_bits()
+            ),
+        })
+    }
+
     offset_pointer* = (self :: @Self, base: usize, offset: usize) Res<usize, LowerError> {
         (offset == 0).match({
             true  => Ok(base),
@@ -694,15 +720,36 @@ Lowerer* = {
                 Ok(field)
             },
             false => {
-                f = found.ok_or(unsupported(
+                f      = found.ok_or(unsupported(
                     span,
                     "a field of a value without record layout"
                 )).try();
-                Ok(Place(
-                    base: base.base,
-                    offset: base.offset + f.offset,
-                    ty: f.ty
-                ))
+                native = s.class.match({ Block(l) => l.native, _ => 0 });
+                (native > 0).match({
+                    true  => {
+                        at     = self.address(base).try();
+                        offset = self.slot_of(Scalar.U64).try();
+                        self.add(Instruction.NativeLayout(NativeMeasure(
+                            out: offset,
+                            record: native,
+                            field: Ok(f.name)
+                        ))).try();
+                        p = self.slot_of(Scalar.Ptr).try();
+                        self.add(Instruction.BinaryValue(Binary(
+                            out: p,
+                            left: at,
+                            right: offset,
+                            op: Op.WrapAdd,
+                            span: nowhere()
+                        ))).try();
+                        Ok(Place(base: Base.Through(p), offset: 0, ty: f.ty))
+                    },
+                    false => Ok(Place(
+                        base: base.base,
+                        offset: base.offset + f.offset,
+                        ty: f.ty
+                    )),
+                })
             },
         })
     }
@@ -4291,6 +4338,7 @@ lower_native* = (
         defers: alloc.Vec<DeferEntry>(),
         vias: alloc.Vec<Res<TyId>>(),
         c_calls: c_calls,
+        natives: alloc.Vec<NativeRecord>(),
         made: alloc.Vec<TyId>(),
         broken: alloc.Vec<Broken>(),
         case_tests: alloc.Vec<CaseTest>(),
@@ -4352,7 +4400,11 @@ lower_native* = (
     state.broken.loop((b) {
         state.made.find((t) { t == b.ty }).when_ok((_) { Err(b.fault).try(); });
     });
-    Ok(Program(functions: functions, entry: entry_index))
+    Ok(Program(
+        functions: functions,
+        entry: entry_index,
+        natives: state.natives
+    ))
 }
 
 // The target macros the C compiler predefines, answered by the target.

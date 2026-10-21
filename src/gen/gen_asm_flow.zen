@@ -102,6 +102,8 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<AllocError> {
             Ok
         },
         NativeConst(_)       => Ok,
+        NativeLayout(_)      => Ok,
+        NativeClear(_)       => Ok,
     })
 }
 
@@ -133,6 +135,8 @@ written* = (instruction: Instruction) Res<usize> {
         Wait(slot)          => Ok(slot),
         Foreign(call)       => Ok(call.out),
         NativeConst(value)  => Ok(value.out),
+        NativeLayout(value) => Ok(value.out),
+        NativeClear(slot)   => Ok(slot),
         // Listed one by one, without a default: an instruction added to the
         // IR must say what it writes, or liveness would miss the write.
         PrintValue(_)       => None,

@@ -1348,10 +1348,7 @@ implementor_call = (
                     span,
                     lo.described("create without an element type", ty)
                 )).try();
-                bytes    = lo.word_const(
-                    Scalar.U64,
-                    size_of(lo.class_of(elem).try()).to_i64_bits()
-                ).try();
+                bytes    = lo.size_word(lo.class_of(elem).try()).try();
                 align    = lo.word_const(Scalar.U64, 16).try();
                 usize_ty = lo.prim("usize").try();
                 raw      = lo.resolve(

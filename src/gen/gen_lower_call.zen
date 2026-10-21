@@ -36,7 +36,7 @@
 { bound_of, dispatch, Bound, decode_discriminant, c_namespace, unbound_handle } = gen.gen_lower_member
 { to_i64_bits, slot_place, placed_value } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
-{ variant_index, size_of, is_scope } = gen.gen_lower_shape
+{ variant_index, size_of, is_scope, is_native } = gen.gen_lower_shape
 { has_record, defer_into } = gen.gen_lower_scope
 { meta_walk, meta_proj } = gen.gen_lower_meta
 { inst_of_named } = sema.sema_inst
@@ -1277,8 +1277,28 @@ construct_named* = (
     Ok(out)
 }
 
-// A record construction written field by field at `into`.
+// A record construction written at `into`. A native record is built in a
+// cleared temporary so the header's hidden fields start zero.
 construct_at = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    c    : Call,
+    span : Span,
+    into : Place
+) Res<LowerError> {
+    is_native(lo.class_of(ty).try()).match({
+        false => lo.construct_fields(ty, c, span, into),
+        true  => {
+            out = lo.temp(ty).try();
+            lo.add(Instruction.NativeClear(out.slot)).try();
+            lo.construct_fields(ty, c, span, slot_place(out)).try();
+            lo.write(into, out)
+        },
+    })
+}
+
+// A record construction written field by field at `into`.
+construct_fields = (
     lo   :: Lowerer,
     ty   : TyId,
     c    : Call,
@@ -1312,11 +1332,7 @@ construct_at = (
         lo.expr_into(
             a.value,
             field.ty,
-            Place(
-                base: into.base,
-                offset: into.offset + field.offset,
-                ty: field.ty
-            )
+            lo.field_at(into, ty, field, span).try()
         ).try();
         given.set(index, true);
     });
@@ -1328,17 +1344,32 @@ construct_at = (
                 field,
                 span
             ).try();
-            lo.write(
-                Place(
-                    base: into.base,
-                    offset: into.offset + field.offset,
-                    ty: field.ty
-                ),
-                value
-            ).try();
+            lo.write(lo.field_at(into, ty, field, span).try(), value).try();
         });
     });
     Ok
+}
+
+// Where `field` of the `ty` record at `into` lives.
+field_at = (
+    lo    :: Lowerer,
+    into  : Place,
+    ty    : TyId,
+    field : FieldAt,
+    span  : Span
+) Res<Place, LowerError> {
+    is_native(lo.class_of(ty).try()).match({
+        true  => lo.field_place(
+            Place(base: into.base, offset: into.offset, ty: ty),
+            field.name,
+            span
+        ),
+        false => Ok(Place(
+            base: into.base,
+            offset: into.offset + field.offset,
+            ty: field.ty
+        )),
+    })
 }
 
 // A `c.bind` namespace names C functions; it has no value to construct.
@@ -2156,7 +2187,7 @@ pointer_call = (
             // the element; the legacy C backend reports it.
             copies = name.is_in(["read", "copy_from"]);
             (!(copies && lo.check.contains_drop(elem).try(LowerError.OutOfMemory))).ensure(unsupported(span, "copying a Drop owner through Ptr")).try();
-            stride = lo.element_size(elem).try();
+            stride = lo.class_of(elem).try();
             name.match({
                 "read"           => {
                     at = lo.element_at(receiver, sources, stride, span).try();
@@ -2309,12 +2340,31 @@ pointee = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
     })
 }
 
-element_size = (lo :: Lowerer, ty: TyId) Res<usize, LowerError> {
-    class = lo.class_of(ty).try();
-    Ok(size_of(class))
+// `count` elements of class `elem`, in bytes.
+scaled = (lo :: Lowerer, count: usize, elem: Scalar) Res<usize, LowerError> {
+    stride = size_of(elem);
+    is_native(elem).match({
+        true  => {
+            size = lo.size_word(elem).try();
+            out  = lo.slot_of(Scalar.U64).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: out,
+                left: count,
+                right: size,
+                op: Op.WrapMul,
+                span: nowhere()
+            ))).try();
+            Ok(out)
+        },
+        false => lo.scaled_words(count, stride),
+    })
 }
 
-scaled = (lo :: Lowerer, count: usize, stride: usize) Res<usize, LowerError> {
+scaled_words = (
+    lo     :: Lowerer,
+    count  : usize,
+    stride : usize
+) Res<usize, LowerError> {
     (stride == 1).match({
         true  => Ok(count),
         false => {
@@ -2363,7 +2413,7 @@ byte_order = (
     access = byte_order_of(name).ok_or(unsupported(span, "this pointer operation")).try();
     word   = lo.prim(access.word).try();
     class  = lo.class_of(word).try();
-    at     = lo.element_at(pointer, sources, 1, span).try();
+    at     = lo.element_at(pointer, sources, Scalar.U8, span).try();
     access.store.match({
         true  => {
             value = lo.expr_as(sources.source_expr(2, span).try(), word).try();
@@ -2441,7 +2491,7 @@ element_at = (
     lo      :: Lowerer,
     pointer : Value,
     sources : Vec<Source>,
-    stride  : usize,
+    stride  : Scalar,
     span    : Span
 )
              Res<usize, LowerError> {

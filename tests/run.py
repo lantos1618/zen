@@ -1304,7 +1304,10 @@ def native_link_args(out_c: Path) -> list[str]:
     sources: list[str] = []
     libraries: list[str] = []
     for symbol, needed_sources, needed_libraries in NATIVE_FLOORS:
-        if not any(line.startswith(b"extern ") and b" " + symbol in line
+        # gen_c declares the C name itself; IR-C binds a private name to it
+        # with `__asm__(ZR_LABEL "SSL_new")`.
+        if not any(line.startswith(b"extern ")
+                   and (b" " + symbol in line or b'"' + symbol in line)
                    for line in generated.splitlines()):
             continue
         for source in needed_sources:

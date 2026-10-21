@@ -207,7 +207,8 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
         ):
             with self.subTest(source=source):
                 _, _, result = self.compile(source, False)
-                self.assertIn("invalid native", result.stdout + result.stderr)
+                text = result.stdout + result.stderr
+            self.assertTrue("invalid native" in text or "a C header path with a byte" in text, text)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -23,7 +23,7 @@
 { Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
 { Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes, CodeRef } = gen.gen_ir
 { Write, Stream, TrapKind, Marshal, HostCall, Layout, FloatFormat } = gen.gen_ir
-{ ForeignCall } = gen.gen_ir
+{ ForeignCall, OpaqueValue } = gen.gen_ir
 { c_header, c_symbol_override, valid_c_header } = gen.gen_lower_core
 { word, integer, signed, same, float } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
@@ -1495,30 +1495,52 @@ machine = (
 ) Res<Value, LowerError> {
     op.match({
         // Keeping the low bits of a wider unsigned word is what `Cast` does.
-        Truncate        => lo.conversion(id, sources, span),
-        MulWide         => lo.wide_product(id, sources, span),
+        Truncate          => lo.conversion(id, sources, span),
+        MulWide           => lo.wide_product(id, sources, span),
         // A C compiler keeps a carry chain in the flags only through its
         // own builtins, which the machine floor's helpers use.
-        AddCarry        => lo.c_calls.match({
+        AddCarry          => lo.c_calls.match({
             true  => lo.machine_call(op, p, sources, span),
             false => lo.carry(id, sources, false, span),
         }),
-        SubBorrow       => lo.c_calls.match({
+        SubBorrow         => lo.c_calls.match({
             true  => lo.machine_call(op, p, sources, span),
             false => lo.carry(id, sources, true, span),
         }),
-        CompilerBarrier => {
+        CompilerBarrier   => {
             lo.add(Instruction.Barrier).try();
             lo.unit()
         },
-        VolatileLoad    => Err(unsupported(span, machine_refusal(op))),
-        VolatileStore   => Err(unsupported(span, machine_refusal(op))),
-        _               => lo.machine_call(op, p, sources, span),
+        ValueBarrier      => lo.opaque(p, sources, false, span),
+        DeclassifyBarrier => lo.opaque(p, sources, true, span),
+        VolatileLoad      => Err(unsupported(span, machine_refusal(op))),
+        VolatileStore     => Err(unsupported(span, machine_refusal(op))),
+        _                 => lo.machine_call(op, p, sources, span),
     })
 }
 
+// std.ct's value_barrier and declassify_barrier: the argument's word
+// through an `Opaque` instruction, which every renderer keeps opaque.
+opaque = (
+    lo         :: Lowerer,
+    p          : Primitive,
+    sources    : Vec<Source>,
+    declassify : bool,
+    span       : Span
+) Res<Value, LowerError> {
+    ty  = p.params.get(0).ok_or(unsupported(span, "a primitive without its parameter")).try();
+    v   = lo.expr_as(sources.source_expr(0, span).try(), ty).try();
+    out = lo.temp(p.result).try();
+    lo.add(Instruction.Opaque(OpaqueValue(
+        out: out.slot,
+        source: v.slot,
+        declassify: declassify
+    ))).try();
+    Ok(out)
+}
+
 // A vector, CPU-feature or capability-gated primitive as one `Machine`
-// instruction, which only IR-C renders. Lane indices are checked here so
+// instruction, which IR-C and the jit run. Lane indices are checked here so
 // the trap names the index argument. A capability argument carries no data
 // and is evaluated but not passed.
 machine_call = (
@@ -1530,7 +1552,7 @@ machine_call = (
 ) Res<Value, LowerError> {
     kind    = lo.prim_name(p.result);
     operand = p.params.get(0).match({ Ok(t) => lo.prim_name(t), None => "" });
-    (lo.c_calls && machine_lowered(op, kind, operand)).ensure(unsupported(span, machine_refusal(op))).try();
+    (lo.machines && machine_lowered(op, kind, operand)).ensure(unsupported(span, machine_refusal(op))).try();
     kept     = machine_operands(op, p.params.len);
     shuffles = op.match({ VectorShuffle => true, VectorShuffle2 => true, _ => false });
     lanes    = (vector_lanes(kind) == 0).match({ true => 1, false => vector_lanes(kind) });
@@ -1618,14 +1640,12 @@ is_vector_name = (name: str) bool {
 // Scalar spellings of the shared names (`bit_xor` on words) are not.
 machine_lowered = (op: MachineOp, kind: str, operand: str) bool {
     op.match({
-        CpuHas            => true,
-        ValueBarrier      => true,
-        DeclassifyBarrier => true,
-        AddCarry          => true,
-        SubBorrow         => true,
-        MulLimbs          => true,
-        SquareLimbs       => true,
-        _                 => is_vector_name(kind) || is_vector_name(operand),
+        CpuHas      => true,
+        AddCarry    => true,
+        SubBorrow   => true,
+        MulLimbs    => true,
+        SquareLimbs => true,
+        _           => is_vector_name(kind) || is_vector_name(operand),
     })
 }
 
@@ -1895,7 +1915,7 @@ native_callback = (lo :: Lowerer, id: ExprId, c: Call, span: Span)
                   Res<Value, LowerError> {
     lo.c_calls.ensure(unsupported(
         span,
-        "a C function on a target without C"
+        "a native callback on a target without C"
     )).try();
     arg   = c.args.get(0).ok_or(callback_refused(span)).try();
     text  = lo.tree.expr_at(
@@ -1954,7 +1974,7 @@ foreign_call = (
     span    : Span
 )
                Res<Value, LowerError> {
-    lo.c_calls.ensure(unsupported(
+    (lo.c_calls || lo.externs).ensure(unsupported(
         span,
         lo.alloc.String(
             "the C function `{}` on a target without C",
@@ -1993,9 +2013,20 @@ foreign_call = (
         symbol: symbol,
         header: header,
         args: args,
-        typed: override.match({ Ok(_) => true, None => false })
+        typed: override.match({ Ok(_) => true, None => false }),
+        library: c_library(symbol, header)
     ))).try();
     Ok(out)
+}
+
+// The native library a C function comes from beyond the C library, named
+// as the build links it: the floors the C build adds by the same test
+// (zen_project `add_std_floors`).
+c_library = (symbol: str, header: str) str {
+    (symbol.starts_with("SSL_") || symbol.starts_with("TLS_")).match({
+        true  => "ssl",
+        false => header.eq("math.h").match({ true => "m", false => "" }),
+    })
 }
 
 native_word = (lo :: Lowerer, slot: usize) bool {

@@ -183,6 +183,7 @@ ctcheck: build
 JIT_SHARDS ?= 4
 .PHONY: jitcorpus
 jitcorpus: build
+	$(PY) tests/quality/jit_ffi.py --zen ./zen
 	ZEN_STD="$(CURDIR)/src" ./zen build tests/native
 	mkdir -p build
 	pids=""; for s in $$(seq 0 $$(($(JIT_SHARDS) - 1))); do \

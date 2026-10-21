@@ -404,6 +404,7 @@ Assembly = {
             Machine(_)           => Ok,
             NativeLayout(_)      => Ok,
             NativeClear(_)       => Ok,
+            Opaque(_)            => Ok,
             Wait(_)              => Ok,
             SysConst(value)      => {
                 platform = self.darwin().match({ true => Platform.Darwin, false => Platform.LinuxArm64 });

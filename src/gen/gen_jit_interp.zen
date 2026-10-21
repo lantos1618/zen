@@ -32,8 +32,10 @@
     Print, FloatFormat, SysCall, Load, Store, Update, Compare, TrapKind, Stream, StartValue,
     trap_message, width, signed, integer, float, same
 } = gen.gen_ir
+{ MachineCall, vector_bytes, lane_bytes, machine_refusal } = gen.gen_ir_machine
 { Sys, Platform, constant_value } = gen.gen_sys
 { Code, decode, encode, size_of, minimum, maximum, ceiling, cell_size } = gen.gen_jit_decode
+{ Linked, invoke } = gen.gen_jit_extern
 
 // How a run ended. `Returned` continues the caller; the others unwind to
 // the outermost call (or to a guarded call, for a trap).
@@ -47,6 +49,18 @@ JitRefusal* = { function*: str, what*: str }
 refused_by_jit* = (program: Program) Res<JitRefusal> {
     found :: Res<JitRefusal> = None;
     program.functions.loop((fh, f) {
+        f.slots.loop((ty) {
+            ty.match({
+                Block(layout) => (layout.align > 16).then(() {
+                    found = Ok(JitRefusal(
+                        function: f.name,
+                        what: "native C records aligned above 16 bytes"
+                    ));
+                }),
+                _             => (),
+            });
+        });
+        found.match({ Ok(_) => fh.break(), None => () });
         f.blocks.loop((bh, block) {
             block.code.loop((ih, instruction) {
                 need(f, instruction).when_ok((what) {
@@ -65,11 +79,12 @@ need = (f: Func, instruction: Instruction) Res<str> {
     instruction.match({
         Host(_)            => Ok("JavaScript host calls"),
         Wait(_)            => Ok("JavaScript event waits"),
-        Foreign(_)         => Ok("calls of C functions"),
         NativeConst(_)     => Ok("constants from C headers"),
-        Machine(_)         => Ok("SIMD vectors and machine instructions"),
         NativeLayout(_)    => Ok("native C record layouts"),
-        NativeClear(_)     => Ok("native C record layouts"),
+        Foreign(call)      => (width(slot_ty(f, call.out)) > 8 || call.args.find((slot) { width(slot_ty(f, slot)) > 8 }).match({ Ok(_) => true, None => false })).match({
+            true  => Ok("128-bit C arguments or results"),
+            false => None,
+        }),
         BinaryValue(value) => (value.op.match({ Rem => true, _ => false })
             && float(slot_ty(f, value.left))).match({
             true  => Ok("floating-point remainder"),
@@ -92,7 +107,13 @@ slot_ty = (f: Func, slot: usize) Scalar { f.slots.get(slot).value_or(Scalar.Unit
 // is the process status a native build would exit with: the entry's
 // result, an `exit_group` status, or 134 after a trap. None when the
 // interpreter's own memory cannot be mapped.
-execute* = (a: Alloc, program: Program, platform: Platform, argv: Vec<str>)
+execute* = (
+    a        : Alloc,
+    program  : Program,
+    platform : Platform,
+    argv     : Vec<str>,
+    linked   : Linked
+)
            Res<Res<i32>, AllocError> {
     bases   ::= a.Vec<usize>();
     offsets ::= a.Vec<usize>();
@@ -163,7 +184,8 @@ execute* = (a: Alloc, program: Program, platform: Platform, argv: Vec<str>)
                 env: address_of(envp().to<u8>()),
                 held: 0,
                 word: 0,
-                text: a.String().try()
+                text: a.String().try(),
+                linked: linked
             );
             (info == 0).match({ true => Ok(None), false => Ok(Ok(vm.main())) })
         },
@@ -230,6 +252,8 @@ Interp = {
     // gen_jit_decode `encode`d functions, through a table of four words per
     // function: steps, frame size, parameter pairs, parameter count.
     info: usize,
+    // The C functions the program calls (gen_jit_extern).
+    linked: Linked,
 
     // The entry's result, then the exit hook a program may install in its
     // first process word, as `zr_exit` runs it.
@@ -886,6 +910,16 @@ Interp = {
                 value
             ); None },
             Barrier              => None,
+            // A barrier's word passes through unchanged; nothing here folds
+            // or forwards across it.
+            Opaque(value)        => {
+                move_bytes(
+                    self.cell(index, frame, value.out),
+                    self.cell(index, frame, value.source),
+                    cell_size(slot_ty(f, value.out))
+                );
+                None
+            },
             AtomicLoad(value)    => { self.load(index, f, frame, value); None },
             AtomicStore(value)   => { self.store(
                 index,
@@ -925,11 +959,238 @@ Interp = {
                     },
                 })
             },
+            Machine(call)        => self.machine(index, frame, call),
+            Foreign(call)        => {
+                got = invoke(
+                    self.linked,
+                    self.linked.symbols.get(call.symbol).value_or(0),
+                    f,
+                    call,
+                    (slot) { self.cell(index, frame, slot) }
+                );
+                out = self.cell(index, frame, call.out);
+                ty  = slot_ty(f, call.out);
+                ty.match({
+                    Unit => (),
+                    F64  => set_u64(out, got.float),
+                    F32  => set_u64(out, got.float.bit_and(4294967295)),
+                    _    => { set_u64(out, got.word); extend(out, ty); },
+                });
+                None
+            },
+            // The hidden fields of a native record start zero.
+            NativeClear(slot)    => {
+                at = self.cell(index, frame, slot);
+                Range(0, cell_size(slot_ty(f, slot))).loop((i) { pointer_at(at + i).write(0, 0); });
+                None
+            },
             // Refused before the program runs (`refused_by_jit`).
             _                    => Ok(self.fault(
                 "an instruction the jit backend refuses"
             )),
         })
+    }
+
+    // A std.simd operation, lane by lane over its vectors' cell bytes. No
+    // CPU feature is detected here (the portable path), so no capability is
+    // ever made and an instruction that needs one cannot be reached.
+    machine = (self :: @Self, index: usize, frame: usize, call: MachineCall)
+              Res<Outcome> {
+        out  = self.cell(index, frame, call.out);
+        a    = self.cell(index, frame, call.args.get(0).value_or(0));
+        b    = self.cell(index, frame, call.args.get(1).value_or(0));
+        c    = self.cell(index, frame, call.args.get(2).value_or(0));
+        w    = lane_bytes(call.kind);
+        size = vector_bytes(call.kind);
+        n    = size / w;
+        call.op.match({
+            VectorAdd      => { self.lanes(out, a, b, w, n, Op.WrapAdd); None },
+            VectorSub      => { self.lanes(out, a, b, w, n, Op.WrapSub); None },
+            VectorMul      => { self.lanes(out, a, b, w, n, Op.WrapMul); None },
+            BitXor         => { self.lanes(out, a, b, w, n, Op.Xor); None },
+            BitAnd         => { self.lanes(out, a, b, w, n, Op.And); None },
+            BitOr          => { self.lanes(out, a, b, w, n, Op.Or); None },
+            ShiftLeft      => { self.shifted(
+                out,
+                a,
+                load_u64(b),
+                w,
+                n,
+                Op.Shl
+            ); None },
+            ShiftRight     => { self.shifted(
+                out,
+                a,
+                load_u64(b),
+                w,
+                n,
+                Op.Shr
+            ); None },
+            RotateLeft     => {
+                turn = load_u64(b) % (w * 8).to_u64();
+                self.shifted(
+                    out,
+                    a,
+                    ((w * 8).to_u64() - turn) % (w * 8).to_u64(),
+                    w,
+                    n,
+                    Op.Rotr
+                );
+                None
+            },
+            RotateRight    => { self.shifted(
+                out,
+                a,
+                load_u64(b),
+                w,
+                n,
+                Op.Rotr
+            ); None },
+            VectorMulLow32 => {
+                Range(0, n).loop((i) {
+                    self.set_lane(
+                        out,
+                        i,
+                        w,
+                        low(lane_at(a, i, w), 4) *% low(lane_at(b, i, w), 4)
+                    );
+                });
+                None
+            },
+            VectorSplat    => {
+                lane = load_u64(a);
+                Range(0, n).loop((i) { self.set_lane(out, i, w, lane); });
+                None
+            },
+            VectorLanes    => {
+                Range(0, n).loop((i) {
+                    self.set_lane(
+                        out,
+                        i,
+                        w,
+                        load_u64(self.cell(
+                            index,
+                            frame,
+                            call.args.get(i).value_or(0)
+                        ))
+                    );
+                });
+                None
+            },
+            VectorLoad     => { move_bytes(
+                out,
+                load_usize(a) + load_usize(b),
+                size
+            ); None },
+            VectorStore    => {
+                move_bytes(
+                    load_usize(b) + load_usize(c),
+                    a,
+                    vector_bytes(call.operand)
+                );
+                None
+            },
+            VectorLane     => {
+                operand = call.operand;
+                at      = load_usize(b);
+                (at >= vector_bytes(operand) / lane_bytes(operand)).match({
+                    true  => Ok(self.fault(
+                        "a std.simd lane index out of range"
+                    )),
+                    false => { set_u64(
+                        out,
+                        lane_at(a, at, lane_bytes(operand))
+                    ); None },
+                })
+            },
+            VectorWithLane => {
+                at = load_usize(b);
+                (at >= n).match({
+                    true  => Ok(self.fault(
+                        "a std.simd lane index out of range"
+                    )),
+                    false => {
+                        move_bytes(out, a, size);
+                        self.set_lane(out, at, w, load_u64(c));
+                        None
+                    },
+                })
+            },
+            VectorShuffle  => { self.shuffle(
+                out,
+                a,
+                a,
+                b,
+                call,
+                false,
+                w,
+                n
+            ); None },
+            VectorShuffle2 => { self.shuffle(
+                out,
+                a,
+                b,
+                c,
+                call,
+                true,
+                w,
+                n
+            ); None },
+            VectorCast     => { move_bytes(out, a, size); None },
+            CpuHas         => { set_u64(out, 0); None },
+            _              => {
+                self.flush();
+                write_text(2, "zen jit: unreachable: ");
+                write_text(2, machine_refusal(call.op));
+                write_text(
+                    2,
+                    " without a CPU capability, which the jit never detects\n"
+                );
+                Ok(Outcome.Trapped)
+            },
+        })
+    }
+
+    // Lane `i` of the `w`-byte lanes at `at` set to the low bytes of `value`.
+    set_lane = (self: @Self, at: usize, i: usize, w: usize, value: u64) {
+        set_u64(self.scratch, value);
+        move_bytes(at + i * w, self.scratch, w);
+    }
+
+    lanes = (self: @Self, out: usize, a: usize, b: usize, w: usize, n: usize, op: Op) {
+        Range(0, n).loop((i) {
+            x = lane_at(a, i, w);
+            y = lane_at(b, i, w);
+            self.set_lane(out, i, w, bits(op, x, y, x, y, w * 8));
+        });
+    }
+
+    shifted = (self: @Self, out: usize, a: usize, count: u64, w: usize, n: usize, op: Op) {
+        Range(0, n).loop((i) {
+            x = lane_at(a, i, w);
+            self.set_lane(out, i, w, bits(op, x, count, x, count, w * 8));
+        });
+    }
+
+    // Lanes picked from `a` then `b` (the same vector for a one-source
+    // shuffle) by the reduced literal indices, or by the pattern vector of
+    // words at `pattern`; built in scratch, as `out` may be a source.
+    shuffle = (self: @Self, out: usize, a: usize, b: usize, pattern: usize,
+               call: MachineCall, two: bool, w: usize, n: usize) {
+        built = self.scratch + 32;
+        span  = two.match({ true => n * 2, false => n });
+        Range(0, n).loop((i) {
+            pick = (call.literal.len > 0).match({
+                true  => call.literal.get(i).value_or(0),
+                false => load_usize(pattern + i * 8),
+            }) % span;
+            lane = (pick < n).match({
+                true  => lane_at(a, pick, w),
+                false => lane_at(b, pick - n, w),
+            });
+            self.set_lane(built, i, w, lane);
+        });
+        move_bytes(out, built, n * w);
     }
 
     // A word slot's value as an address or a count.
@@ -1725,6 +1986,16 @@ extend = (at: usize, ty: Scalar) {
         I32  => set_i64(at, p.to<i32>().read(0).to_i64()),
         U32  => set_u64(at, p.to<u32>().read(0).to_u64()),
         _    => (),
+    })
+}
+
+// Lane `i` of the `w`-byte lanes at `at`, zero-extended.
+lane_at = (at: usize, i: usize, w: usize) u64 {
+    p = pointer_at(at);
+    w.match({
+        1 => p.read(i).to_u64(),
+        4 => p.to<u32>().read(i).to_u64(),
+        _ => p.to<u64>().read(i),
     })
 }
 

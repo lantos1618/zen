@@ -1,0 +1,7 @@
+exit 0
+stdout nan nan inf -inf
+nan nan -inf
+
+stderr nan nan
+
+legacy C ran true

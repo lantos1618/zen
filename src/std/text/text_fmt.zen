@@ -174,5 +174,5 @@ add_bool* = (out :: Sink, v: bool) Res<WriteError> {
 }
 
 // Uses C `%g`: six significant digits, exponent notation when selected by
-// `%g`, and the C spellings for non-finite values.
+// `%g`, `inf` and `-inf` for infinities, and `nan` for every NaN.
 add_f64* = (out :: Sink, v: f64) Res<WriteError>

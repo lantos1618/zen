@@ -162,6 +162,12 @@ SemaFault* =
     // vararg — the pack's one legal position, and its one type argument
     | VarargNotLast: NameFault         // a pack borrows the caller's frame
     | VarargElement: NameFault         // a run of T, and never a run of runs
+    | FormatName: NameFault
+    | InvalidFormatHole
+    | FormatMissingArgument
+    | FormatSurplusArgument
+    | FormatFloat
+    | OpaquePointerOperation
 
     // match
     | NotExhaustive: NameFault         // names the first case left uncovered
@@ -317,6 +323,12 @@ message* = (fault: SemaFault) str {
         ErrWithoutError(_)           => "no Err in an absence: a one-argument Res is `Ok(V) | None` unless its argument implements Error, so implement Error for the failure or write `Res<V, E>`",
         VarargNotLast(_)             => "a vararg is only ever a function's last parameter: the pack borrows the caller's frame, so anywhere it could outlive the call it would dangle",
         VarargElement(_)             => "a vararg writes exactly one element type, and it is never itself a vararg: `vararg<T>` is a run of T, and no call site could build a run of runs",
+        FormatName(_)                => "cannot resolve",
+        InvalidFormatHole            => "a format hole is {} or {name}, and this is neither",
+        FormatMissingArgument        => "a format hole with no argument left",
+        FormatSurplusArgument        => "an argument with no format hole left",
+        FormatFloat                  => "formatting a value of this type requires a concrete float width",
+        OpaquePointerOperation       => "reading, writing, or shifting a Ptr<()>",
         NotExhaustive(_)             => "match is not exhaustive: cover every case or write `_` — match is exhaustive in every position",
         UnreachableArm(_)            => "unreachable match arm: every value it could match is already covered above",
         NotACase(_)                  => "no variant of the scrutinee and no constant in scope has this name: a pattern binds, so this arm matches every value — a variant is spelled as declared, or this was meant to be `_`",
@@ -413,6 +425,12 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         HoistNotSuccess(f)           => out.write_name(f),
         VarargNotLast(f)             => out.write_name(f),
         VarargElement(f)             => out.write_name(f),
+        FormatName(f)                => out.write_name(f),
+        InvalidFormatHole            => Ok,
+        FormatMissingArgument        => Ok,
+        FormatSurplusArgument        => Ok,
+        FormatFloat                  => Ok,
+        OpaquePointerOperation       => Ok,
         NotExhaustive(f)             => out.write_name(f),
         UnreachableArm(f)            => out.write_name(f),
         NotACase(f)                  => out.write_name(f),

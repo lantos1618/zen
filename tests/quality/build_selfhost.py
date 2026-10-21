@@ -2,6 +2,7 @@
 """Exercise the real Zen project builder and its seed-only Make bootstrap."""
 import argparse
 import os
+import select
 from pathlib import Path
 import shutil
 import subprocess
@@ -99,7 +100,9 @@ class SelfBuildTests(unittest.TestCase):
         child = subprocess.Popen([str(self.output)], stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, text=True)
         try:
-            self.assertEqual(child.stdout.readline(), "ready\n")
+            ready, _, _ = select.select([child.stdout], [], [], 10)
+            self.assertTrue(ready, "explicit stdout flush did not publish ready before input")
+            self.assertEqual(os.read(child.stdout.fileno(), 6), b"ready\n")
             self.source.write_text("main = () i32 { 9 }\n")
             self.build()
             self.assertIsNone(child.poll())
@@ -148,6 +151,26 @@ class SelfBuildTests(unittest.TestCase):
         (self.root / "value.h").write_text("#define VALUE 6\n")
         self.build()
         self.assertEqual(self.status(), 6)
+
+    def test_earlier_header_candidate_invalidates_native_build(self):
+        (self.root / "first").mkdir()
+        (self.root / "second").mkdir()
+        (self.root / "second/value.h").write_text("#define VALUE 1\n")
+        (self.root / "native.c").write_text('#include <value.h>\nint answer(void) { return VALUE; }\n')
+        self.source.write_text("answer = () i32\nmain = () i32 { answer() }\n")
+        (self.root / "build.zen").write_text(
+            "{ Builder, BuildError } = std.build\n{ Res, Ok, Path } = std.core\n"
+            "build = (b :: Builder) Res<(), BuildError> {\n"
+            'native = b.extern("native", {src: Path("native.c"), libs: [], paths: []}).try();\n'
+            'b.exe("chosen", {src: Path("chosen.zen"), deps: [native], '
+            'out: Ok(Path("chosen"))}).try(); Ok(())\n}\n')
+        flags = "-O0 -Ifirst -Isecond"
+        self.build(CFLAGS=flags)
+        self.assertEqual(self.status(), 1)
+        (self.root / "first/value.h").write_text("#define VALUE 7\n")
+        self.assertEqual(self.status(), 1)
+        self.build(CFLAGS=flags)
+        self.assertEqual(self.status(), 7)
 
     def test_orphaned_compiler_retains_workspace_lock(self):
         compiler = self.wrapper('echo ready > compiler-started\n'

@@ -1,0 +1,14 @@
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ fmt } = std.text.text_fmt
+
+main = (env: Env) Res<i32, AllocError | IoError> {
+    alloc = env.mem.alloc();
+    out ::= alloc.String().try();
+    out.fmt("{append_missing}").try();
+    made = alloc.String("{allocate_missing}").try();
+    env.out.println("{console_missing}").try();
+    fmt(out, "{sink_missing}").try();
+    Ok(0)
+}

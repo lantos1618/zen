@@ -5,34 +5,39 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current checkpoint: native crypto timing stress (2026-10-09)
+## Current checkpoint: shared C lowering completion (2026-10-21)
 
-On main `96dd344f4`, the bundled ChaCha20-Poly1305 benchmark was refreshed
-from zen-crypto main `17ec398` with only the syntax changes required by this
-compiler. The previous copy produced six GCC `-O2`/`-O3` static-audit failures
-from secret-dependent checked arithmetic in Poly1305 and `load32`. The
-`ctcheck` gate now audits both AEAD entry points and their secret-bearing
-helpers in optimized assembly. The refreshed copy passed 33 Clang/GCC audit
-checks with zero failures at `-O2`/`-O3`; the old copy failed this same audit.
-Its RFC 8439 vectors and 186 tamper cases passed under ASan/UBSan and the
-native assembly backend, and C/native benchmark tags agreed at one and eight
-MiB rounds. The audit permits one branch for the public authentication result;
-it does not establish a general constant-time guarantee.
+Merged PR #99 retires the legacy C backend. This follow-up restores semantic
+diagnostics and adds recovered build regression coverage. Its runtime corrections preserve explicit
+stdout flush before input and the workspace lock inherited by a compiler child.
+Standard format validation now runs in sema, retaining the offending name,
+literal position and every rejected source site. Opaque-pointer element
+operations are also rejected before lowering. The diagnostic reachability gate
+recognizes qualified payload and nullary variants, with positive and negative
+controls for missing variants and misleading names.
 
-Fresh `make -j1 seed verify J=8 TEST_J=8` passed: 1732 corpus cases passed,
-zero failed; seed regeneration made no tracked change. Zen-written AFL targets
-against this compiler completed 110240 URL executions and 167677 fixed-AEAD
-executions with zero saved crashes or hangs. The maintained zen-crypto package
-passed its full primitive suite, TLS record nonce/fragmentation checks, DHE
-hostile-peer cases, and server hostile-peer and interoperability checks on its
-matching compiler. Its source still needs a separate syntax/API migration to
-build unchanged with the latest Zen main.
+The build regression suite now bounds its wait for flushed output and checks
+that a newly appearing header earlier in the include path invalidates a native
+build. The latter was recovered from an archived build/LSP experiment; its
+stale-build negative control fails as expected.
 
-The older `/home/ubuntu/zenc` checkout remains uncommitted and untouched. Its
-URL validation and JSON member API are already upstream; HTTP moved to
-zen-http. Its native `proc.c` RPC queue/cancellation work cannot be cherry-picked
-because current main removed that file and its interaction API. Preserve that
-work until a replacement architecture and regression tests are defined.
+Fresh `make -j1 seed verify J=8 TEST_J=8 VERIFY_JIT=` passed: 1759 corpus
+cases, zero failures; all remaining aggregate gates completed. The full JIT
+gate had already passed against the same compiler source with 1064 passing,
+25 known failures and 51 unsupported cases. JS passed 933/1149 with no new
+regressions. The bootstrap fixpoint matched 180 C units, zen.h and the seed.
+All eight build regressions passed. Header invalidation and diagnostic-scanner
+negative controls failed as intended under their deliberate mutations.
+
+The original dirty checkout remains untouched; a separate clean checkout tracks
+current main. Its URL and JSON work is already upstream, and HTTP belongs in
+zen-http. Historical RPC queue tests pass independently under ASan/UBSan with
+leak detection, but current Zen exposes no equivalent RPC API. Retain the
+acceptance requirements in LIBRARIES.md, not the retired runtime implementation.
+The archived `Actor<Message>`/`Reply<T>` design is an unmerged feature candidate.
+Generated inventories, archive evidence and execution logs remain under ignored
+`build/source_health/`. The zen-crypto package still needs its separate syntax
+and API migration before it builds unchanged with current main.
 
 ## Current checkpoint: URL input validation (2026-10-09)
 

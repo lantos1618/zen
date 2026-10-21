@@ -1,0 +1,17 @@
+{ print } = std.io
+
+fmt = (text: str) str { text }
+println = (text: str) str { text }
+Writer = {
+    fmt = (self: @Self, text: str) str { text }
+}
+
+main = () {
+    writer = Writer();
+    print(
+        "{}|{}|{}\n",
+        fmt("{missing}"),
+        println("{other}"),
+        writer.fmt("{third}")
+    );
+}

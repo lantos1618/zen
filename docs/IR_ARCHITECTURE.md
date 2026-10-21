@@ -423,7 +423,8 @@ renderer with no semantic work:
   run so changed headers or compiler settings cannot reuse a stale layout.
   A missing host compiler produces a probe diagnostic. `refused_by_jit` refuses
   threads, JavaScript host calls, printing f64 and f64
-  `%`, and 128-bit C arguments or results before anything runs. The C-call
+  `%`, 128-bit C arguments or results, and native records requiring more than
+  16-byte alignment before anything runs. The C-call
   stub is published only after executable-memory protection succeeds.
   It runs std.simd's `Instruction.Machine`
   operations lane by lane on 16-aligned blocks, and `CpuHas` always answers

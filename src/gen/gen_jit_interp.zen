@@ -49,6 +49,18 @@ JitRefusal* = { function*: str, what*: str }
 refused_by_jit* = (program: Program) Res<JitRefusal> {
     found :: Res<JitRefusal> = None;
     program.functions.loop((fh, f) {
+        f.slots.loop((ty) {
+            ty.match({
+                Block(layout) => (layout.align > 16).then(() {
+                    found = Ok(JitRefusal(
+                        function: f.name,
+                        what: "native C records aligned above 16 bytes"
+                    ));
+                }),
+                _             => (),
+            });
+        });
+        found.match({ Ok(_) => fh.break(), None => () });
         f.blocks.loop((bh, block) {
             block.code.loop((ih, instruction) {
                 need(f, instruction).when_ok((what) {

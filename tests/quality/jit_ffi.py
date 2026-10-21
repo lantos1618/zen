@@ -122,6 +122,16 @@ main = () {
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(result.stdout.strip(), str(value))
 
+    def test_overaligned_native_records_are_refused(self):
+        header = self.root / "aligned.h"
+        header.write_text("struct __attribute__((aligned(64))) sample { unsigned long value; };\n")
+        self.source.write_text('{ println } = std.io\nSample = c.record("' + str(header) +
+                               '", "struct sample", { value: u64 })\n'
+                               'main = () { value ::= Sample(value: 42); println("{}", value.value); }\n')
+        result = self.jit()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("native C records aligned above 16 bytes", result.stdout)
+
     def test_missing_symbol_is_named(self):
         self.source.write_text("zen_ffi_nonexistent_symbol = () i32\nmain = () i32 { zen_ffi_nonexistent_symbol() }\n")
         result = self.jit()

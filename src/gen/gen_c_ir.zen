@@ -1809,6 +1809,20 @@ C = {
                 call.out,
                 call.name
             ),
+            AddCarry       => self.out.fmt(
+                "    uint64_t zp[2];\n    zp[0] = zg_add_carry(v{}, v{}, v{}, &zp[1]);\n    memcpy(&v{}, zp, sizeof zp);\n",
+                a,
+                b,
+                c,
+                call.out
+            ),
+            SubBorrow      => self.out.fmt(
+                "    uint64_t zp[2];\n    zp[0] = zg_sub_borrow(v{}, v{}, v{}, &zp[1]);\n    memcpy(&v{}, zp, sizeof zp);\n",
+                a,
+                b,
+                c,
+                call.out
+            ),
             MulLimbs       => self.out.fmt(
                 "    uint64_t za[4], zb[4], zp[8];\n    memcpy(za, &v{}, sizeof za);\n    memcpy(zb, &v{}, sizeof zb);\n    zg_mul_limbs(za, zb, zp);\n    memcpy(&v{}, zp, sizeof zp);\n",
                 a,

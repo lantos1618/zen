@@ -42,6 +42,7 @@
 { ty_at, is_tvar, sig_fits, signature_matches } = sema.sema_cand
 { omittable_tail, collect_bounds, tail_swallows } = sema.sema_cand
 { missing_import, require_bound } = sema.sema_import
+{ check_format } = sema.sema_format
 
 // A recovery signature supplies expected types to argument diagnostics, but
 // it cannot make a call valid when its declared parameters do not match.
@@ -590,11 +591,17 @@ CallCheck = {
     checked_member = (self :: @Self, c :: Checker, ac: Access, f: Found,
                       off: usize) Res<TyId, AllocError> {
         mark = c.diag_count();
-        ac.name.text.is_in(["read", "copy_from"]).then(() {
+        ac.name.text.is_in(["read", "take", "write", "offset", "back", "copy_from"]).then(() {
             c.types.at(f.decl_owner).match({
                 Named(n) => c.world.is_core_decl(n.decl, "Ptr").try().then(() {
                     n.args.get(0).when_ok((element) {
-                        c.contains_drop(element).try().then(() {
+                        (c.prim_name(element).eq("()") && !ac.name.text.eq("copy_from")).then(() {
+                            c.refuse(
+                                self.node.span,
+                                SemaFault.OpaquePointerOperation
+                            ).try();
+                        });
+                        (ac.name.text.is_in(["read", "copy_from"]) && c.contains_drop(element).try()).then(() {
                             c.refuse(
                                 self.node.span,
                                 SemaFault.CopyFromPointer(NameFault(
@@ -948,25 +955,26 @@ call_type* = (c :: Checker, id: ExprId, node: Expr, call: Call, ctx: Ctx)
     c.record_call(id, CallResolution.Checking).try();
     mark = c.diag_count();
     check ::= c.alloc.CallCheck(id, node, call, ctx);
-    got = check.run(c).try();
+    got     = check.run(c).try();
+    checked = CheckedCall(
+        declaration: check.declaration,
+        member_provider: check.provider,
+        inst: check.inst,
+        result: got,
+        signature: check.checked_signature,
+        body: check.body,
+        member: check.selected
+    );
+    (c.diag_count() == mark).then(
+        () { c.check_format(call, checked, ctx).try(); }
+    );
     (c.diag_count() == mark).match({
         true  => {
             check.edge.when_ok((edge) { c.note_edge(edge).try(); });
             check.member_edge.when_ok((edge) {
                 c.note_member_edge(edge).try();
             });
-            c.record_call(
-                id,
-                CallResolution.Checked(CheckedCall(
-                    declaration: check.declaration,
-                    member_provider: check.provider,
-                    inst: check.inst,
-                    result: got,
-                    signature: check.checked_signature,
-                    body: check.body,
-                    member: check.selected
-                ))
-            )
+            c.record_call(id, CallResolution.Checked(checked))
         },
         false => c.record_call(id, CallResolution.Rejected),
     }).try();

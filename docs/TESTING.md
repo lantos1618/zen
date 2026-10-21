@@ -32,6 +32,21 @@ The same question asked of a Zen program's own tests is answered by `zen-mutate`
 
 ## Project test targets
 
+Interactive tests bound the wait for the event they assert. In particular,
+`build_selfhost.py` waits for the flushed `ready` line before giving the child
+input; a missing flush fails that assertion instead of hanging the whole job.
+The orphaned-compiler case separately checks that a killed build parent cannot
+release a workspace still used by its compiler child.
+The native-header cases cover both edits to a header already used and the
+appearance of a new header earlier in the search path. Tracking only files
+opened by the previous compile misses the latter dependency change.
+
+When replacing a backend or porting an old regression, retain the observable
+contract rather than its former implementation names. A diagnostic test keeps
+the offending name, each source location, and the diagnostic count. An oracle
+that inspects old generated symbols needs an equivalent source-level or native
+behavior check before that implementation disappears.
+
 `zen test [PROJECT] [TARGET] [-- ARGS...]` builds and runs executable test
 targets registered by `build.zen`. Omitting PROJECT uses the current directory;
 omitting TARGET selects all executable tests in declaration order. A single

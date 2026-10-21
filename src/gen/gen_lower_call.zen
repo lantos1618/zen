@@ -2486,6 +2486,13 @@ pointee = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
 // baseline code: x86 passes one in a YMM register only where AVX is
 // enabled, so both sides hold the Avx2 capability or neither does.
 avx2_boundary = (lo :: Lowerer, callee: Callee, span: Span) Res<LowerError> {
+    lo.wide_vectors.match({ true => lo.avx2_crossing(
+        callee,
+        span
+    ), false => Ok })
+}
+
+avx2_crossing = (lo :: Lowerer, callee: Callee, span: Span) Res<LowerError> {
     wide  ::= wide_vector(lo.prim_name(lo.result_type(callee).try()));
     there ::= false;
     Range(0, callee.f.params.len).loop((i) {

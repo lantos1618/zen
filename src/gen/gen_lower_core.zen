@@ -212,6 +212,9 @@ Lowerer* = {
     // Whether the target links C: only then do bodyless declarations and
     // header constants lower to C calls; elsewhere they are refused.
     c_calls* :: bool = false,
+    // A 32-byte vector type was shaped: calls are checked at the AVX2
+    // boundary (`avx2_boundary`).
+    wide_vectors* :: bool = false,
     // The `c.record`s values of this program have, in first-use order;
     // a native `Layout` names one by 1 + its index.
     natives* :: Vec<NativeRecord>,
@@ -601,6 +604,8 @@ Lowerer* = {
             ),
         })
     }
+
+    note_wide_vector* = (self :: @Self) { self.wide_vectors = true; }
 
     offset_pointer* = (self :: @Self, base: usize, offset: usize) Res<usize, LowerError> {
         (offset == 0).match({

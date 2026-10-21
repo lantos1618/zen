@@ -1,0 +1,240 @@
+// C functions for the jit. Each `Foreign` call's symbol is resolved with
+// dlsym: first among the libraries the compiler process already has (the C
+// library and libm), then in the library the call names (`library`), opened
+// with dlopen. Calls go through a stub written into executable memory that
+// follows the host's C ABI: it loads the argument registers and stack words
+// from a frame, calls the symbol, and stores both result registers back.
+// Only x86-64 System V has a stub; elsewhere calls of C functions are
+// refused before the program runs.
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ Vec, Map } = std.collections
+{ String, str, c_text } = std.text
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ mmap, mprotect, pointer_at, address_of, call_entry } = std.sys
+{ Program, Func, Scalar, ForeignCall, float } = gen.gen_ir
+{ Platform } = gen.gen_sys
+
+Dl = c.bind("dlfcn.h", {
+    RTLD_NOW: i32
+    RTLD_GLOBAL: i32
+    dlopen = (path: Ptr<u8>, flags: i32) Ptr<u8>
+    dlsym = (handle: Ptr<u8>, symbol: Ptr<u8>) Ptr<u8>
+})
+
+// Each symbol's address, the stub, and the frame it reads: the function,
+// the stack word count, six integer registers, eight SSE registers, the
+// two results (rax, xmm0), then the stack words.
+Linked* = { symbols*: Map<str, usize>, stub*: usize, frame*: usize }
+
+// `Missing` names a symbol no library defines; `Refused` the function whose
+// C call this host cannot make.
+Linking* = { Ready: Linked | Missing: str | Refused: str }
+
+// The two result registers of one call.
+Returned* = { word*: u64, float*: u64 }
+
+STACK_WORDS: usize = 16
+FRAME_BYTES: usize = 4096
+STUB_WORDS: usize = 18
+
+// Every C function the program calls, resolved; the stub mapped when there
+// is one.
+link* = (a: Alloc, program: Program, platform: Platform)
+        Res<Linking, AllocError> {
+    symbols ::= a.Map<str, usize>();
+    refused :: Res<str> = None;
+    missing :: Res<str> = None;
+    calls   ::= false;
+    program.functions.loop((f) {
+        f.blocks.loop((block) {
+            block.code.loop((i) {
+                i.match({
+                    Foreign(call) => {
+                        calls = true;
+                        (platform.match({ LinuxX86_64 => false, _ => true })
+                            || stack_words(f, call) > STACK_WORDS).then(() {
+                            refused.match({ Ok(_) => (), None => { refused = Ok(
+                                f.name
+                            ); } });
+                        });
+                        symbols.get(call.symbol).match({
+                            Ok(_) => (),
+                            None  => {
+                                at = resolve(a, call).try();
+                                (at == 0).match({
+                                    true  => missing.match({ Ok(_) => (), None => { missing = Ok(
+                                        call.symbol
+                                    ); } }),
+                                    false => symbols.set(call.symbol, at).try(),
+                                });
+                            },
+                        });
+                    },
+                    _             => (),
+                });
+            });
+        });
+    });
+    refused.match({
+        Ok(name) => Ok(Linking.Refused(name)),
+        None     => missing.match({
+            Ok(symbol) => Ok(Linking.Missing(symbol)),
+            None       => calls.match({
+                false => Ok(Linking.Ready(Linked(
+                    symbols: symbols,
+                    stub: 0,
+                    frame: 0
+                ))),
+                true  => {
+                    stub  = mapped(mmap(0, FRAME_BYTES, 3, 34, -1, 0));
+                    frame = mapped(mmap(0, FRAME_BYTES, 3, 34, -1, 0));
+                    (stub != 0).then(() {
+                        Range(0, STUB_WORDS).loop((i) { pointer_at(stub + i * 8).to<u64>().write(0, stub_word(i)); });
+                        protected = mprotect(stub, FRAME_BYTES, 5);
+                    });
+                    (stub == 0 || frame == 0).match({
+                        true  => Ok(Linking.Refused(
+                            "the stub for calls of C functions"
+                        )),
+                        false => Ok(Linking.Ready(Linked(
+                            symbols: symbols,
+                            stub: stub,
+                            frame: frame
+                        ))),
+                    })
+                },
+            }),
+        }),
+    })
+}
+
+// The symbol's address in the process, else in the call's library; 0 when
+// neither defines it.
+resolve = (a: Alloc, call: ForeignCall) Res<usize, AllocError> {
+    name  = call.symbol.c_text(a).try();
+    found = symbol_in(Dl.dlopen(null_ptr<u8>(), Dl.RTLD_NOW), name);
+    (found != 0 || call.library.len == 0).match({
+        true  => Ok(found),
+        false => {
+            at ::= 0;
+            Range(0, 3).loop((k) {
+                (at == 0).then(() {
+                    path   = k.match({
+                        0 => a.String("lib{}.so", call.library),
+                        1 => a.String("lib{}.so.3", call.library),
+                        _ => a.String("lib{}.so.6", call.library),
+                    }).try();
+                    file   = path.view().c_text(a).try();
+                    handle = Dl.dlopen(
+                        file.ptr(),
+                        Dl.RTLD_NOW + Dl.RTLD_GLOBAL
+                    );
+                    at     = symbol_in(handle, name);
+                });
+            });
+            Ok(at)
+        },
+    })
+}
+
+symbol_in = (handle: Ptr<u8>, name: Vec<u8>) usize {
+    (address_of(handle) == 0).match({
+        true  => 0,
+        false => address_of(Dl.dlsym(handle, name.ptr())),
+    })
+}
+
+mapped = (result: i64) usize { result.to_usize().value_or(0) }
+
+// The stack words a call passes beyond its registers.
+stack_words = (f: Func, call: ForeignCall) usize {
+    ints   :: usize = 0;
+    floats :: usize = 0;
+    call.args.loop((slot) {
+        float(f.slots.get(slot).value_or(Scalar.Unit)).match({
+            true  => { floats = floats + 1; },
+            false => { ints = ints + 1; },
+        });
+    });
+    (ints > 6).match({ true => ints - 6, false => 0 }) + (floats > 8).match({ true => floats - 8, false => 0 })
+}
+
+// Call `address` with the argument cells `at` gives, classified as the
+// System V ABI does: integers and pointers in the six integer registers,
+// floats in the eight SSE registers (an f32 in the low four bytes), the rest
+// on the stack in order. Small integers are already extended in their cells.
+invoke* = (
+    linked  : Linked,
+    address : usize,
+    f       : Func,
+    call    : ForeignCall,
+    at      : (slot: usize) usize
+) Returned {
+    fr = linked.frame;
+    ints   :: usize = 0;
+    floats :: usize = 0;
+    stack  :: usize = 0;
+    call.args.loop((slot) {
+        word     = pointer_at(at(slot)).to<u64>().read(0);
+        on_stack = float(f.slots.get(slot).value_or(Scalar.Unit)).match({
+            true  => (floats < 8).match({
+                true  => { put(
+                    fr + 64 + floats * 8,
+                    word
+                ); floats = floats + 1; false },
+                false => true,
+            }),
+            false => (ints < 6).match({
+                true  => { put(
+                    fr + 16 + ints * 8,
+                    word
+                ); ints = ints + 1; false },
+                false => true,
+            }),
+        });
+        on_stack.then(
+            () { put(fr + 144 + stack * 8, word); stack = stack + 1; }
+        );
+    });
+    put(fr, address.to_u64());
+    put(fr + 8, stack.to_u64());
+    call_entry(linked.stub, pointer_at(fr), null_ptr<u8>());
+    Returned(
+        word: pointer_at(fr + 128).to<u64>().read(0),
+        float: pointer_at(fr + 136).to<u64>().read(0)
+    )
+}
+
+put = (at: usize, value: u64) { pointer_at(at).to<u64>().write(0, value); }
+
+// The x86-64 stub, little-endian words of its bytes:
+//   push rbp; mov rbp, rsp; push rbx; push r12; mov rbx, rdi
+//   mov rcx, [rbx+8]; test cl, 1; jz 1f; sub rsp, 8      (keep rsp 16-aligned)
+//   1: test rcx, rcx; jz 2f; push [rbx+rcx*8+136]; dec rcx; jmp 1b
+//   2: movq xmm0..7, [rbx+64..120]; mov rdi, rsi, rdx, rcx, r8, r9, [rbx+16..56]
+//   mov r11, [rbx]; mov eax, 8; call r11
+//   mov [rbx+128], rax; movq [rbx+136], xmm0
+//   lea rsp, [rbp-16]; pop r12; pop rbx; pop rbp; ret
+stub_word = (i: usize) u64 {
+    i.match({
+        0  => 5211862497363576917,
+        1  => 13976367614143298441,
+        2  => 5190658619137618945,
+        3  => 9857171216949102981,
+        4  => 17288133692853583872,
+        5  => 9083746430765371379,
+        6  => 17532605150251927627,
+        7  => 7169185194654268943,
+        8  => 1149377140795372384,
+        9  => 8681671313660605310,
+        10 => 1761905020862434120,
+        11 => 2903567526666668872,
+        12 => 4056489048720771916,
+        13 => 37448551244,
+        14 => 36173422674575169,
+        15 => 38425552237232128,
+        16 => 6647858843928231936,
+        17 => 12803419,
+        _  => 0,
+    })
+}

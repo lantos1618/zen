@@ -1,0 +1,280 @@
+// Header constants and native record layouts for a target without C
+// headers (the jit), answered by the host C compiler.
+//
+// The lowering emits them as it does for C (`NativeConst`, a native record's
+// `Layout` with `native > 0`, `NativeLayout`), and this module writes one C
+// program that prints every answer: each constant as the class of its slot,
+// then each record's size, alignment and field offsets, one decimal per
+// line. The driver compiles and runs it with the host compiler (caching the
+// output per target and source) and `resolve` puts the numbers back into
+// the IR: constants and measures become `Constant`s and each record's
+// layout gets its size and alignment. The record's field types are checked
+// against the header as IR-C checks them, so a mismatch fails the probe.
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ String, str } = std.text
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ Program, Func, Instruction, Scalar, Layout, Const, NativeValue, NativeField } = gen.gen_ir
+
+// One constant the program reads, in first-use order.
+Question = { header: str, name: str, fallback: Res<i64>, ctype: str }
+
+// Whether the program reads any header constant or has a native record.
+needs_probe* = (program: Program) bool {
+    program.natives.len > 0 || program.functions.find((f) {
+        f.blocks.find((block) {
+            block.code.find((i) {
+                i.match({ NativeConst(_) => true, _ => false })
+            }).match({ Ok(_) => true, None => false })
+        }).match({ Ok(_) => true, None => false })
+    }).match({ Ok(_) => true, None => false })
+}
+
+// The C program whose standard output `resolve` reads; None when a constant
+// has a class the probe cannot print. `target` names the host, so a cache
+// keyed by the source is per target and header set.
+probe_source* = (a: Alloc, program: Program, target: str)
+                Res<Res<String>, AllocError> {
+    questions ::= a.Vec<Question>();
+    known     ::= questions_of(a, program, questions).try();
+    known.match({
+        false => Ok(None),
+        true  => {
+            out ::= a.String().try();
+            out.fmt("/* zen host probe: {} */\n", target).try();
+            out.add(
+                "#include <stdio.h>\n#include <stddef.h>\n#include <stdint.h>\n#include <stdbool.h>\n"
+            ).try();
+            headers ::= a.Vec<str>();
+            questions.loop((q) { headers.note(q.header).try(); });
+            program.natives.loop(
+                (record) { headers.note(record.header).try(); }
+            );
+            headers.loop((h) { out.fmt("#include <{}>\n", h).try(); });
+            program.natives.loop((h, i, record) {
+                out.fmt("typedef {} zn{};\n", record.spelling, i + 1).try();
+                record.fields.loop((field) {
+                    (field.ctype.len > 0).then(() {
+                        out.fmt(
+                            "extern char zg_native_scalar_field_type_mismatch[__builtin_types_compatible_p(__typeof__(((zn{} *)0)->{}), {}) ? 1 : -1];\n",
+                            i + 1,
+                            field.name,
+                            field.ctype
+                        ).try();
+                    });
+                });
+            });
+            out.add("int main(void) {\n").try();
+            questions.loop((q) {
+                q.fallback.match({
+                    None     => out.fmt(
+                        "  printf(\"%lld\\n\", (long long)({})({}));\n",
+                        q.ctype,
+                        q.name
+                    ).try(),
+                    Ok(bits) => out.fmt(
+                        "#ifdef {}\n  printf(\"%lld\\n\", (long long)({})({}));\n#else\n  printf(\"%lld\\n\", (long long)({})({}LL));\n#endif\n",
+                        q.name,
+                        q.ctype,
+                        q.name,
+                        q.ctype,
+                        bits
+                    ).try(),
+                });
+            });
+            program.natives.loop((h, i, record) {
+                out.fmt(
+                    "  printf(\"%lld\\n%lld\\n\", (long long)sizeof(zn{}), (long long)__alignof__(zn{}));\n",
+                    i + 1,
+                    i + 1
+                ).try();
+                record.fields.loop((field) {
+                    out.fmt(
+                        "  printf(\"%lld\\n\", (long long)offsetof(zn{}, {}));\n",
+                        i + 1,
+                        field.name
+                    ).try();
+                });
+            });
+            out.add("  return 0;\n}\n").try();
+            Ok(Ok(out))
+        },
+    })
+}
+
+// The answers in `output` written into the program; false when they do not
+// match its questions.
+resolve* = (a: Alloc, program: Program, output: str) Res<bool, AllocError> {
+    questions ::= a.Vec<Question>();
+    known = questions_of(a, program, questions).try();
+    numbers ::= a.Vec<i64>();
+    parsed  ::= true;
+    output.split('\n').loop((line) {
+        (line.len > 0).then(() {
+            line.parse_i64().match({
+                Ok(n) => numbers.add(n).try(),
+                None  => { parsed = false; },
+            });
+        });
+    });
+    expected ::= questions.len;
+    program.natives.loop(
+        (record) { expected = expected + 2 + record.fields.len; }
+    );
+    (!known || !parsed || numbers.len != expected).match({
+        true  => Ok(false),
+        false => {
+            program.functions.loop((f) {
+                slots ::= f.slots;
+                f.slots.loop((h, i, ty) {
+                    ty.match({
+                        Block(l) => (l.native > 0 && l.size == 0).then(() {
+                            at = record_at(program, questions.len, l.native);
+                            slots.set(
+                                i,
+                                Scalar.Block(Layout(
+                                    size: numbers.get(at).value_or(0).to_usize().value_or(0),
+                                    align: numbers.get(at + 1).value_or(1).to_usize().value_or(1),
+                                    native: l.native
+                                ))
+                            );
+                        }),
+                        _        => (),
+                    });
+                });
+                f.blocks.loop((block) {
+                    code ::= block.code;
+                    block.code.loop((h, j, instruction) {
+                        instruction.match({
+                            NativeConst(v)  => {
+                                k = asked(questions, v, f).value_or(0);
+                                code.set(
+                                    j,
+                                    Instruction.Constant(Const(
+                                        out: v.out,
+                                        value: numbers.get(k).value_or(0)
+                                    ))
+                                );
+                            },
+                            NativeLayout(m) => {
+                                at    = record_at(
+                                    program,
+                                    questions.len,
+                                    m.record
+                                );
+                                field = m.field.match({
+                                    None     => 0,
+                                    Ok(name) => program.natives.get(
+                                        m.record - 1
+                                    ).match({
+                                        Ok(record) => 2 + field_index(
+                                            record.fields,
+                                            name
+                                        ),
+                                        None       => 0,
+                                    }),
+                                });
+                                code.set(
+                                    j,
+                                    Instruction.Constant(Const(
+                                        out: m.out,
+                                        value: numbers.get(at + field).value_or(0)
+                                    ))
+                                );
+                            },
+                            _               => (),
+                        });
+                    });
+                });
+            });
+            Ok(true)
+        },
+    })
+}
+
+// Where record `native` (1 + its index) starts among the answers.
+record_at = (program: Program, constants: usize, native: usize) usize {
+    at ::= constants;
+    program.natives.loop((h, i, record) {
+        (i + 1 < native).then(() { at = at + 2 + record.fields.len; });
+    });
+    at
+}
+
+// Each distinct constant the program reads, in first-use order; false when
+// one's class is not an integer the probe can print.
+questions_of = (a: Alloc, program: Program, out :: Vec<Question>)
+               Res<bool, AllocError> {
+    known ::= true;
+    program.functions.loop((f) {
+        f.blocks.loop((block) {
+            block.code.loop((i) {
+                i.match({
+                    NativeConst(v) => c_integer(f.slots.get(v.out).value_or(Scalar.Unit)).match({
+                        None      => { known = false; },
+                        Ok(ctype) => asked(out, v, f).match({
+                            Ok(_) => (),
+                            None  => out.add(Question(
+                                header: v.header,
+                                name: v.name,
+                                fallback: v.fallback,
+                                ctype: ctype
+                            )).try(),
+                        }),
+                    }),
+                    _              => (),
+                });
+            });
+        });
+    });
+    Ok(known)
+}
+
+// Which question reads `v`.
+asked = (questions: Vec<Question>, v: NativeValue, f: Func) Res<usize> {
+    at :: Res<usize> = None;
+    questions.loop((h, i, q) {
+        (asks(q, v, f) && at.match({ Ok(_) => false, None => true })).then(() { at = Ok(i); });
+    });
+    at
+}
+
+field_index = (fields: Vec<NativeField>, name: str) usize {
+    at ::= 0;
+    fields.loop((h, i, field) { field.name.eq(name).then(() { at = i; }); });
+    at
+}
+
+asks = (q: Question, v: NativeValue, f: Func) bool {
+    q.header.eq(v.header) && q.name.eq(v.name)
+        && c_integer(f.slots.get(v.out).value_or(Scalar.Unit)).value_or("").eq(q.ctype)
+        && q.fallback.match({
+            None  => v.fallback.match({ None => true, Ok(_) => false }),
+            Ok(x) => v.fallback.match({ None => false, Ok(y) => x == y }),
+        })
+}
+
+// The C type a constant of this class is read as, as IR-C's `ctype`.
+c_integer = (ty: Scalar) Res<str> {
+    ty.match({
+        I8   => Ok("int8_t"),
+        U8   => Ok("uint8_t"),
+        Bool => Ok("bool"),
+        I16  => Ok("int16_t"),
+        U16  => Ok("uint16_t"),
+        I32  => Ok("int32_t"),
+        U32  => Ok("uint32_t"),
+        I64  => Ok("int64_t"),
+        U64  => Ok("uint64_t"),
+        Ptr  => Ok("uintptr_t"),
+        _    => None,
+    })
+}
+
+// `header` added once.
+note = (headers :: Vec<str>, header: str) Res<AllocError> {
+    headers.find((h) { h.eq(header) }).match({
+        Ok(_) => Ok,
+        None  => headers.add(header),
+    })
+}

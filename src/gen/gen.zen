@@ -8,7 +8,9 @@
 { Checker } = sema.sema
 { Codegen, Target } = std.build
 { String, str } = std.text
-{ lower, LowerError } = gen.gen_lower
+{ lower, lower_hosted, LowerError } = gen.gen_lower
+{ needs_probe, probe_source, resolve } = gen.gen_probe
+{ link, Linking } = gen.gen_jit_extern
 { Program, Scalar, float, same } = gen.gen_ir
 { emit_js, emit_app, emit_runtime, PAGE, supports } = gen.gen_js
 { emit_c, emit_c_units, symbol_map, c_supports } = gen.gen_c_ir
@@ -50,6 +52,9 @@ Generation* = {
     // JavaScript for a page (`--target js-browser`): publish index.html,
     // runtime.js and app.js instead of one script.
     browser* :: bool = false,
+    // The host has a C compiler, which answers the jit's header constants
+    // and native record layouts (gen_probe).
+    probe* :: bool = false,
 
     // Lowering diagnostics precede publication. The returned count includes
     // backend faults and publication failures; allocation errors stay typed.
@@ -300,9 +305,18 @@ Generation* = {
     // its command line instead of publishing it. The result is the
     // program's exit status; None when it was refused or cannot run on
     // this host, after the report says why.
-    run* = (self: @Self, report :: String, argv: Vec<str>)
+    // `host` compiles and runs a C program with the host C compiler and
+    // answers its standard output; None when it could not.
+    run* = (self: @Self, report :: String, argv: Vec<str>,
+            host: (source: str) Res<String>)
            Res<Res<i32>, AllocError> {
-        lower(self.alloc, self.tree, self.check, self.entry, false).match({
+        lower_hosted(
+            self.alloc,
+            self.tree,
+            self.check,
+            self.entry,
+            self.probe
+        ).match({
             Err(error)  => error.match({
                 OutOfMemory        => Err(AllocError.OutOfMemory),
                 Unsupported(fault) => {
@@ -316,44 +330,144 @@ Generation* = {
                     Ok(None)
                 },
             }),
-            Ok(program) => self.valid(program, report).try().match({
-                false => Ok(None),
-                true  => refused_by_jit(program).match({
-                    Ok(refusal) => {
-                        report.fmt(
-                            "error: unsupported by the jit backend: {} (in `{}`)\n",
-                            refusal.what,
-                            refusal.function
+            Ok(lowered) => self.probed(
+                lowered,
+                report,
+                (source) { host(source) }
+            ).try().match({
+                None        => Ok(None),
+                Ok(program) => self.checked(program, report, argv),
+            }),
+        })
+    }
+
+    // The jit's run of a lowered program, once it verifies and nothing in
+    // it is refused.
+    checked = (self: @Self, program: Program, report :: String,
+               argv: Vec<str>)
+              Res<Res<i32>, AllocError> {
+        self.valid(program, report).try().match({
+            false => Ok(None),
+            true  => refused_by_jit(program).match({
+                Ok(refusal) => {
+                    report.fmt(
+                        "error: unsupported by the jit backend: {} (in `{}`)\n",
+                        refusal.what,
+                        refusal.function
+                    ).try();
+                    Ok(None)
+                },
+                None        => self.platform().match({
+                    None         => {
+                        report.add(
+                            "error: the jit backend runs on x86_64-linux, aarch64-linux and arm64-darwin hosts\n"
                         ).try();
                         Ok(None)
                     },
-                    None        => self.platform().match({
-                        None         => {
+                    Ok(platform) => self.linked(
+                        program,
+                        platform,
+                        report,
+                        argv
+                    ),
+                }),
+            }),
+        })
+    }
+
+    // The run once every C function the program calls is resolved
+    // (gen_jit_extern).
+    linked = (self: @Self, program: Program, platform: Platform,
+              report :: String, argv: Vec<str>)
+             Res<Res<i32>, AllocError> {
+        link(self.alloc, program, platform).try().match({
+            Refused(name) => {
+                report.fmt(
+                    "error: unsupported by the jit backend: calls of C functions (in `{}`)\n",
+                    name
+                ).try();
+                Ok(None)
+            },
+            Missing(name) => {
+                report.fmt(
+                    "error: the jit backend found no library defining the C function `{}`\n",
+                    name
+                ).try();
+                Ok(None)
+            },
+            Ready(found)  => execute(
+                self.alloc,
+                prepare(
+                    Arenas(alloc: self.alloc, mem: self.mem),
+                    program
+                ).try(),
+                platform,
+                argv,
+                found
+            ).try().match({
+                None       => {
+                    report.add(
+                        "error: the jit backend could not map its memory\n"
+                    ).try();
+                    Ok(None)
+                },
+                Ok(status) => Ok(Ok(status)),
+            }),
+        })
+    }
+
+    // The program with its header constants and native record layouts
+    // answered by the host C compiler (gen_probe); None after the report
+    // says why it could not be.
+    probed = (self: @Self, program: Program, report :: String,
+              host: (source: str) Res<String>)
+             Res<Res<Program>, AllocError> {
+        needs_probe(program).match({
+            false => Ok(Ok(program)),
+            true  => probe_source(
+                self.alloc,
+                program,
+                self.host_name()
+            ).try().match({
+                None       => {
+                    report.add(
+                        "error: unsupported by the jit backend: a C header constant whose class is not an integer\n"
+                    ).try();
+                    Ok(None)
+                },
+                Ok(source) => host(source.view()).match({
+                    None        => {
+                        report.add(
+                            "error: the host C compiler could not answer this program's C header constants and native C records\n"
+                        ).try();
+                        Ok(None)
+                    },
+                    Ok(answers) => resolve(
+                        self.alloc,
+                        program,
+                        answers.view()
+                    ).try().match({
+                        true  => Ok(Ok(program)),
+                        false => {
                             report.add(
-                                "error: the jit backend runs on x86_64-linux, aarch64-linux and arm64-darwin hosts\n"
+                                "error: the host C compiler's answers do not match this program's C header constants and native C records\n"
                             ).try();
                             Ok(None)
                         },
-                        Ok(platform) => execute(
-                            self.alloc,
-                            prepare(
-                                Arenas(alloc: self.alloc, mem: self.mem),
-                                program
-                            ).try(),
-                            platform,
-                            argv
-                        ).try().match({
-                            None       => {
-                                report.add(
-                                    "error: the jit backend could not map its memory\n"
-                                ).try();
-                                Ok(None)
-                            },
-                            Ok(status) => Ok(Ok(status)),
-                        }),
                     }),
                 }),
             }),
+        })
+    }
+
+    host_name = (self: @Self) str {
+        self.platform().match({
+            Ok(p) => p.match({
+                LinuxX86_64 => "x86_64-linux",
+                LinuxArm64  => "aarch64-linux",
+                Darwin      => "arm64-darwin",
+            }),
+            None  => "unknown",
         })
     }
 

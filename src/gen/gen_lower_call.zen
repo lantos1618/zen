@@ -1895,7 +1895,7 @@ native_callback = (lo :: Lowerer, id: ExprId, c: Call, span: Span)
                   Res<Value, LowerError> {
     lo.c_calls.ensure(unsupported(
         span,
-        "a C function on a target without C"
+        "a native callback on a target without C"
     )).try();
     arg   = c.args.get(0).ok_or(callback_refused(span)).try();
     text  = lo.tree.expr_at(
@@ -1954,7 +1954,7 @@ foreign_call = (
     span    : Span
 )
                Res<Value, LowerError> {
-    lo.c_calls.ensure(unsupported(
+    (lo.c_calls || lo.externs).ensure(unsupported(
         span,
         lo.alloc.String(
             "the C function `{}` on a target without C",
@@ -1993,9 +1993,20 @@ foreign_call = (
         symbol: symbol,
         header: header,
         args: args,
-        typed: override.match({ Ok(_) => true, None => false })
+        typed: override.match({ Ok(_) => true, None => false }),
+        library: c_library(symbol, header)
     ))).try();
     Ok(out)
+}
+
+// The native library a C function comes from beyond the C library, named
+// as the build links it: the floors the C build adds by the same test
+// (zen_project `add_std_floors`).
+c_library = (symbol: str, header: str) str {
+    (symbol.starts_with("SSL_") || symbol.starts_with("TLS_")).match({
+        true  => "ssl",
+        false => header.eq("math.h").match({ true => "m", false => "" }),
+    })
 }
 
 native_word = (lo :: Lowerer, slot: usize) bool {

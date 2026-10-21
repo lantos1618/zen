@@ -34,6 +34,7 @@
 } = gen.gen_ir
 { Sys, Platform, constant_value } = gen.gen_sys
 { Code, decode, encode, size_of, minimum, maximum, ceiling, cell_size } = gen.gen_jit_decode
+{ Linked, invoke } = gen.gen_jit_extern
 
 // How a run ended. `Returned` continues the caller; the others unwind to
 // the outermost call (or to a guarded call, for a trap).
@@ -65,11 +66,9 @@ need = (f: Func, instruction: Instruction) Res<str> {
     instruction.match({
         Host(_)            => Ok("JavaScript host calls"),
         Wait(_)            => Ok("JavaScript event waits"),
-        Foreign(_)         => Ok("calls of C functions"),
         NativeConst(_)     => Ok("constants from C headers"),
         Machine(_)         => Ok("SIMD vectors and machine instructions"),
         NativeLayout(_)    => Ok("native C record layouts"),
-        NativeClear(_)     => Ok("native C record layouts"),
         BinaryValue(value) => (value.op.match({ Rem => true, _ => false })
             && float(slot_ty(f, value.left))).match({
             true  => Ok("floating-point remainder"),
@@ -92,7 +91,13 @@ slot_ty = (f: Func, slot: usize) Scalar { f.slots.get(slot).value_or(Scalar.Unit
 // is the process status a native build would exit with: the entry's
 // result, an `exit_group` status, or 134 after a trap. None when the
 // interpreter's own memory cannot be mapped.
-execute* = (a: Alloc, program: Program, platform: Platform, argv: Vec<str>)
+execute* = (
+    a        : Alloc,
+    program  : Program,
+    platform : Platform,
+    argv     : Vec<str>,
+    linked   : Linked
+)
            Res<Res<i32>, AllocError> {
     bases   ::= a.Vec<usize>();
     offsets ::= a.Vec<usize>();
@@ -163,7 +168,8 @@ execute* = (a: Alloc, program: Program, platform: Platform, argv: Vec<str>)
                 env: address_of(envp().to<u8>()),
                 held: 0,
                 word: 0,
-                text: a.String().try()
+                text: a.String().try(),
+                linked: linked
             );
             (info == 0).match({ true => Ok(None), false => Ok(Ok(vm.main())) })
         },
@@ -230,6 +236,8 @@ Interp = {
     // gen_jit_decode `encode`d functions, through a table of four words per
     // function: steps, frame size, parameter pairs, parameter count.
     info: usize,
+    // The C functions the program calls (gen_jit_extern).
+    linked: Linked,
 
     // The entry's result, then the exit hook a program may install in its
     // first process word, as `zr_exit` runs it.
@@ -924,6 +932,30 @@ Interp = {
                         unwound(ended)
                     },
                 })
+            },
+            Foreign(call)        => {
+                got = invoke(
+                    self.linked,
+                    self.linked.symbols.get(call.symbol).value_or(0),
+                    f,
+                    call,
+                    (slot) { self.cell(index, frame, slot) }
+                );
+                out = self.cell(index, frame, call.out);
+                ty  = slot_ty(f, call.out);
+                ty.match({
+                    Unit => (),
+                    F64  => set_u64(out, got.float),
+                    F32  => set_u64(out, got.float.bit_and(4294967295)),
+                    _    => { set_u64(out, got.word); extend(out, ty); },
+                });
+                None
+            },
+            // The hidden fields of a native record start zero.
+            NativeClear(slot)    => {
+                at = self.cell(index, frame, slot);
+                Range(0, cell_size(slot_ty(f, slot))).loop((i) { pointer_at(at + i).write(0, 0); });
+                None
             },
             // Refused before the program runs (`refused_by_jit`).
             _                    => Ok(self.fault(

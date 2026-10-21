@@ -540,6 +540,10 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
                         what: "native C record layouts",
                         function: function.name
                     )); },
+                    Opaque(_)       => { found = Ok(AsmRefusal(
+                        what: "constant-time value barriers (std.ct)",
+                        function: function.name
+                    )); },
                     Host(_)         => { found = Ok(AsmRefusal(
                         what: "JavaScript host calls (js.bind)",
                         function: function.name

@@ -886,6 +886,16 @@ Interp = {
                 value
             ); None },
             Barrier              => None,
+            // A barrier's word passes through unchanged; nothing here folds
+            // or forwards across it.
+            Opaque(value)        => {
+                move_bytes(
+                    self.cell(index, frame, value.out),
+                    self.cell(index, frame, value.source),
+                    cell_size(slot_ty(f, value.out))
+                );
+                None
+            },
             AtomicLoad(value)    => { self.load(index, f, frame, value); None },
             AtomicStore(value)   => { self.store(
                 index,

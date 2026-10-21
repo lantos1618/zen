@@ -18,7 +18,7 @@
 { Program, Func, BasicBlock, Instruction, Terminator, Scalar, Op, Guards } = gen.gen_ir
 { MachineCall } = gen.gen_ir_machine
 { Const, Move, Unary, Binary, Invocation, Print, Convert, Address, Load, Store } = gen.gen_ir
-{ same, FloatFormat } = gen.gen_ir
+{ same, FloatFormat, OpaqueValue } = gen.gen_ir
 { CopyMem, StaticBytes, Write, SysCall, Start, Pages, SysValue, Branch } = gen.gen_ir
 { width, word } = gen.gen_ir
 { Update, Compare, CodeRef, IndirectCall, HostCall, ForeignCall, NativeValue, NativeMeasure } = gen.gen_ir
@@ -1295,6 +1295,11 @@ shift = (
             field: v.field
         )),
         NativeClear(v)   => Instruction.NativeClear(base + v),
+        Opaque(v)        => Instruction.Opaque(OpaqueValue(
+            out: base + v.out,
+            source: base + v.source,
+            declassify: v.declassify
+        )),
         Machine(c)       => Instruction.Machine(MachineCall(
             op: c.op,
             name: c.name,

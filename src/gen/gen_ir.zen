@@ -197,6 +197,12 @@ NativeValue* = { out*: usize, header*: str, name*: str, fallback*: Res<i64> }
 // `sizeof` a native record, or `offsetof` one of its fields, as a U64.
 NativeMeasure* = { out*: usize, record*: usize, field*: Res<str> }
 
+// std.ct's value_barrier: `source`'s word in `out`, which no renderer or
+// optimizer may see through, so a mask built from a secret stays a mask.
+// `declassify` (declassify_barrier) also marks the word public for tools/ct.
+// Both slots have the same integer class.
+OpaqueValue* = { out*: usize, source*: usize, declassify*: bool }
+
 Instruction* = { Constant: Const
     | Copy: Move
     | UnaryValue: Unary
@@ -241,7 +247,8 @@ Instruction* = { Constant: Const
     | NativeConst: NativeValue
     | NativeLayout: NativeMeasure
     // Zero every byte of a native record slot, hidden fields included.
-    | NativeClear: usize }
+    | NativeClear: usize
+    | Opaque: OpaqueValue }
 
 // A terminator that ends the process with Zen's trap report.
 TrapKind* = { Overflow

@@ -3764,13 +3764,9 @@ Lowerer* = {
                 p.span,
                 "an inferred parameter type"
             )).try();
-            // tools/ct seeds its taint analysis from the C renderer's Secret
-            // markers; no other backend has that analysis.
+            // A Secret parameter is its T; the record below is what a C
+            // renderer marks for tools/ct's taint analysis.
             secret = written_secret(self.check, ty, callee.module);
-            (!secret || self.c_calls).ensure(unsupported(
-                p.span,
-                "a Secret parameter"
-            )).try();
             secrecy.add(secret.match({
                 false => Secrecy.Public,
                 true  => written_pointer(

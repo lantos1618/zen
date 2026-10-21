@@ -11,6 +11,7 @@ tests/corpus/net/tls_connect/main	stdout differs (51 bytes, expected 49)
 tests/corpus/std/carry_limbs	std/simd.zen:218:22: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
 tests/corpus/std/constant_time	constant_time.zen:154:9: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.value_barrier`
 tests/corpus/std/secret_discipline_accepts_constant_time_code	std/ct/ct.zen:48:34: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.declassify_barrier`
+tests/corpus/std/os_entropy	error: the jit backend found no library defining the C function `arc4random_buf`
 tests/corpus/std/simd_bmi2	std/simd.zen:215:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
 tests/corpus/std/simd_features	simd_features.zen:96:25: error: unsupported by this backend: the std.simd operation lane
 tests/corpus/std/simd_sha	std/simd.zen:230:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)

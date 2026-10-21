@@ -3899,6 +3899,8 @@ Lowerer* = {
                 true  => Ok(reach),
                 false => None,
             }),
+            unit: callee.module,
+            origin: Ok(f.name.span),
             secret_result: f.ret.match({ Ok(t) => written_secret(
                 self.check,
                 t,

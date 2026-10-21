@@ -286,6 +286,11 @@ Func* = {
     // Which word parameters hold an address and what they address, which
     // a C renderer names for tools/ct's calling shapes; None where none do.
     reaches* :: Res<Vec<Reach>> = None,
+    // The module whose body it was lowered for, which a split C build
+    // writes it into, and its declaration, for the symbol map; 0 and None
+    // for hand-built IR.
+    unit* :: usize = 0,
+    origin* :: Res<Span> = None,
 }
 
 // What a parameter word reaches: nothing, any extent (a Ptr<T>), or one

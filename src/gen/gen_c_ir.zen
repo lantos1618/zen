@@ -26,7 +26,18 @@ c_supports* = (feature: IrFeature) bool {
 }
 
 emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
-    writer ::= C(
+    writer ::= writer(a, program, false).try();
+    writer.program(program).try();
+    text ::= a.String().try();
+    text.runtime(false).try();
+    floor_text(a, writer, text).try();
+    text.add(writer.head.view()).try();
+    text.add(writer.out.view()).try();
+    Ok(text)
+}
+
+writer = (a: Alloc, program: Program, externs: bool) Res<C, AllocError> {
+    Ok(C(
         out: a.String().try(),
         head: a.String().try(),
         location: a.String().try(),
@@ -79,11 +90,15 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         ret_ptr: false,
         copies: 0,
         floor: false,
-        targets: a.Vec<str>()
-    );
-    writer.program(program).try();
-    text ::= a.String().try();
-    text.runtime().try();
+        targets: a.Vec<str>(),
+        externs: externs,
+        spans: a.Vec<usize>(),
+        main_at: 0
+    ))
+}
+
+// The floor and target sets the rendered functions need.
+floor_text = (a: Alloc, writer: C, text :: String) Res<(), AllocError> {
     writer.floor.then(() {
         floor ::= Emit(a).try();
         machine_floor(a, floor).try();
@@ -91,9 +106,91 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         text.add("#include <stdlib.h>\n").try();
         text.add(floor.view()).try();
     });
-    text.add(writer.head.view()).try();
-    text.add(writer.out.view()).try();
-    Ok(text)
+    Ok
+}
+
+CUnit* = { unit*: usize, text*: String }
+CUnits* = { header*: String, units*: Vec<CUnit> }
+
+// One C file per module: `zen.h` holds the runtime, types and every
+// prototype with external linkage; each unit includes it and defines the
+// functions lowered for that module, and the entry's unit also defines the
+// runtime's globals and `main`.
+emit_c_units* = (a: Alloc, program: Program) Res<CUnits, AllocError> {
+    writer ::= writer(a, program, true).try();
+    writer.program(program).try();
+    all    = writer.out.view();
+    protos = writer.spans.get(0).value_or(writer.main_at);
+    header ::= a.String().try();
+    header.add("#ifndef ZEN_H\n#define ZEN_H\n").try();
+    header.runtime(true).try();
+    floor_text(a, writer, header).try();
+    header.add(writer.head.view()).try();
+    header.add(all.slice(0, protos)).try();
+    header.add("#endif\n").try();
+    root = program.functions.get(
+        program.entry
+    ).match({ Ok(f) => f.unit, None => 0 });
+    last ::= root;
+    program.functions.loop(
+        (f) { (f.unit > last).then(() { last = f.unit; }); }
+    );
+    units ::= a.Vec<CUnit>();
+    Range(0, last + 1).loop((u) {
+        text ::= a.String().try();
+        held ::= false;
+        program.functions.loop((h, i, f) {
+            (f.unit == u).then(() {
+                held  = true;
+                start = writer.spans.get(2 * i).value_or(0);
+                end   = writer.spans.get(2 * i + 1).value_or(start);
+                text.add(all.slice(start, end)).try();
+            });
+        });
+        (held || u == root).then(() {
+            unit ::= a.String().try();
+            unit.add("#include \"zen.h\"\n\n").try();
+            (u == root).then(() { globals(unit, "", true).try(); });
+            unit.add(text.view()).try();
+            (u == root).then(
+                () { unit.add(all.slice(writer.main_at, all.len)).try(); }
+            );
+            units.add(CUnit(unit: u, text: unit)).try();
+        });
+    });
+    Ok(CUnits(header: header, units: units))
+}
+
+// `zen-symbol-map-v1`: each source function's C symbol and declaration,
+// root-relative like diagnostics, one escaped record per row.
+symbol_map* = (a: Alloc, program: Program) Res<String, AllocError> {
+    out ::= a.String().try();
+    out.add("zen-symbol-map-v1\nsymbol\tfile\tline\tcolumn\n").try();
+    program.functions.loop((h, i, f) {
+        f.origin.when_ok((span) {
+            (f.symbol.len > 0).match({
+                true  => map_field(f.symbol, out),
+                false => out.fmt("zf{}", i),
+            }).try();
+            out.add("\t").try();
+            map_field(span.file, out).try();
+            out.fmt("\t{}\t{}\n", span.start.line, span.start.col).try();
+        });
+    });
+    Ok(out)
+}
+
+map_field = (text: str, out :: String) Res<(), AllocError> {
+    Range(0, text.len).loop((i) {
+        text.index(i).match({
+            '\\' => out.add("\\\\"),
+            '\t' => out.add("\\t"),
+            '\n' => out.add("\\n"),
+            '\r' => out.add("\\r"),
+            b    => out.add(b),
+        }).try();
+    });
+    Ok
 }
 
 C = {
@@ -183,6 +280,11 @@ C = {
     floor :: bool,
     // The capability target sets functions are compiled for, once each.
     targets :: Vec<str>,
+    // Split output: functions have external linkage, and `spans` holds each
+    // definition's start and end in `out`, then `main_at` where main starts.
+    externs :: bool,
+    spans :: Vec<usize>,
+    main_at :: usize,
     // The current function's result local (plus one) that names `*zr_ret`,
     // and whether it returns through `zr_ret` at all.
     ret_slot :: usize,
@@ -196,9 +298,12 @@ C = {
             self.out.add(";\n").try();
         });
         program.functions.loop((h, index, function) {
+            self.spans.add(self.out.len()).try();
             self.function(index, function).try();
+            self.spans.add(self.out.len()).try();
         });
-        unit_entry = program.functions.get(program.entry).match({
+        self.main_at = self.out.len();
+        unit_entry   = program.functions.get(program.entry).match({
             Ok(f) => f.result.match({ Unit => true, _ => false }),
             None  => true,
         });
@@ -217,7 +322,9 @@ C = {
 
     signature = (self :: @Self, index: usize, function: Func) Res<(), AllocError> {
         self.need(function.result).try();
-        self.out.add("static ZR_U ").try();
+        self.out.add(
+            self.externs.match({ true => "ZR_U ", false => "static ZR_U " })
+        ).try();
         (function.targets.len > 0).then(() {
             self.floor = true;
             known ::= false;
@@ -2841,7 +2948,26 @@ OUTSIDE: str = "  #error native-surface IR\n"
 
 // The C runtime every rendered program starts with. Helpers are static
 // inline so a program that does not use one compiles without warnings.
-runtime = (out :: String) Res<(), AllocError> {
+// The runtime's state: `static` in one file; in a split build declared
+// `extern` in zen.h and defined once in the entry's unit.
+globals = (out :: String, prefix: str, initialized: bool) Res<(), AllocError> {
+    out.fmt("{}uint64_t zr_argc, zr_argv, zr_envp;\n", prefix).try();
+    out.fmt(
+        "{}uint64_t zr_globals[32] __attribute__((aligned(16)));\n",
+        prefix
+    ).try();
+    out.fmt("{}unsigned char zr_out_buf[65536];\n", prefix).try();
+    out.fmt("{}size_t zr_out_len;\n", prefix).try();
+    out.fmt(
+        "{}pthread_mutex_t zr_out_lock{};\n",
+        prefix,
+        initialized.match({ true => " = PTHREAD_MUTEX_INITIALIZER", false => "" })
+    ).try();
+    out.fmt("{}__thread uint64_t zr_word;\n", prefix).try();
+    out.fmt("{}__thread jmp_buf *zr_guard;\n", prefix)
+}
+
+runtime = (out :: String, shared: bool) Res<(), AllocError> {
     out.add("#define _GNU_SOURCE\n").try();
     out.add("#include <stdint.h>\n").try();
     out.add("#include <inttypes.h>\n").try();
@@ -2879,17 +3005,10 @@ runtime = (out :: String) Res<(), AllocError> {
     out.add(
         "#ifdef __OPTIMIZE__\n#define ZR_Z = 0\n#else\n#define ZR_Z\n#endif\n"
     ).try();
-    out.add("static uint64_t zr_argc, zr_argv, zr_envp;\n").try();
-    out.add(
-        "static uint64_t zr_globals[32] __attribute__((aligned(16)));\n"
-    ).try();
-    out.add("static unsigned char zr_out_buf[65536];\n").try();
-    out.add("static size_t zr_out_len;\n").try();
-    out.add(
-        "static pthread_mutex_t zr_out_lock = PTHREAD_MUTEX_INITIALIZER;\n"
-    ).try();
-    out.add("static __thread uint64_t zr_word;\n").try();
-    out.add("static __thread jmp_buf *zr_guard;\n").try();
+    shared.match({
+        true  => globals(out, "extern ", false),
+        false => globals(out, "static ", true),
+    }).try();
     out.add(
         "static inline ZR_U void zr_write_all(int fd, const unsigned char *p, size_t n) {\n"
     ).try();

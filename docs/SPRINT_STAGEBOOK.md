@@ -29,8 +29,8 @@ regressions. The bootstrap fixpoint matched 180 C units, zen.h and the seed.
 All eight build regressions passed. Header invalidation and diagnostic-scanner
 negative controls failed as intended under their deliberate mutations.
 
-The original dirty checkout remains untouched; a separate clean checkout tracks
-current main. Its URL and JSON work is already upstream, and HTTP belongs in
+The original local work is preserved in a separate WIP branch and the recovery
+archive; clean checkouts track current main. Its URL and JSON work is already upstream, and HTTP belongs in
 zen-http. Historical RPC queue tests pass independently under ASan/UBSan with
 leak detection, but current Zen exposes no equivalent RPC API. Retain the
 acceptance requirements in LIBRARIES.md, not the retired runtime implementation.

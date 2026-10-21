@@ -172,9 +172,13 @@ emit_print* = (be :: CBackend, out :: Emit) Res<AllocError> {
 }
 
 // Float formatting copies from this scratch buffer before the next render.
-// Forty bytes covers any `%g` double, its sign, and the terminator.
+// Forty bytes covers any `%g` double, its sign, and the terminator. C prints a
+// NaN's sign bit (`-nan`); every other backend prints `nan`, so test `v != v`.
 write_float_scratch = (out :: Emit) Res<AllocError> {
     out.say("static char zg_f64_scratch[40];").try();
+    out.say(
+        "static size_t zg_f64_text(double v) { if (v != v) { memcpy(zg_f64_scratch, \"nan\", 3); return 3; } return (size_t)snprintf(zg_f64_scratch, sizeof zg_f64_scratch, \"%g\", v); }"
+    ).try();
     out.line().try();
 }
 
@@ -192,7 +196,7 @@ write_print = (out :: Emit) Res<AllocError> {
         "static void zg_print_u64(uint64_t v) { fprintf(stdout, \"%llu\", (unsigned long long)v); }"
     ).try();
     out.say(
-        "static void zg_print_f64(double v) { fprintf(stdout, \"%g\", v); }"
+        "static void zg_print_f64(double v) { if (v != v) fputs(\"nan\", stdout); else fprintf(stdout, \"%g\", v); }"
     ).try();
     out.say(
         "static void zg_print_bool(bool v) { zg_print_bytes(v ? \"true\" : \"false\", v ? 4u : 5u); }"
@@ -223,7 +227,7 @@ write_stderr = (out :: Emit) Res<AllocError> {
         "static void zg_eprint_u64(uint64_t v) { fprintf(stderr, \"%llu\", (unsigned long long)v); }"
     ).try();
     out.say(
-        "static void zg_eprint_f64(double v) { fprintf(stderr, \"%g\", v); }"
+        "static void zg_eprint_f64(double v) { if (v != v) fputs(\"nan\", stderr); else fprintf(stderr, \"%g\", v); }"
     ).try();
     out.say(
         "static void zg_eprint_bool(bool v) { zg_eprint_bytes(v ? \"true\" : \"false\", v ? 4u : 5u); }"

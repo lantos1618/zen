@@ -23,7 +23,7 @@
 { check_drop_copy, check_construction_copies, is_drop_type } = sema.sema_drop
 { check_instance_copies } = sema.sema_instcopy
 { carries_bound, mailbox_described } = sema.sema_copy
-{ named_as } = sema.sema_member
+{ is_context } = sema.sema_member
 { is_handle_ty, refuse_handle_at, spelled_name } = sema.sema_handle
 { local_lambda } = sema.sema_local
 { type_from_ast } = sema.sema_denote
@@ -221,9 +221,9 @@ Own* = {
     deferring_out* :: bool,
     method* :: str,
     body* :: BlockId,
-    // An actor turn's str arguments, and bindings drawn from them: views
-    // into a message block the runtime reuses when the turn ends.
-    turn* :: Vec<str>,
+    // A behaviour's parameters that can hold a str: views into a message
+    // block the runtime reuses when the turn ends.
+    received* :: Vec<str>,
     alloc*: Alloc,
 
     block_scoped* = (self: @Self, id: BlockId) bool {
@@ -280,6 +280,27 @@ Own* = {
 
     var_at = (self: @Self, text: str) Res<OwnVar> {
         self.find_var(text).match({ None => None, Ok(i) => self.vars.get(i) })
+    }
+
+    // A received parameter is an arena view with no source: every store,
+    // binding and result drawn from it carries that like any arena view.
+    receive = (self :: @Self, text: str) Res<AllocError> {
+        self.find_var(text).when_ok((i) {
+            self.vars.get(i).when_ok((old) {
+                row ::= old;
+                row.arena = true;
+                self.vars.set(i, row);
+            });
+        });
+        self.received.add(text)
+    }
+
+    // A sourceless arena view in a behaviour is its received message.
+    stored_fault* = (self: @Self, source: Res<ExprId>, name: str) SemaFault {
+        (self.received.len > 0 && source.match({ None => true, Ok(_) => false })).match({
+            true  => SemaFault.TurnViewStored(NameFault(name: name)),
+            false => SemaFault.ArenaStored(NameFault(name: name)),
+        })
     }
 
     // A name this frame does not bind is a global, which is writable.
@@ -614,7 +635,7 @@ Own* = (a: Alloc) Res<Own, AllocError> {
         deferring_out: false,
         method: "",
         body: BlockId(index: 0),
-        turn: a.Vec<str>(),
+        received: a.Vec<str>(),
         alloc: a
     ));
 }
@@ -647,10 +668,7 @@ mark_turn_views = (c :: Checker, o :: Own, f: Function, ctx: Ctx)
         None  => false,
         Ok(p) => c.lookup(p.name.text).match({
             None  => false,
-            Ok(b) => c.types.at(b.ty).match({
-                Named(n) => c.named_as(n, "Context", "std.actor.actor_context"),
-                _        => false,
-            }),
+            Ok(b) => c.is_context(b.ty),
         }),
     });
     behaviour.then(() {
@@ -661,56 +679,12 @@ mark_turn_views = (c :: Checker, o :: Own, f: Function, ctx: Ctx)
                         Prim(t) => t.name.eq("str"),
                         _       => false,
                     }) || c.mailbox_described(b.ty).try();
-                    holds.then(() { o.turn.add(p.name.text).try(); });
+                    holds.then(() { o.receive(p.name.text).try(); });
                 });
             });
         });
     });
     Ok
-}
-
-// The turn view `value` is reached through, if any.
-turn_view = (c :: Checker, o :: Own, value: ExprId) Res<str> {
-    c.path_root(o, value).match({
-        None  => None,
-        Ok(i) => o.vars.get(i).match({
-            None  => None,
-            Ok(v) => {
-                root = v.lent.value_or(v.name);
-                o.turn.find((t) { t.eq(root) || t.eq(v.name) })
-            },
-        }),
-    })
-}
-
-// A str received in a message must not outlive the turn: storing one
-// through `self` or another borrowed parameter is refused. A local copy of
-// it is a turn view too.
-check_turn_view_stored* = (
-    c      :: Checker,
-    o      :: Own,
-    target : ExprId,
-    value  : ExprId
-) Res<AllocError> {
-    c.turn_view(o, value).match({
-        None       => Ok,
-        Ok(source) => c.path_root(o, target).match({
-            None     => c.tree.expr_at(target).kind.match({
-                Name(n) => o.turn.add(n.text),
-                _       => Ok,
-            }),
-            Ok(root) => o.owned_at(root).match({
-                true  => c.tree.expr_at(target).kind.match({
-                    Name(n) => o.turn.add(n.text),
-                    _       => Ok,
-                }),
-                false => c.refuse(
-                    c.tree.expr_at(target).span,
-                    SemaFault.TurnViewStored(NameFault(name: source))
-                ),
-            }),
-        }),
-    })
 }
 
 // A projected source selects a field's recorded provenance instead of
@@ -837,16 +811,13 @@ store_origin* = (
     field  : Res<str>
 )
                 Res<AllocError> {
-    c.check_turn_view_stored(o, target, value).try();
     view = c.stored_view(o, value, field);
     c.path_root(o, target).when_ok((root) {
         (!o.owned_at(root) && view.arena).then(() {
             c.frame_view_at(view.source).match({
                 None       => c.refuse(
                     c.tree.expr_at(target).span,
-                    SemaFault.ArenaStored(NameFault(name: c.spelled_name(
-                        value
-                    )))
+                    o.stored_fault(view.source, c.spelled_name(value))
                 ),
                 Ok(formed) => c.refuse_frame_view(
                     o,
@@ -1007,7 +978,6 @@ own_target = (c :: Checker, o :: Own, b: Bind, ctx: Ctx)
     c.check_write_place(o, b.target).try();
     c.release_stored_arena(o, b.target, b.value).try();
     c.check_arena_stored(o, b.target, b.value).try();
-    c.check_turn_view_stored(o, b.target, b.value).try();
     node.kind.match({
         Name(n)   => c.bind_name(o, b, n.text, node.span, ctx),
         Access(a) => c.revive_field(o, a, b.value, ctx),
@@ -1320,7 +1290,7 @@ report_partial = (c :: Checker, o :: Own, i: usize) Res<AllocError> {
 // calls: the receiver rule, `@scope` as an argument, and closure bodies
 own_call = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
            Res<AllocError> {
-    c.check_receiver(o, k, ctx).try();
+    c.check_receiver(o, id, k).try();
     c.check_lent_args(o, id, k).try();
     c.check_lent_fields(o, id, k).try();
     c.check_scope_stored(id, k).try();
@@ -1458,7 +1428,7 @@ pin_view_args = (c :: Checker, o :: Own, k: Call) Res<AllocError> {
 own_args = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
            Res<AllocError> {
     repeats = c.repeating_body(id).try();
-    escapes = c.call_escapes(o, k);
+    escapes = c.call_escapes(o, id, k);
     outer   = o.deferring;
     (c.defers_body(o, k) && (outer == 0)).then(() {
         o.deferring     = o.vars.len;
@@ -1730,6 +1700,7 @@ own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
     });
     joined ::= c.alloc.Vec<Place>();
     lent              = c.lent_scrutinee(o, m.scrutinee);
+    view              = c.stored_view(o, m.scrutinee, None);
     from: Res<ExprId> = lent.match({
         Ok(_) => None,
         None  => c.path_root(o, m.scrutinee).match({ None => None, Ok(_) => Ok(m.scrutinee) }),
@@ -1738,7 +1709,7 @@ own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
         o.restore_provenance(before);
         o.set_dead(entry).try();
         vmark = o.vars.len;
-        c.bind_pattern(o, a.pattern, lent, from).try();
+        c.bind_pattern(o, a.pattern, lent, from, view).try();
         c.own_expr(o, a.body, ctx).try();
         o.release(vmark).try();
         o.join_provenance(origins).try();
@@ -1779,10 +1750,11 @@ bind_pattern = (
     o    :: Own,
     id   : PatternId,
     lent : Res<str>,
-    from : Res<ExprId>
+    from : Res<ExprId>,
+    view : StoredView
 ) Res<AllocError> {
     c.tree.pattern_at(id).kind.match({
-        Destructure(d) => c.bind_binder(o, d.binder, lent, from),
+        Destructure(d) => c.bind_binder(o, d.binder, lent, from, view),
         _              => Ok,
     })
 }
@@ -1792,7 +1764,8 @@ bind_binder = (
     o    :: Own,
     id   : PatternId,
     lent : Res<str>,
-    from : Res<ExprId>
+    from : Res<ExprId>,
+    view : StoredView
 ) Res<AllocError> {
     node = c.tree.pattern_at(id);
     node.kind.match({
@@ -1806,15 +1779,15 @@ bind_binder = (
                 mutable: true,
                 owned: true,
                 scoped: false,
-                arena: false,
-                source: None,
+                arena: view.arena,
+                source: view.source,
                 fields: o.alloc.Vec<FieldOrigin>(),
                 span: node.span,
                 lent: lent,
                 from: from
             )),
         }),
-        Destructure(d) => c.bind_binder(o, d.binder, lent, from),
+        Destructure(d) => c.bind_binder(o, d.binder, lent, from, view),
         _              => Ok,
     })
 }

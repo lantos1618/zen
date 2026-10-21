@@ -413,7 +413,7 @@ renderer with no semantic work:
   frame stack, memory is real host memory, and system calls go through
   `std.sys` with the IR's -errno convention. Output buffering, trap reports,
   exit 134 and the exit hook follow the C runtime. `refused_by_jit` refuses
-  threads, JavaScript host calls, machine instructions, printing f64 and f64
+  threads, JavaScript host calls, printing f64 and f64
   `%` before anything runs. On x86_64-linux the native corpus runner's `jit`
   target passes 870 of 1136 programs; 265 are refused and 1 needs a fixture
   that only tests/run.py stages. Before running, the interpreter applies the

@@ -1,0 +1,70 @@
+// A sender floods a fresh sink with Bytes past the 256-message bound, so
+// the rest wait in its outbox, then stops the sink in the same turn. Those
+// waiting sends are refused: they never ran, so the runtime must free their
+// Bytes, not only their message blocks. Every page the runtime keeps comes
+// from a counting Mem, and the pages it still holds stay level from round
+// to round only when no refused Bytes is lost.
+{ Mem, Page, Arena, AllocError, Ptr, null_ptr } = std.mem
+{ Res, Ok, Range, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context, Bytes } = std.actor
+{ println } = std.io
+
+Counting = { inner: Mem, live: Ptr<usize> }
+
+Counting.impl(Mem, {
+    alloc = (self: @Self) Arena { self.inner.alloc() }
+    page = (self: @Self, size: usize, prev: Ptr<Page>)
+             Res<Ptr<Page>, AllocError> {
+        self.live.write(0, self.live.read(0) + 1);
+        self.inner.page(size, prev)
+    }
+    release = <T>(self: @Self, region: Ptr<T>) {
+        self.live.write(0, self.live.read(0) - 1);
+        self.inner.release(region)
+    }
+})
+
+Sink = {}
+
+Sink.impl(Actor, {
+    take = (self :: @Self, ctx: Context, b: Bytes) {}
+})
+
+Sender = {}
+
+Sender.impl(Actor, {
+    flood = (self :: @Self, ctx: Context, to: Ref<Sink>) {
+        Range(0, 300).loop((i) {
+            b ::= Bytes();
+            b.reserve(65536).ignore();
+            to.take(b.consume()).ignore();
+        });
+        to.stop();
+        ctx.me.stop();
+    }
+})
+
+Error = ActorStartError | ActorError | AllocError
+
+round = (env: Env) Res<Error> {
+    sink   = env.spawn(Sink()).try();
+    sender = env.spawn(Sender()).try();
+    sender.flood(sink).try();
+    sender.join();
+    sink.join();
+    Ok
+}
+
+main = (env: Env) Res<i32, Error> {
+    // Never released, so the counter outlives every actor.
+    cell = env.mem.page(64, null_ptr<Page>()).try();
+    live = cell.to<usize>().offset(4);
+    live.write(0, 0);
+    env.actor_mem(Counting(inner: env.mem, live: live)).try();
+    Range(0, 3).loop((i) { round(env).ignore(); });
+    settled = live.read(0);
+    Range(0, 10).loop((i) { round(env).ignore(); });
+    println("pages after 10 more rounds: {}", live.read(0) - settled);
+    Ok(0)
+}

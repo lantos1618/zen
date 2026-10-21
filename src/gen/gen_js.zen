@@ -455,10 +455,6 @@ JavaScript = {
             // Formatting into memory has no JavaScript lowering yet.
             FormatFloat(_)       => self.out.add(OUTSIDE_SUPPORTS),
             Host(call)           => self.host(call),
-            // gen_verify refuses a machine primitive, so none reaches here.
-            Machine(_)           => self.out.add(
-                "      throw new Error(\"unverified machine primitive\");\n"
-            ),
             // Suspend; the runtime resumes with a handler id.
             Wait(slot)           => {
                 self.open(slot).try();

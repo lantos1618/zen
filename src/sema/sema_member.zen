@@ -253,7 +253,7 @@ own_ref = (c :: Checker, ac: Access, ty: TyId, got: TyId, ctx: Ctx)
     })
 }
 
-is_context = (c: Checker, ty: TyId) bool {
+is_context* = (c: Checker, ty: TyId) bool {
     c.types.at(ty).match({
         Named(n) => c.named_as(n, "Context", "std.actor.actor_context"),
         _        => false,

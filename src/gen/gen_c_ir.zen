@@ -419,7 +419,6 @@ C = {
             System(_)       => true,
             MapPages(_)     => true,
             UnmapPages(_)   => true,
-            Machine(_)      => true,
             Host(_)         => true,
             Foreign(_)      => true,
             Wait(_)         => true,
@@ -558,10 +557,6 @@ C = {
                 self.wrote(v.out);
                 self.through(v.dest);
                 self.escape(v.value);
-            },
-            Machine(v)       => {
-                v.outs.loop((s) { self.wrote(s); });
-                self.escapes(v.args);
             },
             Host(v)          => {
                 self.wrote(v.out);
@@ -1524,7 +1519,6 @@ C = {
                 v.dest,
                 v.value
             ),
-            Machine(_)           => self.out.add("  __builtin_trap();\n"),
             // Through a volatile-qualified lvalue, so cc performs the access exactly
             // once and keeps a store whose memory is never read again (`wipe`).
             VolatileLoad(value)  => {
@@ -2737,10 +2731,6 @@ mentions = (instruction: Instruction, visit: (slot: usize, read: bool) ()) {
             visit(v.out, false);
             visit(v.dest, true);
             visit(v.value, true);
-        },
-        Machine(v)       => {
-            v.outs.loop((slot) { visit(slot, false); });
-            v.args.loop((slot) { visit(slot, true); });
         },
         Host(v)          => {
             visit(v.out, false);

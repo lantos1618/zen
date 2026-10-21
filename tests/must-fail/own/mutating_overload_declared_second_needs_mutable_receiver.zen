@@ -1,0 +1,19 @@
+{ println } = std.io
+
+// Members overload by arity, so the receiver rule reads the overload the
+// call selected. `f(v)` writes `self.x`; the read-only `f()` declared
+// first must not let it through an immutable `s`.
+S = {
+    x :: i32,
+    f = (self: @Self) i32 { self.x },
+    f = (self :: @Self, v: i32) i32 {
+        self.x = v;
+        v
+    },
+}
+
+main = () {
+    s = S(x: 1);
+    s.f(5);
+    println("{}", s.x);
+}

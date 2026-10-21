@@ -422,7 +422,7 @@ Piece* = {
                             out :: String) Res<bool, AllocError> {
         be.need_fbuf();
         bytes ::= be.alloc.String(
-            "(zg_str){{ (unsigned char *)zg_f64_scratch, (size_t)snprintf(zg_f64_scratch, sizeof zg_f64_scratch, \"%g\", {}({})) }}",
+            "(zg_str){{ (unsigned char *)zg_f64_scratch, zg_f64_text({}({})) }}",
             cast,
             text
         ).try();

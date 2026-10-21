@@ -27,7 +27,6 @@
 { Update, Compare, IndirectCall, HostCall, FloatFormat, ForeignCall } = gen.gen_ir
 TakeAddress = gen.gen_ir.Address
 { coalesce, retarget } = gen.gen_asm_coalesce
-{ MachineCall } = gen.gen_ir_machine
 { Flow, flow, reads, written, exit_read, successors, pure, clobbers, aggregate, zeros, group, NONE } = gen.gen_asm_flow
 
 // Where a slot's value lives. `Fixed` is a constant and `Pointer(slot)`
@@ -490,13 +489,6 @@ Propagate = {
                 out: call.out,
                 target: self.at(call.target),
                 args: self.all(alloc, call.args).try()
-            )),
-            Machine(call)    => Instruction.Machine(MachineCall(
-                op: call.op,
-                word: call.word,
-                outs: call.outs,
-                args: self.all(alloc, call.args).try(),
-                span: call.span
             )),
             Host(call)       => Instruction.Host(HostCall(
                 out: call.out,

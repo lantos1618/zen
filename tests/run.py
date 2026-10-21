@@ -52,6 +52,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1551,6 +1552,35 @@ def _modules_named_in(root: Path) -> set[str]:
     return names
 
 
+def is_heavy(test: Test, tool: Toolchain) -> bool:
+    """Whether the test imports a compiler module beside std.
+
+    Compiling one pulls in the whole frontend, near 5 GB at its peak, so
+    `--heavy-jobs` bounds how many run together.
+    """
+    compiler = {name for name, entry in tool.modules.items()
+                if entry.is_dir() and name != "std"}
+    return bool(_modules_named_in(test.source) & compiler)
+
+
+def spread_heavy(tests: list[Test], tool: Toolchain) -> list[Test]:
+    """The tests in submission order, heavy ones spaced evenly among the rest.
+
+    Consecutive heavy tests would leave workers waiting on `--heavy-jobs`
+    slots while light tests queue behind them.
+    """
+    heavy = [test for test in tests if is_heavy(test, tool)]
+    light = [test for test in tests if not is_heavy(test, tool)]
+    if not heavy:
+        return light
+    order: list[Test] = []
+    step = len(light) / len(heavy)
+    for index, test in enumerate(heavy):
+        order += light[round(index * step):round((index + 1) * step)]
+        order.append(test)
+    return order
+
+
 def run_corpus(test: Test, tool: Toolchain, work: Path, args: argparse.Namespace) -> Result:
     reasons: list[str] = []
     detail: list[str] = []
@@ -2080,6 +2110,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                    help="select tests whose id matches (repeatable)")
     p.add_argument("--list", action="store_true", help="print selected test ids and exit")
     p.add_argument("--jobs", "-j", type=positive_int, default=os.cpu_count() or 1)
+    p.add_argument("--heavy-jobs", type=positive_int, default=2,
+                   help="most tests importing the compiler's own modules (lsp, sema, ...) "
+                        "to run at once; each compile peaks near 5 GB (default: 2)")
     p.add_argument("--shard", type=shard_arg, metavar="INDEX/COUNT",
                    help="run a disjoint one-based shard of the sorted filtered tests")
     p.add_argument("--timings", nargs="?", type=positive_int, const=10, metavar="N",
@@ -2199,6 +2232,7 @@ def main(argv: Sequence[str]) -> int:
     harness_errors: list[str] = []
     kept_at: dict[str, Path] = {}
     started = time.perf_counter()
+    heavy_slots = threading.BoundedSemaphore(args.heavy_jobs)
 
     def task(test: Test) -> Result:
         test_started = time.perf_counter()
@@ -2207,7 +2241,8 @@ def main(argv: Sequence[str]) -> int:
             key = verdict_cache.key(test) if verdict_cache else None
             result = verdict_cache.lookup(test, key) if verdict_cache else None
             if result is None:
-                result = run_one(test, tool, workroot, args)
+                with heavy_slots if is_heavy(test, tool) else nullcontext():
+                    result = run_one(test, tool, workroot, args)
                 if verdict_cache:
                     verdict_cache.remember(result, key)
         except HarnessError as exc:
@@ -2226,7 +2261,9 @@ def main(argv: Sequence[str]) -> int:
             f"[{shlex.join(tool.emit_argv)}], {args.jobs} job(s)"
         )
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            for raw in pool.map(task, selected):
+            running = {id(test): pool.submit(task, test)
+                       for test in spread_heavy(selected, tool)}
+            for raw in (running[id(test)].result() for test in selected):
                 result, is_deferred = stage_verdict(raw, args.stage)
                 results.append(result)
                 try:

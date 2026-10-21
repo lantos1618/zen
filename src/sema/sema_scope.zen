@@ -16,7 +16,7 @@
 { Own, place_type, path_root, joined_source, access_view, returned_view } = sema.sema_own
 { rehome_arena } = sema.sema_own
 { TyId } = sema.sema_ty
-{ own_member } = sema.sema_recv
+{ selected_member } = sema.sema_recv
 { call_callee } = sema.sema_call
 
 // `@scope` names the enclosing block: it may be passed inward but never
@@ -202,23 +202,19 @@ is_scope_value* = (c :: Checker, id: ExprId) bool {
 
 // A method that takes an `Alloc` may keep its lambda arguments alive
 // past the call.
-call_escapes* = (c :: Checker, o :: Own, k: Call) bool {
+call_escapes* = (c :: Checker, o :: Own, id: ExprId, k: Call) bool {
     c.tree.expr_at(k.callee).kind.match({
-        Access(a) => c.member_escapes(o, a),
+        Access(a) => c.member_escapes(o, id, a),
         _         => false,
     })
 }
 
-member_escapes = (c :: Checker, o :: Own, a: Access) bool {
-    ty = c.place_type(o, a.base);
-    c.own_member(ty, a.name.text).match({
+member_escapes = (c :: Checker, o :: Own, id: ExprId, a: Access) bool {
+    c.selected_member(o, id, a.base).match({
         None  => false,
-        Ok(m) => m.kind.match({
-            Function(f) => c.types.at(ty).match({
-                Named(n) => c.takes_alloc(f, n.decl.module.to_usize()),
-                _        => false,
-            }),
-            _           => false,
+        Ok(f) => c.types.at(c.place_type(o, a.base)).match({
+            Named(n) => c.takes_alloc(f, n.decl.module.to_usize()),
+            _        => false,
         }),
     })
 }
@@ -530,7 +526,7 @@ check_arena_stored* = (
                 Ok(name) => c.frame_view_at(c.arena_source(o, value)).match({
                     None       => c.refuse(
                         c.tree.expr_at(target).span,
-                        SemaFault.ArenaStored(NameFault(name: name))
+                        o.stored_fault(c.arena_source(o, value), name)
                     ),
                     Ok(formed) => c.refuse_frame_view(
                         o,

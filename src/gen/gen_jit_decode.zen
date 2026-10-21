@@ -81,9 +81,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
     );
     Range(0, f.parameters).loop((i) {
         code.params.add(cell_of(offsets, base, i)).try();
-        code.sizes.add(
-            class_of(f, i).match({ Unit => 0, Block(l) => l.size, _ => 8 })
-        ).try();
+        code.sizes.add(cell_size(class_of(f, i))).try();
     });
     // Slots only ever set to one constant are filled once per call, from
     // the image after the parameter pairs, instead of by a step each time.
@@ -277,7 +275,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                         ty: class_of(f, v.out)
                     ),
                 }),
-                LoadValue(v)   => same(class_of(f, v.out), Scalar.U128).match({
+                LoadValue(v)   => (!fast_access(f, Ok(instruction))).match({
                     true => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
                     false => Step(
                         kind: Kind.Load,
@@ -293,10 +291,7 @@ decode* = (a: Alloc, f: Func, offsets: Vec<usize>, base: usize,
                         ty: class_of(f, v.out),
                         index: indexed_cell(offsets, base, fold)
                     ) }),
-                StoreValue(v)  => same(
-                    class_of(f, v.value),
-                    Scalar.U128
-                ).match({
+                StoreValue(v)  => (!fast_access(f, Ok(instruction))).match({
                     true => { code.slow.add(instruction).try(); Step(kind: Kind.Slow, a: 0, b: 0, c: 0, n: (code.slow.len - 1).to_u64(), w: 0, ty: Scalar.Unit) },
                     false => Step(
                         kind: Kind.Store,
@@ -541,7 +536,8 @@ fold_add = (
             f,
             v.out
         )) == 8
-                           && single(facts, v.out) && based_on(next, v.out)).match({
+                           && single(facts, v.out) && based_on(next, v.out)
+                           && fast_access(f, next)).match({
             false => None,
             true  => scale.match({
                 Ok(m) => (v.right == m.out).match({
@@ -875,6 +871,24 @@ cell_of = (offsets: Vec<usize>, base: usize, slot: usize) usize {
 
 class_of = (f: Func, slot: usize) Scalar { f.slots.get(slot).value_or(Scalar.Unit) }
 
+// Bytes a slot's cell occupies.
+cell_size* = (ty: Scalar) usize {
+    ty.match({ Unit => 0, Block(l) => l.size, U128 => 16, _ => 8 })
+}
+
+// Whether a load or store has a step of its own. A u128 access runs its IR
+// instruction instead, which reads its base slot, so no add folds into it.
+fast_access = (f: Func, access: Res<Instruction>) bool {
+    access.match({
+        Ok(i) => i.match({
+            LoadValue(l)  => !same(class_of(f, l.out), Scalar.U128),
+            StoreValue(s) => !same(class_of(f, s.value), Scalar.U128),
+            _             => true,
+        }),
+        None  => false,
+    })
+}
+
 // An i64's bit pattern, through the eight-byte cell at `scratch`.
 bits_of = (scratch: usize, value: i64) u64 {
     pointer_at(scratch).to<i64>().write(0, value);
@@ -968,11 +982,7 @@ encode* = (code: Code, at: usize) usize {
             Jump            => 21,
             Branch          => 22,
             Return          => {
-                put(
-                    out,
-                    4,
-                    s.ty.match({ Unit => 0, Block(l) => l.size, _ => 8 })
-                );
+                put(out, 4, cell_size(s.ty));
                 23
             },
             Trap            => 24,

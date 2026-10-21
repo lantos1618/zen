@@ -1448,8 +1448,9 @@ intrinsic = (
 }
 
 // The machine primitives the scalar IR spells with its own operations. The
-// rest (std.simd, volatile access, u128 arithmetic) are refused by name
-// rather than by their operands.
+// rest (std.simd vectors and CPU capabilities, and the AES, carry-less, SHA
+// and multi-limb instructions) are refused by name rather than by their
+// operands.
 machine = (
     lo      :: Lowerer,
     id      : ExprId,

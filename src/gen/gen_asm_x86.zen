@@ -340,9 +340,6 @@ Assembly = {
                 }).try();
                 self.store(value.out, "%rax")
             },
-            // gen_verify rejects machine operations (gen_ir_machine) before
-            // rendering; should one arrive anyway, the program faults here.
-            Machine(_)           => self.out.add("    ud2\n"),
             // A volatile access is one ordinary access: these renderers neither
             // drop, merge nor reorder memory operations.
             VolatileLoad(value)  => self.load_memory(value),

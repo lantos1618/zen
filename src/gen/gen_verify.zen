@@ -251,8 +251,6 @@ Check = {
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
                 self.expect(value.out, ty)
             },
-            // Scalar slots cannot hold a machine operation's operands.
-            Machine(_)           => Err(self.fault(IrReason.Type)),
             VolatileLoad(value)  => {
                 scalar_word(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.base, Scalar.Ptr)
@@ -433,10 +431,6 @@ Check = {
             FormatFloat(value)   => {
                 self.initialized(flags, value.dest).try();
                 self.initialized(flags, value.value)
-            },
-            Machine(call)        => {
-                call.args.loop((slot) { self.initialized(flags, slot).try(); });
-                Ok
             },
             Host(call)           => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
@@ -1091,10 +1085,6 @@ Payloads = {
             Barrier          => (),
             AtomicLoad(_)    => (),
             CodeAddress(_)   => (),
-            Machine(c)       => {
-                c.outs.loop((slot) { self.forget_slot(state, slot); });
-                c.args.loop((a) { self.forget_argument(state, a); });
-            },
             Wait(_)          => (),
             Foreign(c)       => c.args.loop(
                 (a) { self.forget_argument(state, a); }
@@ -1181,8 +1171,6 @@ written = (instruction: Instruction) Res<usize> {
         VolatileStore(_) => None,
         Barrier          => None,
         AtomicStore(_)   => None,
-        // A machine primitive writes several slots; `forget` clears each.
-        Machine(_)       => None,
         PrintValue(_)    => None,
         Text(_)          => None,
         StoreValue(_)    => None,

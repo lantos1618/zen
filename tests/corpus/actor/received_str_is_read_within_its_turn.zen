@@ -1,0 +1,38 @@
+// A received str may be read, bound locally and summarised within its turn.
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+
+Error = AllocError | IoError | ActorStartError | ActorError
+Line = { from: str, n: u64 }
+Chat = { Say: Line | Show: str }
+Keeper = { count :: u64 = 0, seen :: u64 = 0 }
+
+Keeper.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, m: Chat) {
+        m.match({
+            Say(l)  => {
+                t          = l.from;
+                self.count = self.count + l.n;
+                self.seen  = self.seen + 1;
+                ctx.env.out.println("say {} {}", t, l.n).ignore();
+            },
+            Show(s) => ctx.env.out.println(
+                "show {} {} {}",
+                s,
+                self.count,
+                self.seen
+            ).ignore(),
+        })
+    }
+})
+
+main = (env: Env) Res<i32, Error> {
+    k = env.spawn(Keeper()).try();
+    k.send(Chat.Say(Line(from: "ab", n: 3))).try();
+    k.send(Chat.Show("x")).try();
+    k.stop();
+    k.join();
+    Ok(0)
+}

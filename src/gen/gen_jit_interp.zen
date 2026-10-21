@@ -33,7 +33,7 @@
     trap_message, width, signed, integer, float, same
 } = gen.gen_ir
 { Sys, Platform, constant_value } = gen.gen_sys
-{ Code, decode, encode, size_of, minimum, maximum, ceiling } = gen.gen_jit_decode
+{ Code, decode, encode, size_of, minimum, maximum, ceiling, cell_size } = gen.gen_jit_decode
 
 // How a run ended. `Returned` continues the caller; the others unwind to
 // the outermost call (or to a guarded call, for a trap).
@@ -67,7 +67,6 @@ need = (f: Func, instruction: Instruction) Res<str> {
         Wait(_)            => Ok("JavaScript event waits"),
         Foreign(_)         => Ok("calls of C functions"),
         NativeConst(_)     => Ok("constants from C headers"),
-        Machine(_)         => Ok("machine instructions"),
         BinaryValue(value) => (value.op.match({ Rem => true, _ => false })
             && float(slot_ty(f, value.left))).match({
             true  => Ok("floating-point remainder"),
@@ -85,11 +84,6 @@ need = (f: Func, instruction: Instruction) Res<str> {
 }
 
 slot_ty = (f: Func, slot: usize) Scalar { f.slots.get(slot).value_or(Scalar.Unit) }
-
-// Bytes a slot's cell occupies.
-cell_size = (ty: Scalar) usize {
-    ty.match({ Unit => 0, Block(l) => l.size, U128 => 16, _ => 8 })
-}
 
 // Run `program` to completion with `argv` as its command line. The result
 // is the process status a native build would exit with: the entry's

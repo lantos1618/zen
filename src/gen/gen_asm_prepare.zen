@@ -21,7 +21,6 @@
 { CopyMem, StaticBytes, Write, SysCall, Start, Pages, SysValue, Branch } = gen.gen_ir
 { width, word } = gen.gen_ir
 { Update, Compare, CodeRef, IndirectCall, HostCall, ForeignCall, NativeValue } = gen.gen_ir
-{ MachineCall } = gen.gen_ir_machine
 { simplify } = gen.gen_asm_regalloc
 { Flow, flow, reads, written, exit_read, successors, zeros, bits, group, NONE } = gen.gen_asm_flow
 { nowhere } = std.source
@@ -1260,13 +1259,6 @@ shift = (
             out: base + c.out,
             target: base + c.target,
             args: moved(alloc, c.args, base).try()
-        )),
-        Machine(c)       => Instruction.Machine(MachineCall(
-            op: c.op,
-            word: c.word,
-            outs: moved(alloc, c.outs, base).try(),
-            args: moved(alloc, c.args, base).try(),
-            span: c.span
         )),
         Host(c)          => Instruction.Host(HostCall(
             out: base + c.out,

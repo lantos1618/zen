@@ -418,12 +418,14 @@ renderer with no semantic work:
   a stub that follows the System V x86-64 ABI; other hosts refuse C calls by
   name. Header constants and native record layouts are answered by the host
   C compiler: `gen_probe` writes one C program that prints them, the driver
-  builds and runs it with `cc` and caches its output under
-  `build/.zen/probe/` by the program's text (target and headers), and the
-  numbers replace `NativeConst`/`NativeLayout`. Without a host compiler they
-  keep lowering's refusal. `refused_by_jit` refuses
+  builds and runs it with `CC` (or `cc`) in a temporary directory, and the
+  numbers replace `NativeConst`/`NativeLayout`. Answers are refreshed for each
+  run so changed headers or compiler settings cannot reuse a stale layout.
+  A missing host compiler produces a probe diagnostic. `refused_by_jit` refuses
   threads, JavaScript host calls, printing f64 and f64
-  `%` before anything runs. It runs std.simd's `Instruction.Machine`
+  `%`, and 128-bit C arguments or results before anything runs. The C-call
+  stub is published only after executable-memory protection succeeds.
+  It runs std.simd's `Instruction.Machine`
   operations lane by lane on 16-aligned blocks, and `CpuHas` always answers
   absent, so feature-gated code takes its portable path. The lowering's
   `machines` capability (on for C and the jit, off for asm and JS) decides
@@ -431,10 +433,11 @@ renderer with no semantic work:
   barriers lower to `Instruction.Opaque`: IR-C renders its empty-asm
   barrier, the jit runs it as an opaque identity, and asm and JS refuse it
   by name, as they do Secret parameters (`IrFeature.Secrets`). On
-  x86_64-linux the native corpus runner's `jit` target passes 1086 of 1141
-  programs; 53 are refused by name and 2 are listed in
-  `tests/native/jit-known-failures.txt` (a C library calling back into Zen,
-  and a C function this host's libc lacks). Before running, the interpreter applies the
+  x86_64-linux the native corpus runner's `jit` target passes 1087 of 1141
+  programs; 53 are refused by name and one is listed in
+  `tests/native/jit-known-failures.txt` (a C library calling back into Zen).
+  The host must provide `arc4random_buf` for the standard entropy API.
+  Before running, the interpreter applies the
   asm backend's `prepare` (with `simplify`), then `gen_jit_decode` encodes each
   function once into 64-byte word steps: frame offsets, block targets, call
   argument tables and parameter sizes are resolved, comparisons are fused with

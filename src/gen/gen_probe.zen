@@ -5,8 +5,8 @@
 // `Layout` with `native > 0`, `NativeLayout`), and this module writes one C
 // program that prints every answer: each constant as the class of its slot,
 // then each record's size, alignment and field offsets, one decimal per
-// line. The driver compiles and runs it with the host compiler (caching the
-// output per target and source) and `resolve` puts the numbers back into
+// line. The driver compiles and runs it with the host compiler for this run,
+// and `resolve` puts the numbers back into
 // the IR: constants and measures become `Constant`s and each record's
 // layout gets its size and alignment. The record's field types are checked
 // against the header as IR-C checks them, so a mismatch fails the probe.
@@ -31,8 +31,8 @@ needs_probe* = (program: Program) bool {
 }
 
 // The C program whose standard output `resolve` reads; None when a constant
-// has a class the probe cannot print. `target` names the host, so a cache
-// keyed by the source is per target and header set.
+// has a class the probe cannot print. `target` identifies the host in the
+// generated source.
 probe_source* = (a: Alloc, program: Program, target: str)
                 Res<Res<String>, AllocError> {
     questions ::= a.Vec<Question>();

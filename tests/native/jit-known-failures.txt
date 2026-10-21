@@ -4,4 +4,3 @@
 # is refused, fails with any other line, or leaves the corpus, and when an
 # unlisted test fails: fix a gap, then delete its line.
 tests/corpus/file-io/posix_stream/main	main.zen:93:43: error: unsupported by this backend: a native callback on a target without C
-tests/corpus/std/os_entropy	error: the jit backend found no library defining the C function `arc4random_buf`

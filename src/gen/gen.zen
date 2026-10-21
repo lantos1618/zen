@@ -52,9 +52,6 @@ Generation* = {
     // JavaScript for a page (`--target js-browser`): publish index.html,
     // runtime.js and app.js instead of one script.
     browser* :: bool = false,
-    // The host has a C compiler, which answers the jit's header constants
-    // and native record layouts (gen_probe).
-    probe* :: bool = false,
 
     // Lowering diagnostics precede publication. The returned count includes
     // backend faults and publication failures; allocation errors stay typed.
@@ -311,13 +308,7 @@ Generation* = {
     run* = (self: @Self, report :: String, argv: Vec<str>,
             host: (source: str) Res<String>)
            Res<Res<i32>, AllocError> {
-        lower_hosted(
-            self.alloc,
-            self.tree,
-            self.check,
-            self.entry,
-            self.probe
-        ).match({
+        lower_hosted(self.alloc, self.tree, self.check, self.entry).match({
             Err(error)  => error.match({
                 OutOfMemory        => Err(AllocError.OutOfMemory),
                 Unsupported(fault) => {

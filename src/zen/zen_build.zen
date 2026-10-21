@@ -9,7 +9,7 @@
 { Alloc, AllocError } = std.mem
 { str, String, dup } = std.text
 { Vec, Map } = std.collections
-{ Res, Ok, None, loop, Range, Path } = std.core
+{ Res, Ok, None, loop, Range, Path, without_err } = std.core
 { Env, FsError, fs_message } = std.env
 
 { Ast } = std.ast.ast_arena
@@ -957,8 +957,7 @@ Build* = {
                 ffi: self.ffi,
                 symbols: !job.symbol_map.is_empty(),
                 target: target,
-                browser: browser,
-                probe: job.backend.match({ Jit => self.host_cc(), _ => false })
+                browser: browser
             );
             publisher  = Publisher(
                 env: self.env,
@@ -995,77 +994,23 @@ Build* = {
         })
     }
 
-    // Whether the host C compiler (CC, else `cc`) can be started.
-    host_cc = (self: @Self) bool {
-        command = self.alloc.String(
-            "command -v {} >/dev/null 2>&1",
-            self.env.var("CC").value_or("cc")
-        );
-        command.match({
-            Err(_) => false,
-            Ok(c)  => self.env.proc.run(self.alloc, "", c.view()).match({
-                Ok(done) => done.code == 0,
-                Err(_)   => false,
-            }),
-        })
-    }
-
     // The standard output of a gen_probe program built and run with the
-    // host C compiler, cached under the build directory by the program's
-    // text, which names the target and its headers. None, after cc's
-    // diagnostics, when it would not build or run.
+    // host C compiler. Header contents and compiler configuration can change
+    // between runs, so answers are read afresh before interpreting a program.
     host_probe = (self: @Self, source: str) Res<String> {
-        key ::= FNV_OFFSET;
-        Range(0, source.len).loop((i) {
-            key = key.bit_xor(source.index(i).to_u64()) *% FNV_PRIME;
-        });
-        build               = self.env.var("ZEN_BUILD_DIR").value_or("build");
-        dir                 = build.starts_with("/").match({
-            true  => self.alloc.String("{}/.zen/probe", build),
-            false => self.alloc.String("{}/{}/.zen/probe", self.root, build),
-        });
-        cached: Res<String> = dir.match({
-            Err(_) => None,
-            Ok(d)  => self.alloc.String("{}/{}.txt", d.view(), key).match({
-                Err(_)   => None,
-                Ok(path) => self.env.fs.exists(path.view()).match({
-                    false => None,
-                    true  => self.env.fs.read(self.alloc, path.view()).match({
-                        Ok(text) => Ok(text),
-                        Err(_)   => None,
-                    }),
-                }),
-            }),
-        });
-        cached.match({
-            Ok(text) => Ok(text),
-            None     => dir.match({
-                Err(_) => None,
-                Ok(d)  => self.alloc.String(
-                    "set -e; d='{}'; mkdir -p \"$d\"; t=$(mktemp -d \"$d/run.XXXXXX\"); trap 'rm -rf \"$t\"' EXIT; {} -w -x c -o \"$t/probe\" - <<'ZEN_PROBE_EOF'\n{}\nZEN_PROBE_EOF\n\"$t/probe\" > \"$t/out\"; mv \"$t/out\" \"$d/{}.txt\"; cat \"$d/{}.txt\"",
-                    d.view(),
-                    self.env.var("CC").value_or("cc"),
-                    source,
-                    key,
-                    key
-                ).match({
-                    Err(_)      => None,
-                    Ok(command) => self.env.proc.run(
-                        self.alloc,
-                        "",
-                        command.view()
-                    ).match({
-                        Err(_)   => None,
-                        Ok(done) => (done.code == 0).match({
-                            true  => Ok(done.out),
-                            false => {
-                                println("{}", done.err.view());
-                                None
-                            },
-                        }),
-                    }),
-                }),
-            }),
+        command = self.alloc.String(
+            "set -e; t=$(mktemp -d); trap 'rm -rf \"$t\"' EXIT; {} -w -x c -o \"$t/probe\" - <<'ZEN_PROBE_EOF'\n{}\nZEN_PROBE_EOF\n\"$t/probe\"",
+            self.env.var("CC").value_or("cc"),
+            source
+        ).without_err().try();
+        done    = self.env.proc.run(
+            self.alloc,
+            "",
+            command.view()
+        ).without_err().try();
+        (done.code == 0).match({
+            true  => Ok(done.out),
+            false => { println("{}", done.err.view()); None },
         })
     }
 
@@ -1090,10 +1035,6 @@ Build* = {
         })
     }
 }
-
-// FNV-1a, the probe cache's key.
-FNV_OFFSET: u64 = 14695981039346656037
-FNV_PRIME: u64 = 1099511628211
 
 Build* = (a: Alloc, env: Env, root: str) Build {
     Build(

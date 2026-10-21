@@ -69,6 +69,10 @@ need = (f: Func, instruction: Instruction) Res<str> {
         Wait(_)            => Ok("JavaScript event waits"),
         NativeConst(_)     => Ok("constants from C headers"),
         NativeLayout(_)    => Ok("native C record layouts"),
+        Foreign(call)      => (width(slot_ty(f, call.out)) > 8 || call.args.find((slot) { width(slot_ty(f, slot)) > 8 }).match({ Ok(_) => true, None => false })).match({
+            true  => Ok("128-bit C arguments or results"),
+            false => None,
+        }),
         BinaryValue(value) => (value.op.match({ Rem => true, _ => false })
             && float(slot_ty(f, value.left))).match({
             true  => Ok("floating-point remainder"),

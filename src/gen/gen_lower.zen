@@ -37,16 +37,15 @@ lower* = (
 }
 
 // Lower for a target that links no C but calls C functions by symbol (the
-// jit). With `probe`, header constants and native records lower as for C,
-// for the host C compiler to answer (gen_probe); without, they are refused.
+// jit). Header constants and native records lower as for C, for the host
+// C compiler to answer (gen_probe) before the program runs.
 lower_hosted* = (
     alloc : Alloc,
     tree  : Ast,
     check : Checker,
-    entry : usize,
-    probe : bool
+    entry : usize
 ) Res<Program, LowerError> {
-    lower_native(alloc, tree, check, entry, false, true, true, probe)
+    lower_native(alloc, tree, check, entry, false, true, true, true)
 }
 
 Fault* = { span*: Span, what*: str }

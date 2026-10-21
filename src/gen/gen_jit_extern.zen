@@ -10,7 +10,7 @@
 { Vec, Map } = std.collections
 { String, str, c_text } = std.text
 { Res, Ok, Err, None, loop, Range } = std.core
-{ mmap, mprotect, pointer_at, address_of, call_entry } = std.sys
+{ mmap, mprotect, munmap, pointer_at, address_of, call_entry } = std.sys
 { Program, Func, Scalar, ForeignCall, float } = gen.gen_ir
 { Platform } = gen.gen_sys
 
@@ -88,15 +88,22 @@ link* = (a: Alloc, program: Program, platform: Platform)
                 true  => {
                     stub  = mapped(mmap(0, FRAME_BYTES, 3, 34, -1, 0));
                     frame = mapped(mmap(0, FRAME_BYTES, 3, 34, -1, 0));
-                    (stub != 0).then(() {
+                    executable ::= false;
+                    (stub != 0 && frame != 0).then(() {
                         Range(0, STUB_WORDS).loop((i) { pointer_at(stub + i * 8).to<u64>().write(0, stub_word(i)); });
-                        protected = mprotect(stub, FRAME_BYTES, 5);
+                        executable = mprotect(stub, FRAME_BYTES, 5) == 0;
                     });
-                    (stub == 0 || frame == 0).match({
-                        true  => Ok(Linking.Refused(
-                            "the stub for calls of C functions"
-                        )),
-                        false => Ok(Linking.Ready(Linked(
+                    executable.match({
+                        false => {
+                            (stub != 0).then(() { munmap(stub, FRAME_BYTES); });
+                            (frame != 0).then(
+                                () { munmap(frame, FRAME_BYTES); }
+                            );
+                            Ok(Linking.Refused(
+                                "the stub for calls of C functions"
+                            ))
+                        },
+                        true  => Ok(Linking.Ready(Linked(
                             symbols: symbols,
                             stub: stub,
                             frame: frame

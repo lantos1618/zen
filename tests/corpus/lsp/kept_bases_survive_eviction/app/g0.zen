@@ -1,0 +1,4 @@
+{ l0 } = app.l0
+{ str } = std.text
+
+value = () i32 { l0() }

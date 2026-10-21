@@ -1,0 +1,4 @@
+{ l5 } = app.l5
+{ Range } = std.core
+
+value = () i32 { l5() }

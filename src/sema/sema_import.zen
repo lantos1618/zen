@@ -104,8 +104,8 @@ core_source = (c: Checker, name: str) Res<str> {
 // `A = IoError | AllocError` joins types only when its members name types,
 // so a member naming an unimported standard type would silently become an
 // enum variant. Each such member is reported before any union is classified.
-check_union_imports* = (c :: Checker) Res<AllocError> {
-    Range(0, c.world.count()).loop((h, mi) { c.module_unions(mi).try() });
+check_union_imports* = (c :: Checker, first: usize) Res<AllocError> {
+    Range(first, c.world.count()).loop((h, mi) { c.module_unions(mi).try() });
     Ok;
 }
 

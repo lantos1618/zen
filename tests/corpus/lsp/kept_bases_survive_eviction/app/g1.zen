@@ -1,0 +1,4 @@
+{ l1 } = app.l1
+{ println } = std.io
+
+value = () i32 { l1() }

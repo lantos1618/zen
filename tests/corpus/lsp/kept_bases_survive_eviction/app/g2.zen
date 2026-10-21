@@ -1,0 +1,4 @@
+{ l2 } = app.l2
+{ Alloc } = std.mem
+
+value = () i32 { l2() }

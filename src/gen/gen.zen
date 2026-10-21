@@ -486,6 +486,10 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
                         what: "constants from C headers",
                         function: function.name
                     )); },
+                    Machine(_)      => { found = Ok(AsmRefusal(
+                        what: "SIMD vectors and machine instructions",
+                        function: function.name
+                    )); },
                     NativeLayout(_) => { found = Ok(AsmRefusal(
                         what: "native C record layouts",
                         function: function.name

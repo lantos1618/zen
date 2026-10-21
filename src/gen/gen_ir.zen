@@ -12,6 +12,7 @@
 { str } = std.text
 { Span } = std.source
 { Sys, SysConstant } = gen.gen_sys
+{ MachineCall } = gen.gen_ir_machine
 { Res, None } = std.core
 { Ptr } = std.mem
 
@@ -223,6 +224,9 @@ Instruction* = { Constant: Const
     | VolatileLoad: Load
     | VolatileStore: Store
     | Barrier
+    // A machine primitive (gen_ir_machine): vectors, CPU features and the
+    // capability-gated instructions, rendered by IR-C only.
+    | Machine: MachineCall
     // JavaScript host only: a `js.bind` call, and a suspension until a
     // registered event handler fires (its id into the U32 slot).
     | Host: HostCall

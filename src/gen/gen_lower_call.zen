@@ -27,7 +27,10 @@
 { c_header, c_symbol_override, valid_c_header } = gen.gen_lower_core
 { word, integer, signed, same, float } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
-{ MachineOp, machine_op, machine_refusal } = gen.gen_ir_machine
+{ MachineOp, MachineCall, machine_op, machine_refusal } = gen.gen_ir_machine
+{ Primitive } = sema.sema_prim
+{ const_int } = sema.sema
+{ vector_lanes } = sema.sema_ty
 { Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee } = gen.gen_lower_core
 { DeferEntry, Local } = gen.gen_lower_core
 { member_call, mem_call, sys_call, resolve, to_bound, handle_for_place } = gen.gen_lower_member
@@ -1055,6 +1058,7 @@ source_place = (
 
 real_call* = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
              Res<Value, LowerError> {
+    lo.avx2_boundary(callee, span).try();
     index = lo.enqueue(callee).try();
     args ::= lo.alloc.Vec<usize>();
     callee.f.params.loop((h, i, p) {
@@ -1468,13 +1472,12 @@ intrinsic = (
     span    : Span
 )
             Res<Value, LowerError> {
-    machine = lo.check.primitives.get(callee.owner).match({
-        Ok(p) => machine_op(p.name),
-        None  => None,
-    });
-    machine.match({
-        Ok(op) => lo.machine(id, op, sources, span),
-        None   => lo.library_intrinsic(id, callee, sources, c, span),
+    lo.check.primitives.get(callee.owner).match({
+        Ok(p) => machine_op(p.name).match({
+            Ok(op) => lo.machine(id, op, p, sources, span),
+            None   => lo.library_intrinsic(id, callee, sources, c, span),
+        }),
+        None  => lo.library_intrinsic(id, callee, sources, c, span),
     })
 }
 
@@ -1486,6 +1489,7 @@ machine = (
     lo      :: Lowerer,
     id      : ExprId,
     op      : MachineOp,
+    p       : Primitive,
     sources : Vec<Source>,
     span    : Span
 ) Res<Value, LowerError> {
@@ -1499,7 +1503,145 @@ machine = (
             lo.add(Instruction.Barrier).try();
             lo.unit()
         },
-        _               => Err(unsupported(span, machine_refusal(op))),
+        VolatileLoad    => Err(unsupported(span, machine_refusal(op))),
+        VolatileStore   => Err(unsupported(span, machine_refusal(op))),
+        _               => lo.machine_call(op, p, sources, span),
+    })
+}
+
+// A vector, CPU-feature or capability-gated primitive as one `Machine`
+// instruction, which only IR-C renders. Lane indices are checked here so
+// the trap names the index argument. A capability argument carries no data
+// and is evaluated but not passed.
+machine_call = (
+    lo      :: Lowerer,
+    op      : MachineOp,
+    p       : Primitive,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    kind    = lo.prim_name(p.result);
+    operand = p.params.get(0).match({ Ok(t) => lo.prim_name(t), None => "" });
+    (lo.c_calls && machine_lowered(op, kind, operand)).ensure(unsupported(span, machine_refusal(op))).try();
+    kept     = machine_operands(op, p.params.len);
+    shuffles = op.match({ VectorShuffle => true, VectorShuffle2 => true, _ => false });
+    lanes    = (vector_lanes(kind) == 0).match({ true => 1, false => vector_lanes(kind) });
+    mask     = op.match({ VectorShuffle2 => 2 * lanes - 1, _ => lanes - 1 });
+    args    ::= lo.alloc.Vec<usize>();
+    literal ::= lo.alloc.Vec<usize>();
+    Range(0, p.params.len).loop((i) {
+        ty    = p.params.get(i).ok_or(unsupported(span, "a primitive without its parameter")).try();
+        e     = sources.source_expr(i, span).try();
+        fixed = (shuffles && i + 1 == p.params.len).match({
+            true  => lo.shuffle_pattern(e, lanes, mask, literal).try(),
+            false => false,
+        });
+        (!fixed).then(() {
+            v = lo.expr_as(e, ty).try();
+            (i < kept).then(
+                () { args.add(v.slot).try(LowerError.OutOfMemory); }
+            );
+            lane_index(op).match({
+                true  => (i == 1).then(() {
+                    count = lo.word_const(
+                        Scalar.U64,
+                        vector_lanes(operand).to_i64_bits()
+                    ).try();
+                    lo.bounds(v.slot, count, lo.tree.expr_at(e).span).try();
+                }),
+                false => (),
+            });
+        });
+    });
+    out = lo.temp(p.result).try();
+    lo.add(Instruction.Machine(MachineCall(
+        op: op,
+        name: p.name,
+        kind: kind,
+        operand: operand,
+        out: out.slot,
+        args: args,
+        literal: literal
+    ))).try();
+    Ok(out)
+}
+
+// A shuffle pattern written as an array of integer literals, reduced by
+// `mask` into `literal`; false (and `literal` untouched) for any other
+// pattern, which is then passed as a value.
+shuffle_pattern = (
+    lo      :: Lowerer,
+    e       : ExprId,
+    lanes   : usize,
+    mask    : usize,
+    literal :: Vec<usize>
+) Res<bool, LowerError> {
+    found ::= lo.alloc.Vec<usize>();
+    ok    ::= false;
+    lo.tree.expr_at(e).kind.match({
+        Array(a) => {
+            ok = a.elems.len == lanes;
+            a.elems.loop((x) {
+                lo.check.const_int(x).match({
+                    Ok(raw) => raw.to_usize().match({
+                        Ok(n) => found.add(n.bit_and(
+                            mask
+                        )).try(LowerError.OutOfMemory),
+                        None  => { ok = false; },
+                    }),
+                    None    => { ok = false; },
+                });
+            });
+        },
+        _        => (),
+    });
+    ok.then(
+        () { found.loop((n) { literal.add(n).try(LowerError.OutOfMemory); }); }
+    );
+    Ok(ok)
+}
+
+is_vector_name = (name: str) bool {
+    name.is_in(["u8x16", "u8x32", "u32x4", "u32x8", "u64x2", "u64x4"])
+}
+
+// Which primitives a `Machine` instruction carries: every vector
+// operation, CPU feature tests and the capability-gated instructions.
+// Scalar spellings of the shared names (`bit_xor` on words) are not.
+machine_lowered = (op: MachineOp, kind: str, operand: str) bool {
+    op.match({
+        CpuHas      => true,
+        MulLimbs    => true,
+        SquareLimbs => true,
+        _           => is_vector_name(kind) || is_vector_name(operand),
+    })
+}
+
+lane_index = (op: MachineOp) bool {
+    op.match({ VectorLane => true, VectorWithLane => true, _ => false })
+}
+
+// The data operands an instruction takes; the rest are capabilities.
+machine_operands = (op: MachineOp, all: usize) usize {
+    op.match({
+        AesRound     => 2,
+        AesRoundLast => 2,
+        ClmulLow     => 2,
+        ClmulHigh    => 2,
+        Sha256Msg1   => 2,
+        Sha256Msg2   => 2,
+        Sha256Su0    => 2,
+        Sha512Su0    => 2,
+        Sha256Rnds2  => 3,
+        Sha256H      => 3,
+        Sha256H2     => 3,
+        Sha256Su1    => 3,
+        Sha512H      => 3,
+        Sha512H2     => 3,
+        Sha512Su1    => 3,
+        MulLimbs     => 2,
+        SquareLimbs  => 1,
+        _            => all,
     })
 }
 
@@ -2337,6 +2479,40 @@ pointee = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
             nowhere(),
             "a pointer operation on a non-pointer"
         )),
+    })
+}
+
+// A call exchanging a 32-byte vector must not cross between AVX2 and
+// baseline code: x86 passes one in a YMM register only where AVX is
+// enabled, so both sides hold the Avx2 capability or neither does.
+avx2_boundary = (lo :: Lowerer, callee: Callee, span: Span) Res<LowerError> {
+    wide  ::= wide_vector(lo.prim_name(lo.result_type(callee).try()));
+    there ::= false;
+    Range(0, callee.f.params.len).loop((i) {
+        ty    = lo.param_type(callee, i).try();
+        wide  = wide || wide_vector(lo.prim_name(ty));
+        there = there || lo.is_avx2(ty);
+    });
+    here ::= false;
+    wide.then(() {
+        lo.here().scope.when_ok((caller) {
+            Range(0, caller.f.params.len).loop((i) {
+                here = here || lo.is_avx2(lo.param_type(caller, i).try());
+            });
+        });
+    });
+    (!(wide && there != here)).ensure(unsupported(
+        span,
+        "a 32-byte vector passed between AVX2 and baseline code"
+    ))
+}
+
+wide_vector = (name: str) bool { name.is_in(["u8x32", "u32x8", "u64x4"]) }
+
+is_avx2 = (lo :: Lowerer, ty: TyId) bool {
+    lo.check.types.at(ty).match({
+        Named(n) => n.name.eq("Avx2") && lo.check.world.module_name(n.decl).eq("std.simd"),
+        _        => false,
     })
 }
 

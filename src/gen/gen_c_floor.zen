@@ -1,0 +1,693 @@
+// The C machine floor: the typedefs, CPU detection and instruction helpers
+// generated C needs once a program uses u128, vectors, carries or the
+// capability-gated instructions of std.simd. Shared by the C renderers.
+
+{ Alloc, AllocError } = std.mem
+{ String, str } = std.text
+{ Res, Ok } = std.core
+{ Emit } = gen.gen_emit
+
+comment = (out :: Emit, text: str) Res<AllocError> {
+    out.bytes("/* ").try();
+    out.bytes(text).try();
+    out.say(" */").try();
+}
+
+machine_floor* = (alloc: Alloc, out :: Emit) Res<AllocError> {
+    comment(out, "machine floor: wide integers and vectors").try();
+    out.say("#if defined(__SIZEOF_INT128__)").try();
+    out.say("__extension__ typedef unsigned __int128 zg_u128;").try();
+    out.say("#else").try();
+    out.say(
+        "#error \"Zen u128 requires a C compiler with unsigned __int128\""
+    ).try();
+    out.say("#endif").try();
+    out.say("#define ZG_U128_MAX (~(zg_u128)0)").try();
+    out.say("#if !defined(__GNUC__)").try();
+    out.say(
+        "#error \"Zen vectors require GCC or Clang vector extensions\""
+    ).try();
+    out.say("#endif").try();
+    // Vector values may live in arena storage, whose alignment is 16.
+    out.say("typedef uint8_t zg_u8x16 __attribute__((vector_size(16)));").try();
+    out.say(
+        "typedef uint8_t zg_u8x32 __attribute__((vector_size(32), aligned(16)));"
+    ).try();
+    out.say(
+        "typedef uint32_t zg_u32x4 __attribute__((vector_size(16)));"
+    ).try();
+    out.say(
+        "typedef uint32_t zg_u32x8 __attribute__((vector_size(32), aligned(16)));"
+    ).try();
+    out.say(
+        "typedef uint64_t zg_u64x2 __attribute__((vector_size(16)));"
+    ).try();
+    out.say(
+        "typedef uint64_t zg_u64x4 __attribute__((vector_size(32), aligned(16)));"
+    ).try();
+    // A ctgrind build (-DZEN_CT_GRIND) tells valgrind's memcheck where the
+    // program declassifies, as the asm marker tells tools/ct: the value is
+    // marked defined, so only undeclared uses of secrets are reported.
+    out.say("#if defined(ZEN_CT_GRIND)").try();
+    out.say("#include <valgrind/memcheck.h>").try();
+    out.say(
+        "#define ZG_CT_PUBLIC(x) ((void)VALGRIND_MAKE_MEM_DEFINED(&(x), sizeof(x)))"
+    ).try();
+    out.say("#else").try();
+    out.say("#define ZG_CT_PUBLIC(x) ((void)0)").try();
+    out.say("#endif").try();
+    // Full products of the low 32 bits of each 64-bit lane: PMULUDQ on x86
+    // (matched from the widening form), UMULL on arm64 (spelled directly:
+    // the widening form is scalarized when an operand is a splat).
+    out.say("#if defined(__aarch64__)").try();
+    out.say(
+        "#define ZG_MUL_LOW32_2(a, b) ((zg_u64x2)vmull_u32(vmovn_u64((uint64x2_t)(a)), vmovn_u64((uint64x2_t)(b))))"
+    ).try();
+    out.say(
+        "#define ZG_MUL_LOW32_4(a, b) __builtin_shufflevector(ZG_MUL_LOW32_2(__builtin_shufflevector(a, a, 0, 1), __builtin_shufflevector(b, b, 0, 1)), ZG_MUL_LOW32_2(__builtin_shufflevector(a, a, 2, 3), __builtin_shufflevector(b, b, 2, 3)), 0, 1, 2, 3)"
+    ).try();
+    out.say("#else").try();
+    out.say(
+        "#define ZG_MUL_LOW32_2(a, b) (__builtin_convertvector(__builtin_shufflevector((zg_u32x4)(a), (zg_u32x4)(a), 0, 2), zg_u64x2) * __builtin_convertvector(__builtin_shufflevector((zg_u32x4)(b), (zg_u32x4)(b), 0, 2), zg_u64x2))"
+    ).try();
+    out.say(
+        "#define ZG_MUL_LOW32_4(a, b) (__builtin_convertvector(__builtin_shufflevector((zg_u32x8)(a), (zg_u32x8)(a), 0, 2, 4, 6), zg_u64x4) * __builtin_convertvector(__builtin_shufflevector((zg_u32x8)(b), (zg_u32x8)(b), 0, 2, 4, 6), zg_u64x4))"
+    ).try();
+    out.say("#endif").try();
+    // Rotation of u32 lanes by 16: a 16-bit lane swap is one REV32 on
+    // arm64, while x86 lowers the shift form to one PSHUFB with SSSE3.
+    out.say("#if defined(__aarch64__)").try();
+    out.say(
+        "#define ZG_ROT16_U32X4(v) ((zg_u32x4)__builtin_shufflevector((zg_u16x8)(v), (zg_u16x8)(v), 1, 0, 3, 2, 5, 4, 7, 6))"
+    ).try();
+    out.say(
+        "#define ZG_ROT16_U32X8(v) ((zg_u32x8)__builtin_shufflevector((zg_u16x16)(v), (zg_u16x16)(v), 1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14))"
+    ).try();
+    out.say("#else").try();
+    out.say("#define ZG_ROT16_U32X4(v) (((v) << 16) | ((v) >> 16))").try();
+    out.say("#define ZG_ROT16_U32X8(v) (((v) << 16) | ((v) >> 16))").try();
+    out.say("#endif").try();
+    // Lowering-internal views for 16-bit lane swaps.
+    out.say(
+        "typedef uint16_t zg_u16x8 __attribute__((vector_size(16)));"
+    ).try();
+    out.say(
+        "typedef uint16_t zg_u16x16 __attribute__((vector_size(32), aligned(16)));"
+    ).try();
+    // Clang and GCC 12+ take constant indices; older GCC takes a mask vector.
+    out.say("#if defined(__clang__) || __GNUC__ >= 12").try();
+    out.say(
+        "#define ZG_SHUFFLE(V, a, b, ...) __builtin_shufflevector(a, b, __VA_ARGS__)"
+    ).try();
+    out.say("#else").try();
+    out.say(
+        "#define ZG_SHUFFLE(V, a, b, ...) __builtin_shuffle(a, b, (V){__VA_ARGS__})"
+    ).try();
+    out.say("#endif").try();
+    out.line().try();
+    write_features(out).try();
+    write_carries(out).try();
+    write_sha(alloc, out).try();
+}
+
+// Runtime CPU detection and the instructions capabilities unlock. x86 asks
+// the compiler runtime (cpuid, including OS AVX state) and reads CPUID leaf
+// 7 for the SHA extensions, which not every compiler's
+// __builtin_cpu_supports names; arm64 Linux reads AT_HWCAP and macOS reads
+// hw.optional sysctls. NEON is baseline on arm64. A capability cannot be
+// obtained on another architecture, so there the instruction helpers are
+// unreachable and abort.
+write_features = (out :: Emit) Res<AllocError> {
+    comment(out, "machine floor: CPU features").try();
+    out.say("#if defined(__x86_64__) || defined(__i386__)").try();
+    out.say("#define ZG_X86 1").try();
+    out.say("#include <immintrin.h>").try();
+    out.say("#include <cpuid.h>").try();
+    out.say("#elif defined(__aarch64__)").try();
+    out.say("#include <arm_neon.h>").try();
+    out.say("#if defined(__APPLE__)").try();
+    out.say("#include <sys/sysctl.h>").try();
+    out.say("#elif defined(__linux__)").try();
+    out.say("#include <sys/auxv.h>").try();
+    out.say("#endif").try();
+    out.say("#if defined(__clang__)").try();
+    out.say("#define ZG_ARM_CRYPTO __attribute__((target(\"aes\")))").try();
+    out.say("#define ZG_ARM_SHA2 __attribute__((target(\"sha2\")))").try();
+    out.say(
+        "#define ZG_ARM_SHA512 __attribute__((target(\"sha2,sha3\")))"
+    ).try();
+    out.say("#else").try();
+    out.say("#define ZG_ARM_CRYPTO __attribute__((target(\"+crypto\")))").try();
+    out.say("#define ZG_ARM_SHA2 __attribute__((target(\"+sha2\")))").try();
+    out.say("#define ZG_ARM_SHA512 __attribute__((target(\"+sha3\")))").try();
+    out.say("#endif").try();
+    out.say("#endif").try();
+    out.say("#if defined(ZG_X86)").try();
+    out.say(
+        "static int zg_cpu_has(int avx2, int ssse3, int aes, int clmul) {"
+    ).try();
+    out.say("    __builtin_cpu_init();").try();
+    out.say("    if (avx2 && !__builtin_cpu_supports(\"avx2\")) return 0;").try();
+    out.say(
+        "    if ((ssse3 || aes || clmul) && !__builtin_cpu_supports(\"ssse3\")) return 0;"
+    ).try();
+    out.say(
+        "    if ((aes || clmul) && !__builtin_cpu_supports(\"sse4.1\")) return 0;"
+    ).try();
+    out.say("    if (aes && !__builtin_cpu_supports(\"aes\")) return 0;").try();
+    out.say(
+        "    if (clmul && !__builtin_cpu_supports(\"pclmul\")) return 0;"
+    ).try();
+    out.say("    return 1;").try();
+    out.say("}").try();
+    out.say("#define zg_cpu_probe_avx2() zg_cpu_has(1, 0, 0, 0)").try();
+    out.say("#define zg_cpu_probe_ssse3() zg_cpu_has(0, 1, 0, 0)").try();
+    out.say(
+        "#define zg_cpu_probe_bmi2() (__builtin_cpu_supports(\"bmi\") && __builtin_cpu_supports(\"bmi2\"))"
+    ).try();
+    out.say("#define zg_cpu_probe_aes() zg_cpu_has(0, 0, 1, 0)").try();
+    out.say("#define zg_cpu_probe_clmul() zg_cpu_has(0, 0, 0, 1)").try();
+    out.say("#define zg_cpu_probe_neon() 0").try();
+    out.say("static int zg_cpu_probe_sha_ni(void) {").try();
+    out.say("    unsigned int a, b, c, d;").try();
+    out.say("    __builtin_cpu_init();").try();
+    out.say(
+        "    if (!__builtin_cpu_supports(\"ssse3\") || !__builtin_cpu_supports(\"sse4.1\")) return 0;"
+    ).try();
+    out.say("    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;").try();
+    out.say("    return (b >> 29) & 1;").try();
+    out.say("}").try();
+    out.say("static int zg_cpu_probe_adx(void) {").try();
+    out.say("    unsigned int a, b, c, d;").try();
+    out.say("    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;").try();
+    out.say("    return (b >> 19) & 1;").try();
+    out.say("}").try();
+    out.say("#define zg_cpu_probe_arm_sha2() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha512() 0").try();
+    out.say(
+        "static inline __attribute__((target(\"aes,ssse3,sse4.1\"))) zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) {"
+    ).try();
+    out.say(
+        "    return (zg_u8x16)_mm_aesenc_si128((__m128i)s, (__m128i)k);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"aes,ssse3,sse4.1\"))) zg_u8x16 zg_aes_round_last(zg_u8x16 s, zg_u8x16 k) {"
+    ).try();
+    out.say(
+        "    return (zg_u8x16)_mm_aesenclast_si128((__m128i)s, (__m128i)k);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"pclmul,ssse3,sse4.1\"))) zg_u64x2 zg_clmul_low(zg_u64x2 a, zg_u64x2 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u64x2)_mm_clmulepi64_si128((__m128i)a, (__m128i)b, 0x00);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"pclmul,ssse3,sse4.1\"))) zg_u64x2 zg_clmul_high(zg_u64x2 a, zg_u64x2 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u64x2)_mm_clmulepi64_si128((__m128i)a, (__m128i)b, 0x11);"
+    ).try();
+    out.say("}").try();
+    out.say("#elif defined(__aarch64__)").try();
+    out.say("#if defined(__APPLE__)").try();
+    out.say("static int zg_cpu_sysctl(const char *name) {").try();
+    out.say("    int value = 0;").try();
+    out.say("    size_t size = sizeof value;").try();
+    out.say(
+        "    return sysctlbyname(name, &value, &size, NULL, 0) == 0 && value != 0;"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "#define zg_cpu_probe_aes() zg_cpu_sysctl(\"hw.optional.arm.FEAT_AES\")"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_clmul() zg_cpu_sysctl(\"hw.optional.arm.FEAT_PMULL\")"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_arm_sha2() zg_cpu_sysctl(\"hw.optional.arm.FEAT_SHA256\")"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_arm_sha512() zg_cpu_sysctl(\"hw.optional.arm.FEAT_SHA512\")"
+    ).try();
+    out.say("#elif defined(__linux__)").try();
+    out.say(
+        "#define zg_cpu_probe_aes() ((getauxval(AT_HWCAP) & (1UL << 3)) != 0)"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_clmul() ((getauxval(AT_HWCAP) & (1UL << 4)) != 0)"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_arm_sha2() ((getauxval(AT_HWCAP) & (1UL << 6)) != 0)"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_arm_sha512() ((getauxval(AT_HWCAP) & (1UL << 21)) != 0)"
+    ).try();
+    out.say("#else").try();
+    out.say("#define zg_cpu_probe_aes() 0").try();
+    out.say("#define zg_cpu_probe_clmul() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha2() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha512() 0").try();
+    out.say("#endif").try();
+    out.say("#define zg_cpu_probe_avx2() 0").try();
+    out.say("#define zg_cpu_probe_ssse3() 0").try();
+    out.say("#define zg_cpu_probe_bmi2() 0").try();
+    out.say("#define zg_cpu_probe_adx() 0").try();
+    out.say("#define zg_cpu_probe_neon() 1").try();
+    out.say("#define zg_cpu_probe_sha_ni() 0").try();
+    out.say(
+        "static inline ZG_ARM_CRYPTO zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) {"
+    ).try();
+    out.say(
+        "    return (zg_u8x16)vaesmcq_u8(vaeseq_u8((uint8x16_t)s, vdupq_n_u8(0))) ^ k;"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline ZG_ARM_CRYPTO zg_u8x16 zg_aes_round_last(zg_u8x16 s, zg_u8x16 k) {"
+    ).try();
+    out.say(
+        "    return (zg_u8x16)vaeseq_u8((uint8x16_t)s, vdupq_n_u8(0)) ^ k;"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline ZG_ARM_CRYPTO zg_u64x2 zg_clmul_low(zg_u64x2 a, zg_u64x2 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u64x2)vmull_p64((poly64_t)a[0], (poly64_t)b[0]);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline ZG_ARM_CRYPTO zg_u64x2 zg_clmul_high(zg_u64x2 a, zg_u64x2 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u64x2)vmull_high_p64((poly64x2_t)a, (poly64x2_t)b);"
+    ).try();
+    out.say("}").try();
+    out.say("#else").try();
+    out.say("#define zg_cpu_probe_avx2() 0").try();
+    out.say("#define zg_cpu_probe_ssse3() 0").try();
+    out.say("#define zg_cpu_probe_bmi2() 0").try();
+    out.say("#define zg_cpu_probe_adx() 0").try();
+    out.say("#define zg_cpu_probe_aes() 0").try();
+    out.say("#define zg_cpu_probe_clmul() 0").try();
+    out.say("#define zg_cpu_probe_neon() 0").try();
+    out.say("#define zg_cpu_probe_sha_ni() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha2() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha512() 0").try();
+    out.say(
+        "static zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) { (void)s; (void)k; abort(); }"
+    ).try();
+    out.say(
+        "static zg_u8x16 zg_aes_round_last(zg_u8x16 s, zg_u8x16 k) { (void)s; (void)k; abort(); }"
+    ).try();
+    out.say(
+        "static zg_u64x2 zg_clmul_low(zg_u64x2 a, zg_u64x2 b) { (void)a; (void)b; abort(); }"
+    ).try();
+    out.say(
+        "static zg_u64x2 zg_clmul_high(zg_u64x2 a, zg_u64x2 b) { (void)a; (void)b; abort(); }"
+    ).try();
+    out.say("#endif").try();
+    // Detection runs once per feature; sysctl and cpuid are not free.
+    // ZEN_CPU_DISABLE lists features (avx2, ssse3, bmi2, adx, aes, clmul,
+    // neon, sha, sha512, or all) that detection reports absent, as OPENSSL_ia32cap
+    // masks OpenSSL's dispatch: every portable path can be exercised on one
+    // machine. It can only remove features, never claim one the CPU lacks.
+    // `sha` masks the SHA-256 instructions of both architectures.
+    out.say(
+        "static __attribute__((unused)) int zg_cpu_masked(const char *feature) {"
+    ).try();
+    out.say("    const char *list = getenv(\"ZEN_CPU_DISABLE\");").try();
+    out.say("    size_t n = strlen(feature);").try();
+    out.say("    while (list != NULL && *list != 0) {").try();
+    out.say("        const char *end = strchr(list, ',');").try();
+    out.say(
+        "        size_t len = end != NULL ? (size_t)(end - list) : strlen(list);"
+    ).try();
+    out.say(
+        "        if ((len == n && strncmp(list, feature, n) == 0) || (len == 3 && strncmp(list, \"all\", 3) == 0)) return 1;"
+    ).try();
+    out.say("        list = end != NULL ? end + 1 : NULL;").try();
+    out.say("    }").try();
+    out.say("    return 0;").try();
+    out.say("}").try();
+    out.say(
+        "#define ZG_CPU_CACHED(name, feature, probe) static __attribute__((unused)) int name(void) { \\"
+    ).try();
+    out.say(
+        "    static int known; int v = __atomic_load_n(&known, __ATOMIC_RELAXED); \\"
+    ).try();
+    out.say(
+        "    if (v == 0) { v = (!zg_cpu_masked(feature) && (probe)) ? 2 : 1; __atomic_store_n(&known, v, __ATOMIC_RELAXED); } \\"
+    ).try();
+    out.say("    return v == 2; }").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_avx2, \"avx2\", zg_cpu_probe_avx2())").try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_ssse3, \"ssse3\", zg_cpu_probe_ssse3())"
+    ).try();
+    out.say("ZG_CPU_CACHED(zg_cpu_bmi2, \"bmi2\", zg_cpu_probe_bmi2())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_adx, \"adx\", zg_cpu_probe_adx())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_aes, \"aes\", zg_cpu_probe_aes())").try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_clmul, \"clmul\", zg_cpu_probe_clmul())"
+    ).try();
+    out.say("ZG_CPU_CACHED(zg_cpu_neon, \"neon\", zg_cpu_probe_neon())").try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_sha_ni, \"sha\", zg_cpu_probe_sha_ni())"
+    ).try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_arm_sha2, \"sha\", zg_cpu_probe_arm_sha2())"
+    ).try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_arm_sha512, \"sha512\", zg_cpu_probe_arm_sha512())"
+    ).try();
+    out.line().try();
+}
+
+// Add with carry and subtract with borrow, and the two-chain multi-limb
+// products. The carry helpers use Clang's (and GCC 14's) __builtin_addcll
+// family, whose chains Clang keeps in the flags; older GCC uses the x86
+// _addcarry_u64 intrinsics, and anything else u128 arithmetic. Only the low
+// bit of an incoming carry is read.
+//
+// The products follow OpenSSL's x25519_fe64_mul and x25519_fe64_sqr
+// (crypto/ec/asm/x25519-x86_64.pl, OpenSSL 3.5.4, Apache-2.0): MULX leaves
+// the flags alone, so the low halves of the partial products accumulate on
+// CF through ADCX while the high halves accumulate on OF through ADOX. No
+// branch, and every memory operand is a fixed offset from a factor's
+// address. Both flags are clear after each row, so mul_limbs is two asm
+// blocks split between the second and third rows: each needs at most
+// twelve registers, which leaves room for the frame pointer and for -O0.
+// Elsewhere the Adx capability is never detected and the helpers abort.
+write_carries = (out :: Emit) Res<AllocError> {
+    comment(out, "machine floor: carries and multi-limb products").try();
+    out.say("#if defined(__has_builtin)").try();
+    out.say(
+        "#if __has_builtin(__builtin_addcll) && __has_builtin(__builtin_subcll)"
+    ).try();
+    out.say("#define ZG_ADDC_BUILTIN 1").try();
+    out.say("#endif").try();
+    out.say("#endif").try();
+    out.say(
+        "static inline uint64_t zg_add_carry(uint64_t a, uint64_t b, uint64_t c, uint64_t *carry) {"
+    ).try();
+    out.say("#if defined(ZG_ADDC_BUILTIN)").try();
+    out.say("    unsigned long long out;").try();
+    out.say("    uint64_t s = __builtin_addcll(a, b, c & 1, &out);").try();
+    out.say("    *carry = out;").try();
+    out.say("    return s;").try();
+    out.say("#elif defined(__x86_64__)").try();
+    out.say("    unsigned long long s;").try();
+    out.say("    *carry = _addcarry_u64((unsigned char)(c & 1), a, b, &s);").try();
+    out.say("    return s;").try();
+    out.say("#else").try();
+    out.say("    zg_u128 t = (zg_u128)a + b + (c & 1);").try();
+    out.say("    *carry = (uint64_t)(t >> 64);").try();
+    out.say("    return (uint64_t)t;").try();
+    out.say("#endif").try();
+    out.say("}").try();
+    out.say(
+        "static inline uint64_t zg_sub_borrow(uint64_t a, uint64_t b, uint64_t c, uint64_t *borrow) {"
+    ).try();
+    out.say("#if defined(ZG_ADDC_BUILTIN)").try();
+    out.say("    unsigned long long out;").try();
+    out.say("    uint64_t s = __builtin_subcll(a, b, c & 1, &out);").try();
+    out.say("    *borrow = out;").try();
+    out.say("    return s;").try();
+    out.say("#elif defined(__x86_64__)").try();
+    out.say("    unsigned long long s;").try();
+    out.say(
+        "    *borrow = _subborrow_u64((unsigned char)(c & 1), a, b, &s);"
+    ).try();
+    out.say("    return s;").try();
+    out.say("#else").try();
+    out.say("    zg_u128 t = (zg_u128)a - b - (c & 1);").try();
+    out.say("    *borrow = (uint64_t)(t >> 64) & 1;").try();
+    out.say("    return (uint64_t)t;").try();
+    out.say("#endif").try();
+    out.say("}").try();
+    out.say("#if defined(__x86_64__)").try();
+    out.say(
+        "static inline __attribute__((always_inline)) void zg_mul_limbs(const uint64_t *a, const uint64_t *b, uint64_t *r) {"
+    ).try();
+    out.say("    uint64_t x0, x1, x2, x3, x4, x5, x6, x7, t0, t1, z;").try();
+    out.say("    __asm__(").try();
+    out.say("        \"movq 0(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"mulx 0(%[b]), %[x0], %[t0]\\n\\t\"").try();
+    out.say("        \"xorl %k[z], %k[z]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[b]), %[x1], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x1]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[b]), %[x2], %[t0]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x2]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[b]), %[x3], %[x4]\\n\\t\"").try();
+    out.say("        \"movq 8(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 0(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x1]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x2]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x2]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x3]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[b]), %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x5]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x5]\\n\\t\"").try();
+    out.say(
+        "        : [x0] \"=&r\"(x0), [x1] \"=&r\"(x1), [x2] \"=&r\"(x2), [x3] \"=&r\"(x3),"
+    ).try();
+    out.say(
+        "          [x4] \"=&r\"(x4), [x5] \"=&r\"(x5), [t0] \"=&r\"(t0), [t1] \"=&r\"(t1), [z] \"=&r\"(z)"
+    ).try();
+    out.say("        : [a] \"r\"(a), \"m\"(*(const uint64_t (*)[4])a),").try();
+    out.say("          [b] \"r\"(b), \"m\"(*(const uint64_t (*)[4])b)").try();
+    out.say("        : \"cc\", \"rdx\");").try();
+    out.say("    __asm__(").try();
+    out.say("        \"movq 16(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"xorl %k[z], %k[z]\\n\\t\"").try();
+    out.say("        \"mulx 0(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x2]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x3]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x5]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[b]), %[t0], %[x6]\\n\\t\"").try();
+    out.say("        \"movq 24(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x6]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x6]\\n\\t\"").try();
+    out.say("        \"mulx 0(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x5]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x6]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[b]), %[t0], %[x7]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x6]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x7]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x7]\\n\\t\"").try();
+    out.say(
+        "        : [x2] \"+&r\"(x2), [x3] \"+&r\"(x3), [x4] \"+&r\"(x4), [x5] \"+&r\"(x5),"
+    ).try();
+    out.say(
+        "          [x6] \"=&r\"(x6), [x7] \"=&r\"(x7), [t0] \"=&r\"(t0), [t1] \"=&r\"(t1), [z] \"=&r\"(z)"
+    ).try();
+    out.say("        : [a] \"r\"(a), \"m\"(*(const uint64_t (*)[4])a),").try();
+    out.say("          [b] \"r\"(b), \"m\"(*(const uint64_t (*)[4])b)").try();
+    out.say("        : \"cc\", \"rdx\");").try();
+    out.say("    r[0] = x0; r[1] = x1; r[2] = x2; r[3] = x3;").try();
+    out.say("    r[4] = x4; r[5] = x5; r[6] = x6; r[7] = x7;").try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((always_inline)) void zg_square_limbs(const uint64_t *a, uint64_t *r) {"
+    ).try();
+    out.say("    uint64_t x0, x1, x2, x3, x4, x5, x6, x7, t0, t1, z;").try();
+    out.say("    __asm__(").try();
+    out.say("        \"movq 0(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"mulx %%rdx, %[x0], %[x7]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[a]), %[x1], %[t0]\\n\\t\"").try();
+    out.say("        \"xorl %k[z], %k[z]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[a]), %[x2], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x2]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[a]), %[x3], %[x4]\\n\\t\"").try();
+    out.say("        \"movq 8(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[a]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[a]), %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"movq 16(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x5]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[a]), %[t0], %[x6]\\n\\t\"").try();
+    out.say("        \"movq 8(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x6]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x6]\\n\\t\"").try();
+    out.say("        \"adcx %[x1], %[x1]\\n\\t\"").try();
+    out.say("        \"adox %[x7], %[x1]\\n\\t\"").try();
+    out.say("        \"adcx %[x2], %[x2]\\n\\t\"").try();
+    out.say("        \"mulx %%rdx, %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"movq 16(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[x3], %[x3]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x2]\\n\\t\"").try();
+    out.say("        \"adcx %[x4], %[x4]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x3]\\n\\t\"").try();
+    out.say("        \"mulx %%rdx, %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"movq 24(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[x5], %[x5]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adcx %[x6], %[x6]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x5]\\n\\t\"").try();
+    out.say("        \"mulx %%rdx, %[t0], %[x7]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x6]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x7]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x7]\\n\\t\"").try();
+    out.say(
+        "        : [x0] \"=&r\"(x0), [x1] \"=&r\"(x1), [x2] \"=&r\"(x2), [x3] \"=&r\"(x3),"
+    ).try();
+    out.say(
+        "          [x4] \"=&r\"(x4), [x5] \"=&r\"(x5), [x6] \"=&r\"(x6), [x7] \"=&r\"(x7),"
+    ).try();
+    out.say("          [t0] \"=&r\"(t0), [t1] \"=&r\"(t1), [z] \"=&r\"(z)").try();
+    out.say("        : [a] \"r\"(a), \"m\"(*(const uint64_t (*)[4])a)").try();
+    out.say("        : \"cc\", \"rdx\");").try();
+    out.say("    r[0] = x0; r[1] = x1; r[2] = x2; r[3] = x3;").try();
+    out.say("    r[4] = x4; r[5] = x5; r[6] = x6; r[7] = x7;").try();
+    out.say("}").try();
+    out.say("#else").try();
+    out.say(
+        "static inline void zg_mul_limbs(const uint64_t *a, const uint64_t *b, uint64_t *r) { (void)a; (void)b; (void)r; abort(); }"
+    ).try();
+    out.say(
+        "static inline void zg_square_limbs(const uint64_t *a, uint64_t *r) { (void)a; (void)r; abort(); }"
+    ).try();
+    out.say("#endif").try();
+    out.line().try();
+}
+
+// The SHA instructions. Each architecture implements its own set; the other
+// architecture's set is unreachable there, since its capability is never
+// detected, and aborts.
+write_sha = (alloc: Alloc, out :: Emit) Res<AllocError> {
+    comment(out, "machine floor: SHA instructions").try();
+    out.say("#if defined(ZG_X86)").try();
+    write_x86_sha(out).try();
+    sha_stubs(alloc, out, false, true).try();
+    out.say("#elif defined(__aarch64__)").try();
+    sha_stubs(alloc, out, true, false).try();
+    write_arm_sha(out).try();
+    out.say("#else").try();
+    sha_stubs(alloc, out, true, true).try();
+    out.say("#endif").try();
+    out.line().try();
+}
+
+write_x86_sha = (out :: Emit) Res<AllocError> {
+    out.say(
+        "static inline __attribute__((target(\"sha,ssse3,sse4.1\"))) zg_u32x4 zg_sha256_rnds2(zg_u32x4 cdgh, zg_u32x4 abef, zg_u32x4 wk) {"
+    ).try();
+    out.say(
+        "    return (zg_u32x4)_mm_sha256rnds2_epu32((__m128i)cdgh, (__m128i)abef, (__m128i)wk);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"sha,ssse3,sse4.1\"))) zg_u32x4 zg_sha256_msg1(zg_u32x4 a, zg_u32x4 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u32x4)_mm_sha256msg1_epu32((__m128i)a, (__m128i)b);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"sha,ssse3,sse4.1\"))) zg_u32x4 zg_sha256_msg2(zg_u32x4 a, zg_u32x4 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u32x4)_mm_sha256msg2_epu32((__m128i)a, (__m128i)b);"
+    ).try();
+    out.say("}").try();
+}
+
+// ACLE intrinsics in the instruction's operand order: the destination's
+// incoming value first.
+write_arm_sha = (out :: Emit) Res<AllocError> {
+    out.say(
+        "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256h(zg_u32x4 a, zg_u32x4 b, zg_u32x4 c) { return (zg_u32x4)vsha256hq_u32((uint32x4_t)a, (uint32x4_t)b, (uint32x4_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256h2(zg_u32x4 a, zg_u32x4 b, zg_u32x4 c) { return (zg_u32x4)vsha256h2q_u32((uint32x4_t)a, (uint32x4_t)b, (uint32x4_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256su0(zg_u32x4 a, zg_u32x4 b) { return (zg_u32x4)vsha256su0q_u32((uint32x4_t)a, (uint32x4_t)b); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256su1(zg_u32x4 a, zg_u32x4 b, zg_u32x4 c) { return (zg_u32x4)vsha256su1q_u32((uint32x4_t)a, (uint32x4_t)b, (uint32x4_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512h(zg_u64x2 a, zg_u64x2 b, zg_u64x2 c) { return (zg_u64x2)vsha512hq_u64((uint64x2_t)a, (uint64x2_t)b, (uint64x2_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512h2(zg_u64x2 a, zg_u64x2 b, zg_u64x2 c) { return (zg_u64x2)vsha512h2q_u64((uint64x2_t)a, (uint64x2_t)b, (uint64x2_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512su0(zg_u64x2 a, zg_u64x2 b) { return (zg_u64x2)vsha512su0q_u64((uint64x2_t)a, (uint64x2_t)b); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512su1(zg_u64x2 a, zg_u64x2 b, zg_u64x2 c) { return (zg_u64x2)vsha512su1q_u64((uint64x2_t)a, (uint64x2_t)b, (uint64x2_t)c); }"
+    ).try();
+}
+
+// Aborting definitions of the x86 set, the arm64 set, or both.
+sha_stubs = (alloc: Alloc, out :: Emit, x86: bool, arm: bool)
+            Res<AllocError> {
+    x86.then(() {
+        sha_stub(alloc, out, "sha256_rnds2", "u32x4", 3).try();
+        sha_stub(alloc, out, "sha256_msg1", "u32x4", 2).try();
+        sha_stub(alloc, out, "sha256_msg2", "u32x4", 2).try();
+    });
+    arm.then(() {
+        sha_stub(alloc, out, "sha256h", "u32x4", 3).try();
+        sha_stub(alloc, out, "sha256h2", "u32x4", 3).try();
+        sha_stub(alloc, out, "sha256su0", "u32x4", 2).try();
+        sha_stub(alloc, out, "sha256su1", "u32x4", 3).try();
+        sha_stub(alloc, out, "sha512h", "u64x2", 3).try();
+        sha_stub(alloc, out, "sha512h2", "u64x2", 3).try();
+        sha_stub(alloc, out, "sha512su0", "u64x2", 2).try();
+        sha_stub(alloc, out, "sha512su1", "u64x2", 3).try();
+    });
+    Ok
+}
+
+sha_stub = (alloc: Alloc, out :: Emit, name: str, v: str, arity: usize)
+           Res<AllocError> {
+    line ::= alloc.String().try();
+    (arity == 3).match({
+        true  => line.fmt(
+            "static zg_{} zg_{}(zg_{} a, zg_{} b, zg_{} c) { (void)a; (void)b; (void)c; abort(); }",
+            v,
+            name,
+            v,
+            v,
+            v
+        ),
+        false => line.fmt(
+            "static zg_{} zg_{}(zg_{} a, zg_{} b) { (void)a; (void)b; abort(); }",
+            v,
+            name,
+            v,
+            v
+        ),
+    }).try();
+    out.say(line.view())
+}

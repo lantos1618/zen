@@ -2682,7 +2682,7 @@ Lowerer* = {
         })
     }
 
-    bounds = (self :: @Self, index: usize, count: usize, span: Span) Res<LowerError> {
+    bounds* = (self :: @Self, index: usize, count: usize, span: Span) Res<LowerError> {
         inside = self.slot_of(Scalar.Bool).try();
         self.add(Instruction.BinaryValue(Binary(
             out: inside,

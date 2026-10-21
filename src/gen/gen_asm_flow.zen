@@ -102,6 +102,10 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<AllocError> {
             Ok
         },
         NativeConst(_)       => Ok,
+        Machine(call)        => {
+            call.args.loop((slot) { out.add(slot).try(); });
+            Ok
+        },
         NativeLayout(_)      => Ok,
         NativeClear(_)       => Ok,
     })
@@ -135,6 +139,7 @@ written* = (instruction: Instruction) Res<usize> {
         Wait(slot)          => Ok(slot),
         Foreign(call)       => Ok(call.out),
         NativeConst(value)  => Ok(value.out),
+        Machine(call)       => Ok(call.out),
         NativeLayout(value) => Ok(value.out),
         NativeClear(slot)   => Ok(slot),
         // Listed one by one, without a default: an instruction added to the

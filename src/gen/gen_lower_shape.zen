@@ -73,6 +73,13 @@ prim_class* = (name: str) Res<Scalar> {
         "i64"         => Ok(Scalar.I64),
         "u64"         => Ok(Scalar.U64),
         "u128"        => Ok(Scalar.U128),
+        // Vector values may live in arena storage, aligned to 16.
+        "u8x16"       => Ok(Scalar.Block(Layout(size: 16, align: 16))),
+        "u32x4"       => Ok(Scalar.Block(Layout(size: 16, align: 16))),
+        "u64x2"       => Ok(Scalar.Block(Layout(size: 16, align: 16))),
+        "u8x32"       => Ok(Scalar.Block(Layout(size: 32, align: 16))),
+        "u32x8"       => Ok(Scalar.Block(Layout(size: 32, align: 16))),
+        "u64x4"       => Ok(Scalar.Block(Layout(size: 32, align: 16))),
         "usize"       => Ok(Scalar.U64),
         "bool"        => Ok(Scalar.Bool),
         "f64"         => Ok(Scalar.F64),

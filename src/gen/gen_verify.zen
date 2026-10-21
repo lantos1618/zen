@@ -247,6 +247,11 @@ Check = {
                 integer(out).ensure(self.fault(IrReason.Type))
             },
             NativeLayout(value)  => self.expect(value.out, Scalar.U64),
+            Machine(call)        => {
+                call.args.loop((slot) { self.slot(slot).try(); });
+                self.slot(call.out).try();
+                Ok
+            },
             NativeClear(slot)    => self.slot(slot).try().match({
                 Block(l) => (l.native > 0).ensure(self.fault(IrReason.Type)),
                 _        => Err(self.fault(IrReason.Type)),
@@ -447,6 +452,10 @@ Check = {
                 Ok
             },
             NativeConst(_)       => Ok,
+            Machine(call)        => {
+                call.args.loop((slot) { self.initialized(flags, slot).try(); });
+                Ok
+            },
             NativeLayout(_)      => Ok,
             NativeClear(_)       => Ok,
             VolatileLoad(value)  => self.initialized(flags, value.base),
@@ -518,6 +527,7 @@ write = (flags :: Init, instruction: Instruction) {
         Wait(slot)          => { flags.note(slot); },
         Foreign(value)      => { flags.note(value.out); },
         NativeConst(value)  => { flags.note(value.out); },
+        Machine(value)      => { flags.note(value.out); },
         NativeLayout(value) => { flags.note(value.out); },
         NativeClear(slot)   => { flags.note(slot); },
         VolatileLoad(value) => { flags.note(value.out); },
@@ -1099,6 +1109,9 @@ Payloads = {
                 (a) { self.forget_argument(state, a); }
             ),
             NativeConst(_)   => (),
+            Machine(c)       => c.args.loop(
+                (a) { self.forget_argument(state, a); }
+            ),
             NativeLayout(_)  => (),
             NativeClear(_)   => (),
             Constant(_)      => (),
@@ -1173,6 +1186,7 @@ written = (instruction: Instruction) Res<usize> {
         Wait(slot)       => Ok(slot),
         Foreign(v)       => Ok(v.out),
         NativeConst(v)   => Ok(v.out),
+        Machine(v)       => Ok(v.out),
         NativeLayout(v)  => Ok(v.out),
         NativeClear(s)   => Ok(s),
         VolatileLoad(v)  => Ok(v.out),

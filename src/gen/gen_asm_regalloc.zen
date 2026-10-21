@@ -22,6 +22,7 @@
 { Vec } = std.collections
 { Res, Ok, None, loop, Range } = std.core
 { Func, BasicBlock, Instruction, Terminator, Scalar, same, signed, float } = gen.gen_ir
+{ MachineCall } = gen.gen_ir_machine
 { Move, Unary, Binary, Invocation, Print, Convert, Load, Store, CopyMem } = gen.gen_ir
 { Write, SysCall, Pages, Branch, Op, Const } = gen.gen_ir
 { Update, Compare, IndirectCall, HostCall, FloatFormat, ForeignCall } = gen.gen_ir
@@ -509,6 +510,15 @@ Propagate = {
                 typed: call.typed
             )),
             NativeConst(_)   => instruction,
+            Machine(call)    => Instruction.Machine(MachineCall(
+                op: call.op,
+                name: call.name,
+                kind: call.kind,
+                operand: call.operand,
+                out: call.out,
+                args: self.all(alloc, call.args).try(),
+                literal: call.literal
+            )),
             NativeLayout(_)  => instruction,
             NativeClear(_)   => instruction,
         }))

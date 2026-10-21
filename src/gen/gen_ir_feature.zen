@@ -22,7 +22,8 @@ IrFeature* = { WideInt
     | Traps
     | Host
     | Threads
-    | Native }
+    | Native
+    | Machine }
 
 describe* = (feature: IrFeature) str {
     feature.match({
@@ -41,6 +42,7 @@ describe* = (feature: IrFeature) str {
         Host        => "JavaScript host calls and event waits",
         Threads     => "atomic operations and calls through code addresses",
         Native      => "C functions and constants from C headers",
+        Machine     => "SIMD vectors and machine instructions",
     })
 }
 
@@ -152,6 +154,7 @@ instruction_need = (instruction: Instruction) Res<IrFeature> {
         InvokeAt(_)        => Ok(IrFeature.Threads),
         Foreign(_)         => Ok(IrFeature.Native),
         NativeConst(_)     => Ok(IrFeature.Native),
+        Machine(_)         => Ok(IrFeature.Machine),
         NativeLayout(_)    => Ok(IrFeature.Native),
         NativeClear(_)     => Ok(IrFeature.Native),
         _                  => Ok(IrFeature.Memory),

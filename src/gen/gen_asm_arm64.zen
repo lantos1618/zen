@@ -401,6 +401,7 @@ Assembly = {
             Host(_)              => Ok,
             Foreign(_)           => Ok,
             NativeConst(_)       => Ok,
+            Machine(_)           => Ok,
             NativeLayout(_)      => Ok,
             NativeClear(_)       => Ok,
             Wait(_)              => Ok,

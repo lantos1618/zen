@@ -55,6 +55,7 @@ supports* = (feature: IrFeature) bool {
         Host        => true,
         Threads     => false,
         Native      => false,
+        Machine     => false,
     })
 }
 
@@ -473,6 +474,7 @@ JavaScript = {
             InvokeAt(_)          => self.out.add(OUTSIDE_SUPPORTS),
             Foreign(_)           => self.out.add(OUTSIDE_SUPPORTS),
             NativeConst(_)       => self.out.add(OUTSIDE_SUPPORTS),
+            Machine(_)           => self.out.add(OUTSIDE_SUPPORTS),
             NativeLayout(_)      => self.out.add(OUTSIDE_SUPPORTS),
             NativeClear(_)       => self.out.add(OUTSIDE_SUPPORTS),
         })

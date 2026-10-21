@@ -1,6 +1,7 @@
 // The operation a validated machine primitive name denotes (sema_prim and
 // sema_numeric validate them), and the refusal text for the ones IR lowering
 // does not spell with its own instructions.
+{ Vec } = std.collections
 { str } = std.text
 { Res, Ok, None } = std.core
 
@@ -49,6 +50,21 @@ MachineOp* = { MulWide
     | Sha512Su1
     | MulLimbs
     | SquareLimbs }
+
+// A validated machine primitive over vector, limb or word slots, produced
+// only for targets with a C compiler. `name` is the primitive (`splat_u32x4`,
+// `cpu_avx2`, `aes_round`); `kind` spells the result's vector or array type
+// and `operand` the first argument's; `literal` holds compile-time operands
+// the renderer may specialise on (a shuffle pattern written as literals).
+MachineCall* = {
+    op*: MachineOp,
+    name*: str,
+    kind*: str,
+    operand*: str,
+    out*: usize,
+    args*: Vec<usize>,
+    literal*: Vec<usize>,
+}
 
 // The operation a validated primitive name denotes. Vector lane operations
 // share the scalar names; the operand type tells them apart where it matters.

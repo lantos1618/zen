@@ -13,6 +13,9 @@
 { Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print, Move } = gen.gen_ir
 { Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
 { ForeignCall, NativeValue, NativeRecord, NativeMeasure } = gen.gen_ir
+{ MachineCall } = gen.gen_ir_machine
+{ machine_floor } = gen.gen_c_floor
+{ Emit } = gen.gen_emit
 { trap_message, width, signed, integer, float, same } = gen.gen_ir
 { IrFeature } = gen.gen_ir_feature
 { Sys, SysConstant, Platform, DarwinResult } = gen.gen_sys
@@ -74,11 +77,18 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         natives: program.natives,
         ret_slot: 0,
         ret_ptr: false,
-        copies: 0
+        copies: 0,
+        floor: false
     );
     writer.program(program).try();
     text ::= a.String().try();
     text.runtime().try();
+    writer.floor.then(() {
+        floor ::= Emit(a).try();
+        machine_floor(a, floor).try();
+        text.add("#include <stdlib.h>\n").try();
+        text.add(floor.view()).try();
+    });
     text.add(writer.head.view()).try();
     text.add(writer.out.view()).try();
     Ok(text)
@@ -167,6 +177,8 @@ C = {
     next :: Vec<usize>,
     // `zc` copies made for borrowed arguments in the current function.
     copies :: usize,
+    // A `Machine` instruction was rendered: the machine floor is emitted.
+    floor :: bool,
     // The current function's result local (plus one) that names `*zr_ret`,
     // and whether it returns through `zr_ret` at all.
     ret_slot :: usize,
@@ -425,6 +437,7 @@ C = {
             UnmapPages(_)   => true,
             Host(_)         => true,
             Foreign(_)      => true,
+            Machine(_)      => true,
             Wait(_)         => true,
             AtomicStore(_)  => true,
             AtomicUpdate(_) => true,
@@ -571,6 +584,10 @@ C = {
                 self.escapes(v.args);
             },
             NativeConst(v)   => self.wrote(v.out),
+            Machine(v)       => {
+                self.wrote(v.out);
+                self.escapes(v.args);
+            },
             NativeLayout(v)  => self.wrote(v.out),
             NativeClear(s)   => self.wrote(s),
             Wait(s)          => self.wrote(s),
@@ -1600,6 +1617,7 @@ C = {
             InvokeAt(value)      => self.indirect(f, value),
             Foreign(value)       => self.foreign(f, value),
             NativeConst(value)   => self.native_const(f, value),
+            Machine(value)       => self.machine(f, value),
             NativeLayout(value)  => self.native_layout(value),
             NativeClear(slot)    => self.out.fmt(
                 "  memset(&v{}, 0, sizeof v{});\n",
@@ -1718,6 +1736,222 @@ C = {
             });
         });
         Ok
+    }
+
+    // A machine primitive over its operands copied into locals of their GCC
+    // vector type. Block slots are byte storage, so they are never read
+    // through a vector-typed pointer.
+    machine = (self :: @Self, f: Func, call: MachineCall) Res<(), AllocError> {
+        self.floor = true;
+        k          = call.kind;
+        a          = nth(call, 0);
+        b          = nth(call, 1);
+        c          = nth(call, 2);
+        result     = vector_kind(k);
+        self.out.add("  {\n").try();
+        result.then(() { self.out.fmt("    zg_{} zr;\n", k).try(); });
+        call.op.match({
+            VectorAdd      => self.lanewise(call, "+"),
+            VectorSub      => self.lanewise(call, "-"),
+            VectorMul      => self.lanewise(call, "*"),
+            BitXor         => self.lanewise(call, "^"),
+            BitAnd         => self.lanewise(call, "&"),
+            BitOr          => self.lanewise(call, "|"),
+            ShiftLeft      => self.lane_shift(call, "<<"),
+            ShiftRight     => self.lane_shift(call, ">>"),
+            RotateLeft     => self.lane_rotate(call, "<<", ">>"),
+            RotateRight    => self.lane_rotate(call, ">>", "<<"),
+            VectorMulLow32 => {
+                self.vector_local("za", call.operand, a).try();
+                self.vector_local("zb", call.operand, b).try();
+                self.out.fmt("    zr = ZG_MUL_LOW32_{}(za, zb);\n", lane_count(
+                    k
+                ))
+            },
+            VectorSplat    => self.vector_of(call, true),
+            VectorLanes    => self.vector_of(call, false),
+            VectorLoad     => self.out.fmt(
+                "    memcpy(&zr, (const unsigned char *)(uintptr_t)v{} + v{}, sizeof zr);\n",
+                a,
+                b
+            ),
+            VectorStore    => {
+                self.vector_local("za", call.operand, a).try();
+                self.out.fmt(
+                    "    memcpy((unsigned char *)(uintptr_t)v{} + v{}, &za, sizeof za);\n",
+                    b,
+                    c
+                )
+            },
+            VectorLane     => {
+                self.vector_local("za", call.operand, a).try();
+                self.out.fmt("    v{} = (", call.out).try();
+                ctype(self.out, slot_ty(f, call.out)).try();
+                self.out.fmt(")za[v{}];\n", b)
+            },
+            VectorWithLane => {
+                self.vector_local("za", call.operand, a).try();
+                self.out.fmt(
+                    "    zr = za;\n    zr[v{}] = ({})v{};\n",
+                    b,
+                    lane_ctype(k),
+                    c
+                )
+            },
+            VectorShuffle  => self.shuffle(call, false),
+            VectorShuffle2 => self.shuffle(call, true),
+            VectorCast     => {
+                self.vector_local("za", call.operand, a).try();
+                self.out.fmt("    zr = (zg_{})za;\n", k)
+            },
+            CpuHas         => self.out.fmt(
+                "    v{} = (zg_{}() != 0);\n",
+                call.out,
+                call.name
+            ),
+            MulLimbs       => self.out.fmt(
+                "    uint64_t za[4], zb[4], zp[8];\n    memcpy(za, &v{}, sizeof za);\n    memcpy(zb, &v{}, sizeof zb);\n    zg_mul_limbs(za, zb, zp);\n    memcpy(&v{}, zp, sizeof zp);\n",
+                a,
+                b,
+                call.out
+            ),
+            SquareLimbs    => self.out.fmt(
+                "    uint64_t za[4], zp[8];\n    memcpy(za, &v{}, sizeof za);\n    zg_square_limbs(za, zp);\n    memcpy(&v{}, zp, sizeof zp);\n",
+                a,
+                call.out
+            ),
+            // The capability-gated instructions: the floor helper of the
+            // same name over the data operands.
+            _              => {
+                self.vector_local("za", call.operand, a).try();
+                self.vector_local("zb", call.operand, b).try();
+                (call.args.len > 2).then(() {
+                    self.vector_local("zc", call.operand, c).try();
+                });
+                self.out.fmt("    zr = zg_{}(za, zb", call.name).try();
+                (call.args.len > 2).then(() { self.out.add(", zc").try(); });
+                self.out.add(");\n")
+            },
+        }).try();
+        result.then(() {
+            self.out.fmt("    memcpy(&v{}, &zr, sizeof zr);\n", call.out).try();
+        });
+        self.out.add("  }\n")
+    }
+
+    vector_local = (self :: @Self, name: str, kind: str, slot: usize)
+                   Res<(), AllocError> {
+        self.out.fmt(
+            "    zg_{} {};\n    memcpy(&{}, &v{}, sizeof {});\n",
+            kind,
+            name,
+            name,
+            slot,
+            name
+        )
+    }
+
+    lanewise = (self :: @Self, call: MachineCall, op: str) Res<(), AllocError> {
+        self.vector_local("za", call.kind, nth(call, 0)).try();
+        self.vector_local("zb", call.kind, nth(call, 1)).try();
+        self.out.fmt("    zr = za {} zb;\n", op)
+    }
+
+    // A count at or beyond the lane width yields zero; C leaves that shift
+    // undefined, so the zero vector is chosen instead.
+    lane_shift = (self :: @Self, call: MachineCall, op: str) Res<(), AllocError> {
+        k = call.kind;
+        n = nth(call, 1);
+        self.vector_local("za", k, nth(call, 0)).try();
+        self.out.fmt(
+            "    zr = v{} >= {}u ? (zg_{}){{0}} : (za {} ({})v{});\n",
+            n,
+            lane_bits(k),
+            k,
+            op,
+            lane_ctype(k),
+            n
+        )
+    }
+
+    lane_rotate = (self :: @Self, call: MachineCall, near: str, far: str)
+                  Res<(), AllocError> {
+        k    = call.kind;
+        n    = nth(call, 1);
+        top  = lane_bits(k) - 1;
+        lane = lane_ctype(k);
+        self.vector_local("za", k, nth(call, 0)).try();
+        self.out.fmt(
+            "    zr = (za {} ({})(v{} & {}u)) | (za {} ({})(({}u - (v{} & {}u)) & {}u));\n",
+            near,
+            lane,
+            n,
+            top,
+            far,
+            lane,
+            lane_bits(k),
+            n,
+            top,
+            top
+        )
+    }
+
+    // `splat_V` repeats its one operand; `lanes_V` takes one per lane.
+    vector_of = (self :: @Self, call: MachineCall, splat: bool) Res<(), AllocError> {
+        self.out.fmt("    zr = (zg_{}){{", call.kind).try();
+        Range(0, lane_count(call.kind)).loop((i) {
+            (i > 0).then(() { self.out.add(", ").try(); });
+            self.out.fmt(
+                "({})v{}",
+                lane_ctype(call.kind),
+                nth(call, splat.match({ true => 0, false => i }))
+            ).try();
+        });
+        self.out.add("};\n")
+    }
+
+    // Lanes chosen by index, reduced modulo the lane count (`shuffle`) or
+    // twice it (`shuffle2`, whose high indices select from the second
+    // operand). A literal pattern is one native shuffle.
+    shuffle = (self :: @Self, call: MachineCall, two: bool) Res<(), AllocError> {
+        k     = call.kind;
+        lanes = lane_count(k);
+        self.vector_local("za", k, nth(call, 0)).try();
+        two.then(() { self.vector_local("zb", k, nth(call, 1)).try(); });
+        other = two.match({ true => "zb", false => "za" });
+        (call.literal.len > 0).match({
+            true  => {
+                self.out.fmt("    zr = ZG_SHUFFLE(zg_{}, za, {}", k, other).try();
+                call.literal.loop((i) { self.out.fmt(", {}", i).try(); });
+                self.out.add(");\n")
+            },
+            false => {
+                pattern = nth(call, two.match({ true => 2, false => 1 }));
+                self.out.fmt(
+                    "    uint64_t zp[{}];\n    memcpy(zp, &v{}, sizeof zp);\n    zr = (zg_{}){{",
+                    lanes,
+                    pattern,
+                    k
+                ).try();
+                Range(0, lanes).loop((i) {
+                    (i > 0).then(() { self.out.add(", ").try(); });
+                    two.match({
+                        true  => self.out.fmt(
+                            "(zp[{}] & {}u) < {}u ? za[zp[{}] & {}u] : zb[zp[{}] & {}u]",
+                            i,
+                            2 * lanes - 1,
+                            lanes,
+                            i,
+                            lanes - 1,
+                            i,
+                            lanes - 1
+                        ),
+                        false => self.out.fmt("za[zp[{}] & {}u]", i, lanes - 1),
+                    }).try();
+                });
+                self.out.add("};\n")
+            },
+        })
     }
 
     // `sizeof` a native record, or `offsetof` one of its fields.
@@ -2796,6 +3030,10 @@ mentions = (instruction: Instruction, visit: (slot: usize, read: bool) ()) {
             v.args.loop((slot) { visit(slot, true); });
         },
         NativeConst(v)   => visit(v.out, false),
+        Machine(v)       => {
+            visit(v.out, false);
+            v.args.loop((slot) { visit(slot, true); });
+        },
         NativeLayout(v)  => visit(v.out, false),
         NativeClear(s)   => visit(s, false),
         Wait(s)          => visit(s, false),
@@ -2917,4 +3155,33 @@ class_of = (ty: Scalar) usize {
 // The parameter's gen_c name, or "" for the renderer's own.
 param_name = (function: Func, i: usize) str {
     function.locals.match({ Ok(names) => names.get(i).value_or(""), None => "" })
+}
+
+nth = (call: MachineCall, i: usize) usize { call.args.get(i).value_or(0) }
+
+vector_kind = (name: str) bool {
+    name.is_in(["u8x16", "u8x32", "u32x4", "u32x8", "u64x2", "u64x4"])
+}
+
+lane_bits = (kind: str) usize {
+    kind.starts_with("u8x").match({
+        true  => 8,
+        false => kind.starts_with("u32x").match({ true => 32, false => 64 }),
+    })
+}
+
+lane_ctype = (kind: str) str {
+    lane_bits(kind).match({ 8 => "uint8_t", 32 => "uint32_t", _ => "uint64_t" })
+}
+
+lane_count = (kind: str) usize {
+    kind.match({
+        "u8x16" => 16,
+        "u8x32" => 32,
+        "u32x4" => 4,
+        "u32x8" => 8,
+        "u64x2" => 2,
+        "u64x4" => 4,
+        _       => 1,
+    })
 }

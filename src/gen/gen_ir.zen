@@ -274,6 +274,9 @@ Func* = {
     // The C names gen_c spells for this function and its parameters, which
     // tools/ct's manifests match in emitted C; "" and None where it has none.
     symbol* :: str = "",
+    // The capability feature set (`_ADX_BMI2`) its parameters prove, which a
+    // C renderer compiles the function for; "" for baseline code.
+    targets* :: str = "",
     locals* :: Res<Vec<str>> = None,
 }
 

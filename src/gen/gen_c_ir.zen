@@ -14,7 +14,7 @@
 { Scalar, Layout, Stream, Convert, SysCall, SysValue, Start, IndirectCall, TrapKind } = gen.gen_ir
 { ForeignCall, NativeValue, NativeRecord, NativeMeasure } = gen.gen_ir
 { MachineCall } = gen.gen_ir_machine
-{ machine_floor } = gen.gen_c_floor
+{ machine_floor, target_set } = gen.gen_c_floor
 { Emit } = gen.gen_emit
 { trap_message, width, signed, integer, float, same } = gen.gen_ir
 { IrFeature } = gen.gen_ir_feature
@@ -78,7 +78,8 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
         ret_slot: 0,
         ret_ptr: false,
         copies: 0,
-        floor: false
+        floor: false,
+        targets: a.Vec<str>()
     );
     writer.program(program).try();
     text ::= a.String().try();
@@ -86,6 +87,7 @@ emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
     writer.floor.then(() {
         floor ::= Emit(a).try();
         machine_floor(a, floor).try();
+        writer.targets.loop((set) { target_set(a, floor, set).try(); });
         text.add("#include <stdlib.h>\n").try();
         text.add(floor.view()).try();
     });
@@ -179,6 +181,8 @@ C = {
     copies :: usize,
     // A `Machine` instruction was rendered: the machine floor is emitted.
     floor :: bool,
+    // The capability target sets functions are compiled for, once each.
+    targets :: Vec<str>,
     // The current function's result local (plus one) that names `*zr_ret`,
     // and whether it returns through `zr_ret` at all.
     ret_slot :: usize,
@@ -214,6 +218,15 @@ C = {
     signature = (self :: @Self, index: usize, function: Func) Res<(), AllocError> {
         self.need(function.result).try();
         self.out.add("static ZR_U ").try();
+        (function.targets.len > 0).then(() {
+            self.floor = true;
+            known ::= false;
+            self.targets.loop(
+                (set) { known = known || set.eq(function.targets); }
+            );
+            (!known).then(() { self.targets.add(function.targets).try(); });
+            self.out.fmt("ZG_TARGET{} ", function.targets).try();
+        });
         // Inlined into its callers, a function's block locals widen every
         // caller's frame, and in recursive lowering every level's frame.
         heavy(function).then(() {

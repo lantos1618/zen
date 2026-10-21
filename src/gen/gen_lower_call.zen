@@ -2524,6 +2524,48 @@ avx2_crossing = (lo :: Lowerer, callee: Callee, span: Span) Res<LowerError> {
     ))
 }
 
+// The feature set a function's capability parameters prove (`_ADX_BMI2`),
+// in the fixed order gen_c spelled its target sets.
+capability_targets* = (lo :: Lowerer, callee: Callee) Res<String, LowerError> {
+    set ::= lo.alloc.String().try(LowerError.OutOfMemory);
+    lo.capability_tag(callee, "Adx", "_ADX", set).try();
+    lo.capability_tag(callee, "Aes", "_AES", set).try();
+    lo.capability_tag(callee, "ArmSha2", "_ARMSHA2", set).try();
+    lo.capability_tag(callee, "ArmSha512", "_ARMSHA512", set).try();
+    lo.capability_tag(callee, "Avx2", "_AVX2", set).try();
+    lo.capability_tag(callee, "Bmi2", "_BMI2", set).try();
+    lo.capability_tag(callee, "Clmul", "_CLMUL", set).try();
+    lo.capability_tag(callee, "Neon", "_NEON", set).try();
+    lo.capability_tag(callee, "ShaNi", "_SHANI", set).try();
+    lo.capability_tag(callee, "Ssse3", "_SSSE3", set).try();
+    Ok(set)
+}
+
+capability_tag = (
+    lo     :: Lowerer,
+    callee : Callee,
+    name   : str,
+    tag    : str,
+    set    :: String
+)
+                 Res<LowerError> {
+    found ::= false;
+    Range(0, callee.f.params.len).loop((i) {
+        found = found || lo.is_capability(lo.param_type(callee, i).try(), name);
+    });
+    found.match({ true => set.add(
+        tag
+    ).try(LowerError.OutOfMemory), false => () });
+    Ok
+}
+
+is_capability = (lo :: Lowerer, ty: TyId, name: str) bool {
+    lo.check.types.at(ty).match({
+        Named(n) => n.name.eq(name) && lo.check.world.module_name(n.decl).eq("std.simd"),
+        _        => false,
+    })
+}
+
 wide_vector = (name: str) bool { name.is_in(["u8x32", "u32x8", "u64x4"]) }
 
 is_avx2 = (lo :: Lowerer, ty: TyId) bool {

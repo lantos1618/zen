@@ -691,3 +691,84 @@ sha_stub = (alloc: Alloc, out :: Emit, name: str, v: str, arity: usize)
     }).try();
     out.say(line.view())
 }
+
+target_set* = (alloc: Alloc, out :: Emit, set: str)
+                   Res<AllocError> {
+    x86 ::= alloc.String().try();
+    x86.add_feature(set, "_AVX2", "avx2").try();
+    x86.add_feature(set, "_SSSE3", "ssse3").try();
+    x86.add_feature(set, "_BMI2", "bmi,bmi2").try();
+    x86.add_feature(set, "_ADX", "adx").try();
+    x86.add_feature(set, "_AES", "aes,ssse3,sse4.1").try();
+    x86.add_feature(set, "_CLMUL", "pclmul,ssse3,sse4.1").try();
+    x86.add_feature(set, "_SHANI", "sha,ssse3,sse4.1").try();
+    // arm64 feature names differ between Clang and GCC.
+    clang ::= alloc.String().try();
+    gcc   ::= alloc.String().try();
+    crypto = set.contains("_AES") || set.contains("_CLMUL");
+    crypto.then(() {
+        clang.add("aes").try();
+        gcc.add("+crypto").try();
+    });
+    set.contains("_ARMSHA2").then(() {
+        clang.add(
+            (clang.len() > 0).match({ true => ",sha2", false => "sha2" })
+        ).try();
+        gcc.add("+sha2").try();
+    });
+    set.contains("_ARMSHA512").then(() {
+        clang.add(
+            (clang.len() > 0).match({ true => ",sha2,sha3", false => "sha2,sha3" })
+        ).try();
+        gcc.add("+sha3").try();
+    });
+    line ::= alloc.String().try();
+    out.say("#if defined(ZG_X86)").try();
+    (x86.len() > 0).match({
+        true  => line.fmt(
+            "#define ZG_TARGET{} __attribute__((target(\"{}\")))",
+            set,
+            x86.view()
+        ),
+        false => line.fmt("#define ZG_TARGET{}", set),
+    }).try();
+    out.say(line.view()).try();
+    out.say("#elif defined(__aarch64__) && defined(__clang__)").try();
+    line.clear();
+    (clang.len() > 0).match({
+        true  => line.fmt(
+            "#define ZG_TARGET{} __attribute__((target(\"{}\")))",
+            set,
+            clang.view()
+        ),
+        false => line.fmt("#define ZG_TARGET{}", set),
+    }).try();
+    out.say(line.view()).try();
+    out.say("#elif defined(__aarch64__)").try();
+    line.clear();
+    (gcc.len() > 0).match({
+        true  => line.fmt(
+            "#define ZG_TARGET{} __attribute__((target(\"{}\")))",
+            set,
+            gcc.view()
+        ),
+        false => line.fmt("#define ZG_TARGET{}", set),
+    }).try();
+    out.say(line.view()).try();
+    out.say("#else").try();
+    line.clear();
+    line.fmt("#define ZG_TARGET{}", set).try();
+    out.say(line.view()).try();
+    out.say("#endif").try();
+}
+
+add_feature = (list :: String, set: str, token: str, features: str)
+              Res<AllocError> {
+    set.contains(token).match({
+        false => Ok,
+        true  => {
+            (list.len() > 0).then(() { list.add(",").try() });
+            list.add(features)
+        },
+    })
+}

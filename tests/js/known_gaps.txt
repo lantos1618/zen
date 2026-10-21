@@ -164,7 +164,7 @@ tests/corpus/lsp/hover_streams_shapes/main # UNSUPPORTED: main.zen:5:12: nothing
 tests/corpus/lsp/idle_queries_do_not_grow_session/main # UNSUPPORTED: main.zen:2:10: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
 tests/corpus/lsp/import_queries_reuse_checked_graph/main # UNSUPPORTED: main.zen:3:23: nothing is at that path: tried `lsp/lsp_diag.zen` and `lsp/lsp_diag/lsp_diag.zen`
 tests/corpus/lsp/initialize_then_idle_sends_nothing # UNSUPPORTED: initialize_then_idle_sends_nothing.zen:23:17: nothing is at that path: tried `lsp/lsp_serve.zen` and
-tests/corpus/lsp/kept_bases_survive_eviction/main # UNSUPPORTED: main.zen:11:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/kept_bases_survive_eviction/main # UNSUPPORTED: main.zen:11:21: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
 tests/corpus/lsp/method_types_keep_semantic_colours/main # UNSUPPORTED: main.zen:6:38: nothing is at that path: tried `lsp/lsp_query.zen` and `lsp/lsp_query/lsp_query.zen`
 tests/corpus/lsp/observed_types_survive_unknown_queries # UNSUPPORTED: observed_types_survive_unknown_queries.zen:1:20: nothing is at that path: tried `lsp/lsp_query.zen` 
 tests/corpus/lsp/patched_completion_uses_all_open_buffers/main # UNSUPPORTED: main.zen:3:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`

@@ -49,6 +49,16 @@ Map*<K: Eq + Hash, V> = {
 
     len* = (self: @Self) usize { self.entries.len }
 
+    // A copy in `a` whose later updates leave this map unchanged. Keys and
+    // values are copied bitwise, so values that own storage keep sharing it.
+    dup* = (self: @Self, a: Alloc) Res<Map<K, V>, AllocError> {
+        Ok(Map(
+            entries: self.entries.dup(a).try(),
+            slots: self.slots.dup(a).try(),
+            alloc: a
+        ))
+    }
+
     // Walk key/value pairs in insertion order without allocating.
     pairs* = (self: @Self, body: (
         h     : LoopHandle,

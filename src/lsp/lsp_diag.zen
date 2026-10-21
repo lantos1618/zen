@@ -63,6 +63,9 @@ Diagnostics* = {
     said_arena :: Arena,
     said :: Map<str, str>,
 
+    // Whether every kept user base is over a kept std base.
+    layered* = (self: @Self) bool { self.built.layered() }
+
     invalidate* = (self :: @Self) {
         self.built.invalidate();
         self.dirty = true;
@@ -228,7 +231,7 @@ Diagnostics.impl(Drop, {
 // rebuilds it inside `said_arena` once the value has its final home.
 Diagnostics* = (env: Env, a: Alloc) Diagnostics {
     Diagnostics(
-        built: env.Built(),
+        built: env.Built(a),
         said_arena: env.mem.alloc(),
         said: a.Map<str, str>()
     )

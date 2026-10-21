@@ -1,0 +1,4 @@
+{ l3 } = app.l3
+{ write_text } = std.json
+
+value = () i32 { l3() }

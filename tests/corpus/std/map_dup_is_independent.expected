@@ -1,0 +1,3 @@
+source len 10 three 6 four 77 thirty 0
+dup len 40 three 99 four 8 thirty 30
+vec 2 1 dup 3 50

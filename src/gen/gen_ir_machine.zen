@@ -1,15 +1,7 @@
-// Machine operations shared by every backend: the semantic operations that
-// sema_prim and sema_numeric validate (wide multiply, truncation, unsigned
-// bit operations, add with carry, std.simd vectors, volatile access, compiler
-// barriers, CPU capabilities and the AES, carry-less, SHA and multi-limb
-// instructions they unlock). The C backend lowers them from checked facts
-// today. The scalar IR carries them as `Instruction.Machine` so assembly
-// targets implement one vocabulary; until IR slots can hold u64, u128,
-// vectors and pointers, lowering refuses every call to one with a diagnostic
-// naming the operation, and the verifier rejects a Machine instruction.
-{ Vec } = std.collections
+// The operation a validated machine primitive name denotes (sema_prim and
+// sema_numeric validate them), and the refusal text for the ones IR lowering
+// does not spell with its own instructions.
 { str } = std.text
-{ Span } = std.source
 { Res, Ok, None } = std.core
 
 MachineOp* = { MulWide
@@ -57,17 +49,6 @@ MachineOp* = { MulWide
     | Sha512Su1
     | MulLimbs
     | SquareLimbs }
-
-// `outs` and `args` index Func.slots; `word` names the operand type as the
-// primitive's source spelling (`u64`, `u32x8`, `avx2`, ...), so a target can
-// select an instruction without consulting the checker.
-MachineCall* = {
-    op*: MachineOp,
-    word*: str,
-    outs*: Vec<usize>,
-    args*: Vec<usize>,
-    span*: Span,
-}
 
 // The operation a validated primitive name denotes. Vector lane operations
 // share the scalar names; the operand type tells them apart where it matters.

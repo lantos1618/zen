@@ -337,12 +337,13 @@ vectors, volatile access, `compiler_barrier`, CPU capability detection and
 the AES, carry-less, SHA and multi-limb (`mul_limbs`, `square_limbs`)
 instructions — form one backend-neutral vocabulary in
 [gen_ir_machine](../src/gen/gen_ir_machine.zen). The C backend lowers them
-from checked facts (`gen_c_machine`). The scalar IR has an
-`Instruction.Machine` form for them, but scalar slots cannot yet hold u64,
-u128, vectors or pointers, so `gen_lower` refuses every reachable call to a
-machine operation with a diagnostic naming it (for example "unsupported by
-this backend: runtime CPU feature detection (std.simd cpu_*)"), and
-`gen_verify` rejects a Machine instruction. An assembly target implements
-the vocabulary once IR slots are widened; target selection follows the
-same capability rule as C (a function with a capability parameter is
-compiled for that feature).
+from checked facts (`gen_c_machine`). IR lowering spells truncation,
+`mul_wide`, `add_carry`, `sub_borrow` and `compiler_barrier` with the IR's
+own instructions (`Cast`, wide products, carries, `Barrier`), and volatile
+access goes through `VolatileLoad`/`VolatileStore`. It refuses the rest
+(`std.simd` vectors, CPU capability detection and the AES, carry-less, SHA
+and multi-limb instructions) with a diagnostic naming the operation (for
+example "unsupported by this backend: runtime CPU feature detection
+(std.simd cpu_*)"); the IR has no generic machine instruction. Target
+selection for those follows the same capability rule as C (a function with
+a capability parameter is compiled for that feature).

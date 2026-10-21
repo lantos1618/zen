@@ -7,7 +7,7 @@
 { Res } = std.core
 
 // Implementations preserve ordered effects, control flow, checked arithmetic,
-// source-position traps and byte output. Machine instructions, register and
+// source-position traps and byte output. Instruction selection, register and
 // stack allocation, calling conventions and runtime linkage belong to the
 // concrete target. The caller verifies the program before emission.
 Target* = {

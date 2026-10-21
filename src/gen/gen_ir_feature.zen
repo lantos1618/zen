@@ -24,7 +24,8 @@ IrFeature* = { WideInt
     | Threads
     | Native
     | Machine
-    | Barriers }
+    | Barriers
+    | Secrets }
 
 describe* = (feature: IrFeature) str {
     feature.match({
@@ -45,6 +46,7 @@ describe* = (feature: IrFeature) str {
         Native      => "C functions and constants from C headers",
         Machine     => "SIMD vectors and machine instructions",
         Barriers    => "constant-time value barriers (std.ct)",
+        Secrets     => "Secret parameters",
     })
 }
 
@@ -73,9 +75,13 @@ first_need = (
     supports : (feature: IrFeature) bool
 ) Res<IrFeature> {
     found :: Res<IrFeature> = refusing(
-        class_need(function.result),
+        function.secrets.match({ Ok(_) => Ok(IrFeature.Secrets), None => None }),
         (feature) { supports(feature) }
     );
+    found.match({ Ok(_) => (), None => { found = refusing(
+        class_need(function.result),
+        (feature) { supports(feature) }
+    ); } });
     function.slots.loop((sh, ty) {
         found.match({ Ok(_) => sh.break(), None => () });
         found = refusing(class_need(ty), (feature) { supports(feature) });

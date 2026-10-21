@@ -57,6 +57,7 @@ supports* = (feature: IrFeature) bool {
         Native      => false,
         Machine     => false,
         Barriers    => false,
+        Secrets     => false,
     })
 }
 

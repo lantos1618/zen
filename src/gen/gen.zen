@@ -424,6 +424,7 @@ refused_by_asm = (program: Program) Res<AsmRefusal> {
             float(ty).then(() { found = Ok(AsmRefusal(what: "floating-point values", function: function.name)); });
             same(ty, Scalar.U128).then(() { found = Ok(AsmRefusal(what: "128-bit integers", function: function.name)); });
         });
+        function.secrets.when_ok((_) { found = Ok(AsmRefusal(what: "Secret parameters", function: function.name)); });
         function.blocks.loop((block) {
             block.code.loop((instruction) {
                 instruction.match({

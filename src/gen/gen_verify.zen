@@ -167,10 +167,10 @@ Check = {
                     false => self.pattern_slot(third, lanes),
                 })
             },
-            ShiftLeft      => self.shift_slots(call, result, first, second),
-            ShiftRight     => self.shift_slots(call, result, first, second),
-            RotateLeft     => self.shift_slots(call, result, first, second),
-            RotateRight    => self.shift_slots(call, result, first, second),
+            ShiftLeft      => self.shift_slots(result, first, second),
+            ShiftRight     => self.shift_slots(result, first, second),
+            RotateLeft     => self.shift_slots(result, first, second),
+            RotateRight    => self.shift_slots(result, first, second),
             VectorMulLow32 => self.vector_pair(call, operand, first, second),
             _              => self.vector_pair(call, result, first, second),
         })
@@ -198,8 +198,8 @@ Check = {
         })
     }
 
-    shift_slots = (self: @Self, call: MachineCall, bytes: usize, first: usize,
-                   second: usize) Res<VerifyError> {
+    shift_slots = (self: @Self, bytes: usize, first: usize, second: usize)
+                  Res<VerifyError> {
         (bytes > 0).match({
             true  => { self.vector_slot(first, bytes).try(); self.word_slot(second).try(); Ok },
             false => Ok,

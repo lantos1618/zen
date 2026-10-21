@@ -36,7 +36,7 @@ needs_probe* = (program: Program) bool {
 probe_source* = (a: Alloc, program: Program, target: str)
                 Res<Res<String>, AllocError> {
     questions ::= a.Vec<Question>();
-    known     ::= questions_of(a, program, questions).try();
+    known     ::= questions_of(program, questions).try();
     known.match({
         false => Ok(None),
         true  => {
@@ -106,7 +106,7 @@ probe_source* = (a: Alloc, program: Program, target: str)
 // match its questions.
 resolve* = (a: Alloc, program: Program, output: str) Res<bool, AllocError> {
     questions ::= a.Vec<Question>();
-    known = questions_of(a, program, questions).try();
+    known = questions_of(program, questions).try();
     numbers ::= a.Vec<i64>();
     parsed  ::= true;
     output.split('\n').loop((line) {
@@ -203,8 +203,7 @@ record_at = (program: Program, constants: usize, native: usize) usize {
 
 // Each distinct constant the program reads, in first-use order; false when
 // one's class is not an integer the probe can print.
-questions_of = (a: Alloc, program: Program, out :: Vec<Question>)
-               Res<bool, AllocError> {
+questions_of = (program: Program, out :: Vec<Question>) Res<bool, AllocError> {
     known ::= true;
     program.functions.loop((f) {
         f.blocks.loop((block) {

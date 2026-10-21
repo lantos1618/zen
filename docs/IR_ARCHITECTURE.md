@@ -430,9 +430,11 @@ renderer with no semantic work:
   whether a Machine call is emitted; asm and JS refuse it by name. std.ct's
   barriers lower to `Instruction.Opaque`: IR-C renders its empty-asm
   barrier, the jit runs it as an opaque identity, and asm and JS refuse it
-  by name, as they do Secret parameters (`IrFeature.Secrets`). On x86_64-linux the native corpus runner's `jit`
-  target passes 870 of 1136 programs; 265 are refused and 1 needs a fixture
-  that only tests/run.py stages. Before running, the interpreter applies the
+  by name, as they do Secret parameters (`IrFeature.Secrets`). On
+  x86_64-linux the native corpus runner's `jit` target passes 1086 of 1141
+  programs; 53 are refused by name and 2 are listed in
+  `tests/native/jit-known-failures.txt` (a C library calling back into Zen,
+  and a C function this host's libc lacks). Before running, the interpreter applies the
   asm backend's `prepare` (with `simplify`), then `gen_jit_decode` encodes each
   function once into 64-byte word steps: frame offsets, block targets, call
   argument tables and parameter sizes are resolved, comparisons are fused with

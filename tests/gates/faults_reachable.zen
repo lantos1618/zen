@@ -47,8 +47,6 @@
 // and would match all of them.
 SEMA_FAULT: str = "SemaFault"
 SEMA_FILE:  str = "src/sema/sema_diag.zen"
-GEN_FAULT:  str = "GenFault"
-GEN_FILE:   str = "src/gen/gen_diag.zen"
 
 // THE DEBT. Every entry is a rule `docs/DESIGN.md` states, worded in
 // `message()`, that no program can currently trigger — so the program that
@@ -89,15 +87,14 @@ no_files = () Res<i32, AllocError> {
 
 run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
     a ::= check(env, alloc, SEMA_FAULT, SEMA_FILE).try();
-    b ::= check(env, alloc, GEN_FAULT, GEN_FILE).try();
 
-    bad = a.missing + b.missing + a.stale + b.stale;
+    bad = a.missing + a.stale;
     (bad > 0).match({
         true  => Ok(1),
         false => {
-            total       = a.declared + b.declared;
-            constructed = a.constructed + b.constructed;
-            debt        = a.owed + b.owed;
+            total       = a.declared;
+            constructed = a.constructed;
+            debt        = a.owed;
             println(
                 "faults: {} declared, {} constructed, {} owed and written down",
                 total,

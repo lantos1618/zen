@@ -294,9 +294,7 @@ stale = (what: str, index: usize, len: usize) {
     println(
         "  an Ast is a value, so a copy of one is a snapshot: a node added after"
     );
-    println(
-        "  alloc.Checker(tree) or alloc.CBackend(tree, c) is not in the tree they hold"
-    );
+    println("  alloc.Checker(tree) is not in the tree it holds");
     len - len - 1;
 }
 

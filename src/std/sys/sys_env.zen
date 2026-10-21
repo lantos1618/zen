@@ -146,7 +146,9 @@ fs_lock_fd* = (path: str) Res<i32, FsError> {
     fs_is_dir(path).match({ true => Err(FsError.IsDir), false => Ok }).try();
     scratch = Pages();
     name    = c_path(scratch, path).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
-    fd      = openat(at_fdcwd(), name, o_rdwr() + o_creat() + o_cloexec(), 438);
+    // Not close-on-exec: a C compiler the build spawns inherits the lock,
+    // so the workspace stays locked while it outlives a killed parent.
+    fd = openat(at_fdcwd(), name, o_rdwr() + o_creat(), 438);
     scratch.free(name);
     (fd < 0).match({ true => Err(fs_error(fd)), false => Ok }).try();
     handle = fd.to_i32().value_or(-1);

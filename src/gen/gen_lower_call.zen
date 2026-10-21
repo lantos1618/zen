@@ -2791,7 +2791,11 @@ env_call = (
             lo.print_call(c.args, 0, true, Stream.Err, span).try();
             lo.console_answer(id, span)
         },
-        "flush"     => lo.console_answer(id, span),
+        // A C target buffers output; flush writes it out now.
+        "flush"     => {
+            lo.add(Instruction.Flush).try();
+            lo.console_answer(id, span)
+        },
         "args"      => lo.env_args(id, sources, span),
         // Threads and actors (gen_lower_thread, gen_lower_actor).
         "sleep"     => lo.sleep_thread(id, c, sources, span),

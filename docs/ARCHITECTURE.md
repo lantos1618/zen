@@ -36,7 +36,7 @@ semantic    src/sema/
     ↓
 lowering    src/gen/gen_lower.zen, src/gen/gen_ir.zen
     ↓
-backend     src/gen/gen_c/, src/gen/gen_js.zen, src/gen/gen_asm*
+backend     src/gen/gen_c_ir.zen, src/gen/gen_js.zen, src/gen/gen_asm*
     ↓
 generated program or system code
 ```
@@ -57,9 +57,10 @@ protocol layer.
 - `src/zen/` top-level compiler and project orchestration.
 
 Backend-independent generation belongs in `src/gen/`. Target-specific emission
-belongs under `src/gen/gen_c/` or beside the corresponding backend entry point.
-The C backend is currently the primary bootstrap path, so its files should not be
-treated as general-purpose standard-library code.
+belongs beside the corresponding backend entry point (`gen_c_ir.zen` and the C
+runtime helpers in `gen_c_floor.zen` for C). Every backend renders the one
+lowering; C is the bootstrap path, so its files should not be treated as
+general-purpose standard-library code.
 
 ## Standard library and capability boundaries
 

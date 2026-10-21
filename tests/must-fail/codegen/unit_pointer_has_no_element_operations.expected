@@ -1,5 +1,2 @@
-codegen does not lower this yet: `reading, writing, or shifting a Ptr<()>`
+unsupported by this backend: reading, writing, or shifting a Ptr<()>
 9:5
-10:5
-11:5
-12:5

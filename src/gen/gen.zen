@@ -1,10 +1,7 @@
 // Code generation owns backend selection and artifact rendering. Drivers
 // publish each borrowed artifact synchronously; no filesystem policy lives here.
-// Direct C entry points remain available to compiler tools and backend tests.
 
 { Emit*, order* } = gen.gen_emit
-{ CBackend*, emit_program*, render_symbol_map* } = gen.gen_c
-{ lower_program*, emit_header*, emit_unit*, group_bodies*, ModuleBodies* } = gen.gen_c
 
 { Alloc, AllocError, Mem } = std.mem
 { Ast } = std.ast
@@ -76,28 +73,28 @@ Generation* = {
                 ).try();
                 Ok(1)
             },
-            C   => (!self.ffi).match({
-                true  => self.c_ir(report, (artifact) { publish(artifact) }),
-                false => self.legacy_c(
-                    report,
-                    (artifact) { publish(artifact) }
-                ),
-            }),
+            C   => self.c_ir(report, (artifact) { publish(artifact) }),
         })
     }
 
-    // Until the IR lowering covers every program, one it refuses still
-    // builds through the legacy C backend.
+    // C renders the one lowering too; a program it refuses is reported by
+    // the construct it cannot lower.
     c_ir = (self: @Self, report :: String,
             publish: (artifact: Artifact) Res<usize, AllocError>)
            Res<usize, AllocError> {
         self.lowered(ScalarBackend.C).match({
             Err(error)  => error.match({
-                OutOfMemory    => Err(AllocError.OutOfMemory),
-                Unsupported(_) => self.legacy_c(
-                    report,
-                    (artifact) { publish(artifact) }
-                ),
+                OutOfMemory        => Err(AllocError.OutOfMemory),
+                Unsupported(fault) => {
+                    report.fmt(
+                        "{}:{}:{}: error: unsupported by this backend: {}\n",
+                        fault.span.file,
+                        fault.span.start.line,
+                        fault.span.start.col,
+                        fault.what
+                    ).try();
+                    Ok(1)
+                },
             }),
             Ok(program) => self.render_scalar(
                 ScalarBackend.C,
@@ -151,21 +148,6 @@ Generation* = {
         })
     }
 
-    legacy_c = (self: @Self, report :: String,
-                publish: (artifact: Artifact) Res<usize, AllocError>)
-               Res<usize, AllocError> {
-        be ::= self.alloc.CBackend(self.tree, self.check).try();
-        self.ffi.then(() { be.enable_ffi(); });
-        output ::= COutput(generation: self, be: be);
-        faults = self.layout.match({
-            Single  => output.single(report, (artifact) { publish(artifact) }),
-            Modules => output.modules(report, (artifact) { publish(artifact) }),
-        }).try();
-        (faults == 0 && self.symbols).match({
-            true  => output.symbols((artifact) { publish(artifact) }),
-            false => Ok(faults),
-        })
-    }
 
     scalar = (self: @Self, backend: ScalarBackend, report :: String,
               publish: (artifact: Artifact) Res<usize, AllocError>)
@@ -427,89 +409,6 @@ Generation* = {
                 program
             ),
         })
-    }
-}
-
-// One backend owns lowering state throughout rendering. Split C lowers once,
-// retains its stable order, and releases each scratch buffer after publication.
-COutput = {
-    generation: Generation,
-    be :: CBackend,
-
-    single = (self :: @Self, report :: String,
-              publish: (artifact: Artifact) Res<usize, AllocError>)
-             Res<usize, AllocError> {
-        out ::= self.generation.alloc.Emit().try();
-        self.be.emit_program(self.generation.entry, out).try();
-        self.be.render_diags(report).try();
-        faults = self.be.diag_count();
-        (faults == 0).match({
-            false => Ok(faults),
-            true  => publish(Artifact(
-                kind: ArtifactKind.Source,
-                name: "zen.c",
-                text: out.view()
-            )),
-        })
-    }
-
-    modules = (self :: @Self, report :: String,
-               publish: (artifact: Artifact) Res<usize, AllocError>)
-              Res<usize, AllocError> {
-        self.be.use_externs();
-        self.be.lower_program(self.generation.entry).try();
-        header ::= self.generation.alloc.Emit().try();
-        self.be.emit_header(header).try();
-        self.be.render_diags(report).try();
-        faults = self.be.diag_count();
-        (faults == 0).match({
-            false => Ok(faults),
-            true  => {
-                groups = self.be.group_bodies().try();
-                failed ::= publish(Artifact(
-                    kind: ArtifactKind.Source,
-                    name: "zen.h",
-                    text: header.view()
-                )).try();
-                groups.loop((h, group) {
-                    unit = group.unit;
-                    ((unit == self.generation.entry) || (group.functions.len > 0)).then(() {
-                        scratch ::= self.generation.mem.alloc();
-                        out     ::= scratch.Emit().try();
-                        self.be.emit_unit(
-                            self.generation.entry,
-                            group,
-                            out
-                        ).try();
-                        module_name = self.generation.tree.module_at(
-                            unit
-                        ).match({
-                            None    => "zg_unit",
-                            Ok(mod) => mod.name,
-                        });
-                        name        = scratch.String("{}.c", module_name).try();
-                        failed      = failed + publish(Artifact(
-                            kind: ArtifactKind.Source,
-                            name: name.view(),
-                            text: out.view()
-                        )).try();
-                    });
-                });
-                Ok(failed)
-            },
-        })
-    }
-
-    symbols = (self :: @Self,
-               publish: (artifact: Artifact) Res<usize, AllocError>)
-              Res<usize, AllocError> {
-        out ::= self.generation.alloc.String().try();
-        self.be.render_symbol_map(out).try();
-        publish(Artifact(
-            kind: ArtifactKind.Symbols,
-            name: "symbols",
-            text: out.view()
-        ))
     }
 }
 

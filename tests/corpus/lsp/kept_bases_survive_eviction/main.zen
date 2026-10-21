@@ -1,0 +1,214 @@
+// The server keeps at most four user bases and two std bases. Five open
+// graphs, each importing a different std module, are edited in turn, so every
+// edit evicts a user base. Opening a std module drops the std base with the
+// user bases over it, and every turn reports that no user base outlives it.
+// Each edit must still publish exactly its own change, and a leaf broken on
+// disk must be seen even though a kept base was built from it.
+
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
+{ Res, Ok, loop, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+// Clean graphs; each imports its own leaf and a different std module.
+G0*: str = "{ l0 } = app.l0\n{ str } = std.text\n\nvalue = () i32 { l0() }\n"
+G1*: str = "{ l1 } = app.l1\n{ println } = std.io\n\nvalue = () i32 { l1() }\n"
+G2*: str = "{ l2 } = app.l2\n{ Alloc } = std.mem\n\nvalue = () i32 { l2() }\n"
+G3*: str = "{ l3 } = app.l3\n{ write_text } = std.json\n\nvalue = () i32 { l3() }\n"
+G4*: str = "{ l4 } = app.l4\n{ Env } = std.env\n\nvalue = () i32 { l4() }\n"
+
+// Each graph with an undefined name added.
+BAD0*: str = "{ l0 } = app.l0\n{ str } = std.text\n\nvalue = () i32 { l0() }\n\nbroken = () i32 { absent }\n"
+BAD1*: str = "{ l1 } = app.l1\n{ println } = std.io\n\nvalue = () i32 { l1() }\n\nbroken = () i32 { absent }\n"
+BAD2*: str = "{ l2 } = app.l2\n{ Alloc } = std.mem\n\nvalue = () i32 { l2() }\n\nbroken = () i32 { absent }\n"
+BAD3*: str = "{ l3 } = app.l3\n{ write_text } = std.json\n\nvalue = () i32 { l3() }\n\nbroken = () i32 { absent }\n"
+BAD4*: str = "{ l4 } = app.l4\n{ Env } = std.env\n\nvalue = () i32 { l4() }\n\nbroken = () i32 { absent }\n"
+
+// `tests/run.py` stages a directory test into `<work>/src` and runs the
+// program from `<work>`, so these are the paths the server will open.
+URI0*: str = "file://src/app/g0.zen"
+URI1*: str = "file://src/app/g1.zen"
+URI2*: str = "file://src/app/g2.zen"
+URI3*: str = "file://src/app/g3.zen"
+URI4*: str = "file://src/app/g4.zen"
+LEAF_PATH*: str = "src/app/l3.zen"
+LEAF*: str = "l3* = () i32 { 3 }\n"
+LEAF_BROKEN*: str = "l3* = () i32 { gone }\n"
+STD_PATH*: str = "src/std/core/num.zen"
+STD_URI*: str = "file://src/std/core/num.zen"
+LEAF_CHANGED*: str = "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\",\"params\":{\"changes\":[{\"uri\":\"file://src/app/l3.zen\",\"type\":2}]}}"
+
+GRAPHS: usize = 5
+TURNS: usize = 10
+
+ROOT_URI*: str = "file://."
+INITIALIZED*: str = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}"
+
+main = (env: Env) Res<i32, AllocError> {
+    a     ::= env.mem.alloc();
+    s     ::= a.Server(env);
+    uris  ::= a.Vec<str>();
+    clean ::= a.Vec<str>();
+    bad   ::= a.Vec<str>();
+    uris.add(URI0).try(); uris.add(URI1).try(); uris.add(URI2).try();
+    uris.add(URI3).try(); uris.add(URI4).try();
+    clean.add(G0).try(); clean.add(G1).try(); clean.add(G2).try();
+    clean.add(G3).try(); clean.add(G4).try();
+    bad.add(BAD0).try(); bad.add(BAD1).try(); bad.add(BAD2).try();
+    bad.add(BAD3).try(); bad.add(BAD4).try();
+
+    first ::= a.String().try();
+    open_session(a, first).try();
+    write_frame(INITIALIZED, first).try();
+    Range(0, GRAPHS).loop((h, i) {
+        open_doc(
+            a,
+            uris.get(i).value_or(""),
+            clean.get(i).value_or(""),
+            first
+        ).try();
+    });
+    batch(s, a, "five clean graphs opened", first.view()).try();
+
+    // Break each graph, then fix it, one graph per turn.
+    Range(0, TURNS).loop((h, turn) {
+        at     = (turn / 2) % GRAPHS;
+        broken = turn % 2 == 0;
+        text   = broken.match({
+            true  => bad.get(at).value_or(""),
+            false => clean.get(at).value_or(""),
+        });
+        input ::= a.String().try();
+        change_doc(a, uris.get(at).value_or(""), text, input).try();
+        out ::= a.String().try();
+        serve(s, input.view(), out).try();
+        println(
+            "--- g{} {}",
+            at,
+            broken.match({ true => "broken", false => "fixed" })
+        );
+        walk(out.view());
+        println("    layered {}", s.layered());
+    });
+
+    env.fs.write(LEAF_PATH, LEAF_BROKEN).match({
+        Err(_) => println("write failed"),
+        Ok(_)  => (),
+    });
+    gone ::= a.String().try();
+    write_frame(LEAF_CHANGED, gone).try();
+    batch(s, a, "the leaf of g3 broken on disk", gone.view()).try();
+
+    env.fs.write(LEAF_PATH, LEAF).match({
+        Err(_) => println("write failed"),
+        Ok(_)  => (),
+    });
+    back ::= a.String().try();
+    write_frame(LEAF_CHANGED, back).try();
+    batch(s, a, "the leaf of g3 restored", back.view()).try();
+
+    std_file = env.fs.read(a, STD_PATH).match({
+        Ok(t)  => t,
+        Err(_) => a.String().try(),
+    });
+    opened ::= a.String().try();
+    open_doc(a, STD_URI, std_file.view(), opened).try();
+    batch(s, a, "a std module opened unchanged", opened.view()).try();
+    closed ::= a.String().try();
+    close_doc(a, STD_URI, closed).try();
+    batch(s, a, "the std module closed", closed.view()).try();
+
+    again ::= a.String().try();
+    change_doc(a, URI0, G0, again).try();
+    batch(
+        s,
+        a,
+        "g0 rewritten unchanged, nothing new to say",
+        again.view()
+    ).try();
+    Ok(0);
+}
+
+// Requests.
+
+// rootUri selects workspace checking.
+open_session = (a: Alloc, into :: String) Res<AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
+    ).try();
+    write_text(ROOT_URI, body).try();
+    body.add("}}").try();
+    write_frame(body.view(), into)
+}
+
+// didOpen carries text inside textDocument.
+open_doc = (a: Alloc, uri: str, text: str, into :: String)
+           Res<AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add(",\"text\":").try();
+    write_text(text, body).try();
+    body.add("}}}").try();
+    write_frame(body.view(), into)
+}
+
+close_doc = (a: Alloc, uri: str, into :: String) Res<AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add("}}}").try();
+    write_frame(body.view(), into)
+}
+
+// Full sync carries the complete buffer in contentChanges[0].text.
+change_doc = (a: Alloc, uri: str, text: str, into :: String)
+             Res<AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add("},\"contentChanges\":[{\"text\":").try();
+    write_text(text, body).try();
+    body.add("}]}}").try();
+    write_frame(body.view(), into)
+}
+
+// Session output.
+
+// One batch through the server, and every frame it produced.
+batch = (s :: Server, a: Alloc, what: str, input: str) Res<AllocError> {
+    out ::= a.String().try();
+    serve(s, input, out).try();
+    println("--- {}", what);
+    walk(out.view());
+    println("    layered {}", s.layered());
+}
+
+// Print every frame body so frame count and ordering remain observable.
+walk = (out: str) {
+    from  :: usize = 0;
+    seen  ::= 0;
+    going ::= true;
+    loop(() { going && from < out.len }, (h) {
+        frame_at(out, from).match({
+            Err(_) => { going = false; },
+            Ok(fr) => { seen = seen + 1; println(
+                "    {}",
+                fr.body
+            ); from = fr.next; },
+        });
+    });
+    (seen == 0).then(() { println("    (no frames)"); });
+}

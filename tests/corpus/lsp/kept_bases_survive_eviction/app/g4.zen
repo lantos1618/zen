@@ -1,0 +1,4 @@
+{ l4 } = app.l4
+{ Env } = std.env
+
+value = () i32 { l4() }

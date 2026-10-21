@@ -80,10 +80,21 @@ StoreEffects* = (a: Alloc) StoreEffects {
     )
 }
 
-finish_ownership* = (c :: Checker) Res<AllocError> {
+// Solved rows are final, so the copy shares their summaries.
+dup_effects* = (e: StoreEffects, a: Alloc) Res<StoreEffects, AllocError> {
+    Ok(StoreEffects(
+        rows: e.rows.dup(a).try(),
+        plain: e.plain.dup(a).try(),
+        alloc: a
+    ))
+}
+
+// Bodies queued before `first` were checked with the rows they settled.
+finish_ownership* = (c :: Checker, first: usize) Res<AllocError> {
     c.store_effects.solve(c).try();
     saved = c.saved_bindings().try();
-    c.own_checks.loop((job) {
+    Range(first, c.own_checks.len).loop((h, i) {
+        job = c.own_checks.get(i).ok_or(AllocError.OutOfMemory).try();
         c.use_bindings(job.bindings);
         c.check_own_body(job.function, job.body, job.ctx).try();
     });

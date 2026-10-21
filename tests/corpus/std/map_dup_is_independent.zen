@@ -1,0 +1,72 @@
+// tests/corpus/std/map_dup_is_independent.zen
+// a dup shares nothing writable with its source: overwriting a key,
+// adding keys past a growth point, and adding to a dup'd Vec in either
+// copy must leave the other copy's answers unchanged.
+
+{ AllocError } = std.mem
+{ Map, Vec } = std.collections
+{ Range } = std.core.range
+{ Res, Ok, Eq, Hash, Hasher } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Key = {
+    id: usize,
+}
+
+Key.impl(Hash, {
+    hash ::= (self: @Self, hasher :: Hasher) u64 { self.id.to_u64() }
+})
+
+Key.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool { self.id == other.id }
+})
+
+fill = (m :: Map<Key, usize>, from: usize, to: usize, scale: usize)
+       Res<AllocError> {
+    Range(from, to).loop((h, i) {
+        m.set(Key(id: i), i * scale).try();
+    });
+    Ok
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    m     ::= alloc.Map<Key, usize>();
+    fill(m, 0, 10, 2).try();
+
+    d ::= m.dup(alloc).try();
+    d.set(Key(id: 3), 99).try();
+    fill(d, 10, 40, 1).try();
+    m.set(Key(id: 4), 77).try();
+
+    println(
+        "source len {} three {} four {} thirty {}",
+        m.len(),
+        m.get(Key(id: 3)).value_or(0),
+        m.get(Key(id: 4)).value_or(0),
+        m.get(Key(id: 30)).value_or(0)
+    );
+    println(
+        "dup len {} three {} four {} thirty {}",
+        d.len(),
+        d.get(Key(id: 3)).value_or(0),
+        d.get(Key(id: 4)).value_or(0),
+        d.get(Key(id: 30)).value_or(0)
+    );
+
+    v ::= alloc.Vec<usize>();
+    v.add(1).try();
+    v.add(2).try();
+    w ::= v.dup(alloc).try();
+    _ = w.set(0, 50);
+    w.add(9).try();
+    println(
+        "vec {} {} dup {} {}",
+        v.len,
+        v.get(0).value_or(0),
+        w.len,
+        w.get(0).value_or(0)
+    );
+    Ok(0);
+}

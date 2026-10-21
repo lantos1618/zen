@@ -25,6 +25,8 @@ measurements are in `reports/actors/w2-runtime.md` of the workspace.
 - `stop()` closes admission; accepted messages still run, then `stopped`,
   then Drop of the state and of the actor's allocator, then the memory is
   freed. Senders still waiting for room in a stopped actor are refused.
+  A refused send never ran: the runtime calls its turn with a null record,
+  which frees the Bytes it carries, before freeing the message block.
 - `join()` waits until that has happened; from the actor itself it returns
   at once. The generation bump that closes admission also sets the slot's
   `FINALIZING` life bit, cleared only after the memory is freed, so a join

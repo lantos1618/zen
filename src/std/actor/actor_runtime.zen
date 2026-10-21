@@ -888,6 +888,7 @@ resolve = (
                 },
                 false => {
                     trace(g, T_REFUSE, index_of(sender), ref_index(to), m);
+                    settle_unrun(at(m));
                     free_block(g, l, at(m));
                 },
             });
@@ -895,6 +896,15 @@ resolve = (
         });
     });
     (delivered && try_acquire(rslot, ref_gen(to))).then(() { schedule(g, l, r); });
+}
+
+// A message that never ran: its turn, called with a null record, frees
+// the Bytes it carries (every spawn's turns accept one). Keyed on the turn
+// alone, since a refused message's receiver may already be gone.
+settle_unrun = (m: Ptr<u8>) {
+    (load(m, M_TURN) != 0).then(() {
+        (guarded_call(load(m, M_TURN), null_ptr<u8>(), m.offset(M_PAYLOAD)) != 0).then(() {});
+    });
 }
 
 // The sender's last receiver let it go: clear its blocked bit, and queue it
@@ -1042,9 +1052,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
                         ref_index(load(a, B_REF)),
                         addr(m)
                     );
-                    (load(a, B_DROP) != 0 && load(m, M_TURN) != 0).then(() {
-                        (guarded_call(load(m, M_TURN), null_ptr<u8>(), m.offset(M_PAYLOAD)) != 0).then(() {});
-                    });
+                    settle_unrun(m);
                 },
             });
             free_block(g, l, m);

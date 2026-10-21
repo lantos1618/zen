@@ -56,6 +56,7 @@ supports* = (feature: IrFeature) bool {
         Threads     => false,
         Native      => false,
         Machine     => false,
+        Barriers    => false,
     })
 }
 
@@ -477,6 +478,7 @@ JavaScript = {
             Machine(_)           => self.out.add(OUTSIDE_SUPPORTS),
             NativeLayout(_)      => self.out.add(OUTSIDE_SUPPORTS),
             NativeClear(_)       => self.out.add(OUTSIDE_SUPPORTS),
+            Opaque(_)            => self.out.add(OUTSIDE_SUPPORTS),
         })
     }
 

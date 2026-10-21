@@ -26,6 +26,7 @@
 { Move, Unary, Binary, Invocation, Print, Convert, Load, Store, CopyMem } = gen.gen_ir
 { Write, SysCall, Pages, Branch, Op, Const } = gen.gen_ir
 { Update, Compare, IndirectCall, HostCall, FloatFormat, ForeignCall } = gen.gen_ir
+{ OpaqueValue } = gen.gen_ir
 TakeAddress = gen.gen_ir.Address
 { coalesce, retarget } = gen.gen_asm_coalesce
 { Flow, flow, reads, written, exit_read, successors, pure, clobbers, aggregate, zeros, group, NONE } = gen.gen_asm_flow
@@ -521,6 +522,11 @@ Propagate = {
             )),
             NativeLayout(_)  => instruction,
             NativeClear(_)   => instruction,
+            Opaque(v)        => Instruction.Opaque(OpaqueValue(
+                out: v.out,
+                source: self.at(v.source),
+                declassify: v.declassify
+            )),
         }))
     }
 

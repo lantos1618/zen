@@ -23,7 +23,8 @@ IrFeature* = { WideInt
     | Host
     | Threads
     | Native
-    | Machine }
+    | Machine
+    | Barriers }
 
 describe* = (feature: IrFeature) str {
     feature.match({
@@ -43,6 +44,7 @@ describe* = (feature: IrFeature) str {
         Threads     => "atomic operations and calls through code addresses",
         Native      => "C functions and constants from C headers",
         Machine     => "SIMD vectors and machine instructions",
+        Barriers    => "constant-time value barriers (std.ct)",
     })
 }
 
@@ -157,6 +159,7 @@ instruction_need = (instruction: Instruction) Res<IrFeature> {
         Machine(_)         => Ok(IrFeature.Machine),
         NativeLayout(_)    => Ok(IrFeature.Native),
         NativeClear(_)     => Ok(IrFeature.Native),
+        Opaque(_)          => Ok(IrFeature.Barriers),
         _                  => Ok(IrFeature.Memory),
     })
 }

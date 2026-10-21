@@ -372,6 +372,11 @@ Check = {
                 self.slot(call.out).try();
                 self.machine_slots(call)
             },
+            Opaque(value)        => {
+                ty = self.slot(value.source).try();
+                integer(ty).ensure(self.fault(IrReason.Type)).try();
+                self.expect(value.out, ty)
+            },
             NativeClear(slot)    => self.slot(slot).try().match({
                 Block(l) => (l.native > 0).ensure(self.fault(IrReason.Type)),
                 _        => Err(self.fault(IrReason.Type)),
@@ -578,6 +583,7 @@ Check = {
             },
             NativeLayout(_)      => Ok,
             NativeClear(_)       => Ok,
+            Opaque(value)        => self.initialized(flags, value.source),
             VolatileLoad(value)  => self.initialized(flags, value.base),
             VolatileStore(value) => {
                 self.initialized(flags, value.base).try();
@@ -650,6 +656,7 @@ write = (flags :: Init, instruction: Instruction) {
         Machine(value)      => { flags.note(value.out); },
         NativeLayout(value) => { flags.note(value.out); },
         NativeClear(slot)   => { flags.note(slot); },
+        Opaque(value)       => { flags.note(value.out); },
         VolatileLoad(value) => { flags.note(value.out); },
         AtomicLoad(value)   => { flags.note(value.out); },
         AtomicUpdate(value) => { flags.note(value.out); },
@@ -1234,6 +1241,7 @@ Payloads = {
             ),
             NativeLayout(_)  => (),
             NativeClear(_)   => (),
+            Opaque(_)        => (),
             Constant(_)      => (),
             Copy(_)          => (),
             UnaryValue(_)    => (),
@@ -1309,6 +1317,7 @@ written = (instruction: Instruction) Res<usize> {
         Machine(v)       => Ok(v.out),
         NativeLayout(v)  => Ok(v.out),
         NativeClear(s)   => Ok(s),
+        Opaque(v)        => Ok(v.out),
         VolatileLoad(v)  => Ok(v.out),
         AtomicLoad(v)    => Ok(v.out),
         AtomicUpdate(v)  => Ok(v.out),

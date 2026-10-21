@@ -75,7 +75,7 @@ first_need = (
     supports : (feature: IrFeature) bool
 ) Res<IrFeature> {
     found :: Res<IrFeature> = refusing(
-        function.secrets.match({ Ok(_) => Ok(IrFeature.Secrets), None => None }),
+        secrets_need(function),
         (feature) { supports(feature) }
     );
     found.match({ Ok(_) => (), None => { found = refusing(
@@ -106,6 +106,14 @@ first_need = (
         });
     });
     found
+}
+
+// Secret parameters need a renderer that keeps their secrecy record.
+secrets_need = (function: Func) Res<IrFeature> {
+    function.secrets.match({
+        Ok(_) => Ok(IrFeature.Secrets),
+        None  => None,
+    })
 }
 
 // A needed feature the renderer refuses; None when nothing is needed or

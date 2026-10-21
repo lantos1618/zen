@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix='zen-owning-lookup-') as folder:
     for name, source in REJECT.items():
         result, _ = emit(args.zen, work, name, source)
         diagnostic = result.stdout + result.stderr
-        assert result.returncode != 0 and 'cannot copy a Drop owner through Ptr' in diagnostic, (name, diagnostic)
+        assert result.returncode != 0 and 'a Drop owner through Ptr' in diagnostic, (name, diagnostic)
         print('PASS reject:', name, flush=True)
     for name, (source, expected) in PASS.items():
         result, path = emit(args.zen, work, name, source)

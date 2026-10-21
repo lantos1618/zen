@@ -6,8 +6,6 @@
 tests/corpus/actor/vector_state_is_16_aligned	vector_state_is_16_aligned.zen:22:24: error: unsupported by this backend: the std.simd operation splat_*
 tests/corpus/bitwise/secret_words_take_public_counts	secret_words_take_public_counts.zen:6:8: error: unsupported by this backend: a Secret parameter
 tests/corpus/file-io/posix_stream/main	main.zen:93:43: error: unsupported by this backend: a native callback on a target without C
-tests/corpus/net/tcp_connect/main	stdout differs (15 bytes, expected 12) 
-tests/corpus/net/tls_connect/main	stdout differs (51 bytes, expected 49) 
 tests/corpus/std/carry_limbs	std/simd.zen:218:22: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu_*)
 tests/corpus/std/constant_time	constant_time.zen:154:9: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.value_barrier`
 tests/corpus/std/secret_discipline_accepts_constant_time_code	std/ct/ct.zen:48:34: error: unsupported by this backend: the compiler-provided operation `std.ct.ct.declassify_barrier`

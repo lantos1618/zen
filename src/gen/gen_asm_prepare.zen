@@ -1281,7 +1281,8 @@ shift = (
             symbol: c.symbol,
             header: c.header,
             args: moved(alloc, c.args, base).try(),
-            typed: c.typed
+            typed: c.typed,
+            library: c.library
         )),
         NativeConst(v)   => Instruction.NativeConst(NativeValue(
             out: base + v.out,

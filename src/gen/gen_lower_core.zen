@@ -215,6 +215,12 @@ Lowerer* = {
     // Whether the target runs `Machine` instructions (std.simd vectors, CPU
     // feature tests, the capability-gated instructions): IR-C and the jit.
     machines* :: bool = false,
+    // A target without C headers that calls C functions by symbol through
+    // the C ABI (the jit): bodyless declarations lower to `Foreign` calls.
+    externs* :: bool = false,
+    // A target whose host C compiler answers header constants and native
+    // record layouts after lowering (gen_probe): they lower as for C.
+    probe* :: bool = false,
     // A 32-byte vector type was shaped: calls are checked at the AVX2
     // boundary (`avx2_boundary`).
     wide_vectors* :: bool = false,
@@ -2510,7 +2516,7 @@ Lowerer* = {
                 Ok(out)
             },
             None         => {
-                self.c_calls.ensure(unsupported(
+                (self.c_calls || self.probe).ensure(unsupported(
                     span,
                     self.alloc.String(
                         "the C header constant `{}` on a target without C",
@@ -4346,7 +4352,9 @@ lower_native* = (
     check    : Checker,
     entry    : usize,
     c_calls  : bool,
-    machines : bool
+    machines : bool,
+    externs  : bool,
+    probe    : bool
 )
                 Res<Program, LowerError> {
     module = tree.module_at(entry).ok_or(unsupported(nowhere(), "a missing entry module")).try();
@@ -4386,6 +4394,8 @@ lower_native* = (
         vias: alloc.Vec<Res<TyId>>(),
         c_calls: c_calls,
         machines: machines,
+        externs: externs,
+        probe: probe,
         natives: alloc.Vec<NativeRecord>(),
         made: alloc.Vec<TyId>(),
         broken: alloc.Vec<Broken>(),

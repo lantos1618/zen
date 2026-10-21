@@ -412,7 +412,16 @@ renderer with no semantic work:
   the program, then runs it in the compiler: every slot is a cell in a mapped
   frame stack, memory is real host memory, and system calls go through
   `std.sys` with the IR's -errno convention. Output buffering, trap reports,
-  exit 134 and the exit hook follow the C runtime. `refused_by_jit` refuses
+  exit 134 and the exit hook follow the C runtime. A `Foreign` call (the C
+  function's symbol, header, argument slots and `library`) is resolved with
+  dlopen/dlsym before the program runs (`gen_jit_extern`) and called through
+  a stub that follows the System V x86-64 ABI; other hosts refuse C calls by
+  name. Header constants and native record layouts are answered by the host
+  C compiler: `gen_probe` writes one C program that prints them, the driver
+  builds and runs it with `cc` and caches its output under
+  `build/.zen/probe/` by the program's text (target and headers), and the
+  numbers replace `NativeConst`/`NativeLayout`. Without a host compiler they
+  keep lowering's refusal. `refused_by_jit` refuses
   threads, JavaScript host calls, printing f64 and f64
   `%` before anything runs. It runs std.simd's `Instruction.Machine`
   operations lane by lane on 16-aligned blocks, and `CpuHas` always answers

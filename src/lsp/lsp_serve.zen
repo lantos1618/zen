@@ -456,6 +456,9 @@ Server* = {
         })
     }
 
+    // Whether every kept user base is over a kept std base.
+    layered* = (self: @Self) bool { self.notes.layered() }
+
     build_for = (self :: @Self, path: str, t: Alloc) Res<Shared, AllocError> {
         self.notes.shared(
             self.env,

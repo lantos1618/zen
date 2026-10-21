@@ -37,6 +37,20 @@ NodeArena<T> = {
     at = (self: @Self, i: usize) T {
         self.pages.ptr().read(i / NODE_PAGE).read(i % NODE_PAGE)
     }
+
+    // Full pages are immutable and shared; the partial page is copied so
+    // the copy's additions never write into this arena.
+    dup = (self: @Self, a: Alloc) Res<NodeArena<T>, AllocError> {
+        pages ::= self.pages.dup(a).try();
+        filled = self.len % NODE_PAGE;
+        (filled > 0).then(() {
+            last = self.len / NODE_PAGE;
+            page = a.realloc(null_ptr<T>(), NODE_PAGE).try();
+            page.copy_from(self.pages.ptr().read(last), filled);
+            pages.set(last, page).ok_or(AllocError.OutOfMemory).try();
+        });
+        Ok(NodeArena(pages: pages, len: self.len, alloc: a))
+    }
 }
 
 NodeArena = <T>(a: Alloc) NodeArena<T> {
@@ -92,6 +106,27 @@ Ast* = {
         self.blocks.add(node).try();
         self.block_count = self.block_count + 1;
         Ok(id);
+    }
+
+    // A tree in `a` that starts with every node of this one under the same
+    // ids; additions to either leave the other unchanged.
+    dup* = (self: @Self, a: Alloc) Res<Ast, AllocError> {
+        Ok(Ast(
+            modules: self.modules.dup(a).try(),
+            module_origins: self.module_origins.dup(a).try(),
+            c_bindings: self.c_bindings.dup(a).try(),
+            exprs: self.exprs.dup(a).try(),
+            types: self.types.dup(a).try(),
+            patterns: self.patterns.dup(a).try(),
+            blocks: self.blocks.dup(a).try(),
+            trivia: self.trivia.dup(a).try(),
+            expr_count: self.expr_count,
+            type_count: self.type_count,
+            pattern_count: self.pattern_count,
+            block_count: self.block_count,
+            c_binding_count: self.c_binding_count,
+            alloc: a,
+        ))
     }
 
     add_module* = (self :: @Self, node: Module) Res<AllocError> {

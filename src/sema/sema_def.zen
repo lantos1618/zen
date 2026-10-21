@@ -69,6 +69,12 @@ World* = {
     // missing import is one diagnostic.
     granted :: Map<str, bool>,
 
+    // Take the grants another world over a prefix of this tree recorded.
+    keep_grants* = (self :: @Self, from: World) Res<AllocError> {
+        self.granted = from.granted.dup(self.alloc).try();
+        Ok
+    }
+
     grant* = (self :: @Self, mi: usize, name: str) Res<AllocError> {
         key = self.alloc.String("{} {}", mi, name).try();
         self.granted.set(key.view(), true)

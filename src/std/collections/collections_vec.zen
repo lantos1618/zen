@@ -110,6 +110,14 @@ Vec*<T> = {
         Ok
     }
 
+    // A copy of the elements in `a`; each element is copied bitwise, so
+    // values that own storage keep sharing it.
+    dup* = (self: @Self, a: Alloc) Res<Vec<T>, AllocError> {
+        copy ::= a.Vec<T>();
+        copy.add_all(self.data, self.len).try();
+        Ok(copy);
+    }
+
     grow = (self :: @Self) Res<AllocError> {
         (self.capacity < usize.MAX).ensure(AllocError.OutOfMemory).try();
         self.reallocate((self.capacity == 0).match({

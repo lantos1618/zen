@@ -7,7 +7,7 @@
 { str, String } = std.text
 { Res, Ok, None, loop, Range } = std.core
 { DeclId } = sema.sema_id
-{ TyId, Types, ResForm, TyRes, TyNamed, TyArray, StdDecls } = sema.sema_ty
+{ TyId, Types, ResForm, TyRes, TyNamed, TyArray, StdDecls, dup_types } = sema.sema_ty
 { is_integer, is_float } = sema.sema_ty
 { World, ImportBinding, Def, ModuleTable } = sema.sema_def
 { module_display } = sema.sema_def
@@ -19,7 +19,7 @@
 { NumericConversion, IntegerBitOperation } = sema.sema_numeric
 { Primitive } = sema.sema_prim
 { Printer, IO_MODULE, printer_named } = sema.sema_print
-{ OwnCheck, StoreEffects, parameter_lent, parameter_consumed, parameter_consumed_conditionally } = sema.sema_store
+{ OwnCheck, StoreEffects, dup_effects, parameter_lent, parameter_consumed, parameter_consumed_conditionally } = sema.sema_store
 { owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer, mailbox_owned_bytes, mailbox_described } = sema.sema_copy
 { decl_at } = sema.sema_def
 { ref_converts } = sema.sema_bound
@@ -1140,6 +1140,69 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
     c.check_import_gate().try();
     c.know_std_decls().try();
     Ok(c);
+}
+
+// A checker in `a` over `tree`, which extends this checker's tree. It keeps
+// every answer and diagnostic this checker settled, so only the modules the
+// extension adds still need checking; this checker is left unchanged.
+// The copy's containers are its own, but the values they hold (instance
+// memos, walk lists, store summaries) are shared with this checker: the
+// extension may replace an entry, never mutate a value it reached here.
+extended* = (c: Checker, a: Alloc, tree: Ast) Res<Checker, AllocError> {
+    world ::= a.World(tree).try();
+    world.keep_grants(c.world).try();
+    d ::= Checker(
+        tree: tree,
+        world: world,
+        types: dup_types(c.types, a).try(),
+        diags: c.diags.dup(a).try(),
+        lambda_failures: c.lambda_failures.dup(a).try(),
+        reported: c.reported.dup(a).try(),
+        expr_memo: c.expr_memo.dup(a).try(),
+        type_memo: c.type_memo.dup(a).try(),
+        resolved_types: c.resolved_types.dup(a).try(),
+        resolved_type_decls: c.resolved_type_decls.dup(a).try(),
+        meta_memo: c.meta_memo.dup(a).try(),
+        meta_count_memo: c.meta_count_memo.dup(a).try(),
+        meta_walks: c.meta_walks.dup(a).try(),
+        meta_name_reads: c.meta_name_reads.dup(a).try(),
+        meta_projs: c.meta_projs.dup(a).try(),
+        walk_stack: c.walk_stack.dup(a).try(),
+        walk_now: c.walk_now.dup(a).try(),
+        supply_memo: c.supply_memo.dup(a).try(),
+        calls: c.calls.dup(a).try(),
+        own_checks: c.own_checks.dup(a).try(),
+        numeric_conversions: c.numeric_conversions.dup(a).try(),
+        integer_bits: c.integer_bits.dup(a).try(),
+        primitives: c.primitives.dup(a).try(),
+        printers: c.printers.dup(a).try(),
+        bit_widths: c.bit_widths.dup(a).try(),
+        discriminant_calls: c.discriminant_calls.dup(a).try(),
+        variant_name_calls: c.variant_name_calls.dup(a).try(),
+        param_memo: c.param_memo.dup(a).try(),
+        callee_access: c.callee_access.dup(a).try(),
+        lambda_insts: c.lambda_insts.dup(a).try(),
+        bound_views: c.bound_views.dup(a).try(),
+        statement_tails: c.statement_tails.dup(a).try(),
+        carrier_memo: c.carrier_memo.dup(a).try(),
+        edges: c.edges.dup(a).try(),
+        member_edges: c.member_edges.dup(a).try(),
+        instances: c.instances.dup(a).try(),
+        set_memo: c.set_memo.dup(a).try(),
+        raised: c.raised.dup(a).try(),
+        locals: c.locals.dup(a).try(),
+        tvars: c.tvars.dup(a).try(),
+        bounds: c.bounds.dup(a).try(),
+        tparam_decls: c.tparam_decls.dup(a).try(),
+        meta_recheck: c.meta_recheck,
+        store_effects: dup_effects(c.store_effects, a).try(),
+        block_base: c.block_base,
+        syntax_faults: c.syntax_faults,
+        alloc: a,
+    );
+    d.check_import_gate().try();
+    d.know_std_decls().try();
+    Ok(d);
 }
 
 know_std_decls = (c :: Checker) Res<AllocError> {

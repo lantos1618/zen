@@ -183,6 +183,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='zen-jit-native-') as directory:
         work = Path(directory)
         shutil.copy(ROOT/'tests/quality/fixtures/jit_native/main.zen', work/'main.zen')
+        shutil.copy(ROOT/'tests/quality/fixtures/jit_native/heap.zen', work/'heap.zen')
         for package in ('gen', 'sema', 'zen', 'lsp', 'fmt'):
             (work/package).symlink_to(ROOT/'src'/package, target_is_directory=True)
         generated = work/'fixture.c'
@@ -195,6 +196,26 @@ def main():
         actual = run([str(work/'fixture'), publish], work)
         if actual != 'published true result 42 preserved true\n':
             raise RuntimeError(f'native publication failed: {actual!r}')
+        heap_source = work/'heap-program.zen'
+        heap_source.write_text("""
+{ Ptr, null_ptr } = std.mem
+{ println } = std.io
+Heap = c.bind("stdlib.h", {
+    malloc = (bytes: usize) Ptr<u8>
+    free = (pointer: Ptr<u8>) ()
+})
+main = () i32 {
+    Heap.free(null_ptr<u8>());
+    pointer = Heap.malloc(8);
+    pointer.is_null().match({
+        true => 1,
+        false => { pointer.to<u64>().write(0, 42); println("heap {}", pointer.to<u64>().read(0)); Heap.free(pointer); 0 },
+    })
+}
+""")
+        heap_command = [str(Path(args.zen).resolve()),'build',str(work),'--entry','heap-program.zen','--std',str(ROOT/'src'),'--backend','jit']
+        if run(heap_command,work) != 'heap 42\n':
+            raise RuntimeError('standard heap calls failed')
         if platform.system() == 'Linux':
             fail = work/'deny-execute.c'
             fail.write_text(r"""
@@ -225,6 +246,9 @@ int main(int argc, char **argv) {
             if denied != 'published false result 0 preserved true\n':
                 raise RuntimeError('failed executable protection was not refused: '+denied)
             print('host: executable protection failure refused')
+            if run([str(work/'deny-execute'),*heap_command],work) != 'heap 42\n':
+                raise RuntimeError('standard heap calls required executable memory')
+            print('host: typed heap calls work with executable publication denied')
         for target in targets:
             output = list(map(int, run([str(work/'fixture'), target], work).split()))
             count, *rest = output

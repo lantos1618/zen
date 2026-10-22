@@ -1,3 +1,4 @@
+{ check } = heap
 { Alloc, AllocError } = std.mem
 { Env } = std.env
 { verify, message } = gen.gen_verify
@@ -352,7 +353,9 @@ main = (env: Env) Res<i32, AllocError> {
         Err(error) => { error.match({ Invalid(fault) => println("invalid function {} block {}: {}", fault.function, fault.block, fault.reason.message()), _ => println("verification allocation failed") }); false },
     });
     status :: i32 = 0;
-    valid.match({
+    heap_valid = check(a).try();
+    (!heap_valid).then(() { println("heap signature checks failed"); });
+    (valid && heap_valid).match({
     false => { status = 1; },
     true  => {
     mode = env.argv.get(1).value_or("run");

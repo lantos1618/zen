@@ -415,8 +415,10 @@ renderer with no semantic work:
   exit 134 and the exit hook follow the C runtime. A `Foreign` call (the C
   function's symbol, header, argument slots and `library`) is resolved with
   dlopen/dlsym before the program runs (`gen_jit_extern`) and called through
-  a stub that follows the System V x86-64 ABI; other hosts refuse C calls by
-  name. Header constants and native record layouts are answered by the host
+  a stub that follows the System V x86-64 ABI. Exact standard-library
+  `malloc` and `free` signatures use typed host calls on every supported JIT
+  platform and require no executable stub. Other hosts refuse general C calls
+  by name. Header constants and native record layouts are answered by the host
   C compiler: `gen_probe` writes one C program that prints them, the driver
   builds and runs it with `CC` (or `cc`) in a temporary directory, and the
   numbers replace `NativeConst`/`NativeLayout`. Answers are refreshed for each
@@ -475,7 +477,8 @@ renderer with no semantic work:
   invalidation. A failed publication leaves execution in the interpreter.
   The native tests exercise both encoders, calling conventions, overflow and
   protection failures; AArch64 Linux execution and cache publication can also
-  run under QEMU. Native macOS execution still requires an Apple Silicon runner.
+  run under QEMU. The `native-jit-macos` CI job checks actual Apple Silicon
+  execution and compares a complete JIT SHA-256 run with C.
   Sharing instruction selection and register allocation with the text assembly
   writers remains work to do, as do native aggregate, floating-point and
   recursive effectful calls. Those limits must remain visible in benchmarks.

@@ -4,14 +4,14 @@
 // with dlopen. Calls go through a stub written into executable memory that
 // follows the host's C ABI: it loads the argument registers and stack words
 // from a frame, calls the symbol, and stores both result registers back.
-// Only x86-64 System V has a stub; elsewhere calls of C functions are
-// refused before the program runs.
+// General calls use the x86-64 System V stub. The standard malloc/free
+// signatures have typed host calls on every supported JIT platform.
 { Alloc, AllocError, Ptr, null_ptr } = std.mem
 { Vec, Map } = std.collections
 { String, str, c_text } = std.text
 { Res, Ok, Err, None, loop, Range } = std.core
 { mmap, mprotect, munmap, pointer_at, address_of, call_entry } = std.sys
-{ Program, Func, Scalar, ForeignCall, float } = gen.gen_ir
+{ Program, Func, Scalar, ForeignCall, float, same } = gen.gen_ir
 { Platform } = gen.gen_sys
 
 Dl = c.bind("dlfcn.h", {
@@ -20,6 +20,45 @@ Dl = c.bind("dlfcn.h", {
     dlopen = (path: Ptr<u8>, flags: i32) Ptr<u8>
     dlsym = (handle: Ptr<u8>, symbol: Ptr<u8>) Ptr<u8>
 })
+
+Heap = c.bind("stdlib.h", {
+    malloc = (bytes: usize) Ptr<u8>
+    free = (pointer: Ptr<u8>) ()
+})
+
+// These exact signatures use the compiler's C ABI rather than an executable
+// stub. The header, library and types distinguish them from symbol overrides.
+HeapCall = { Allocate | Release,
+    invoke = (self: @Self, value: u64) Returned {
+        self.match({
+            Allocate => Returned(
+                word: address_of(Heap.malloc(value.to_usize().value_or(
+                    0
+                ))).to_u64(),
+                float: 0
+            ),
+            Release  => {
+                Heap.free(pointer_at(value.to_usize().value_or(0)));
+                Returned(word: 0, float: 0)
+            },
+        })
+    }
+}
+
+heap_call = (f: Func, call: ForeignCall) Res<HeapCall> {
+    (call.header.eq(
+        "stdlib.h"
+    ) && call.library.is_empty() && !call.typed && call.args.len == 1).ensure().try();
+    input  = f.slots.get(call.args.get(0).value_or(0)).value_or(Scalar.Unit);
+    output = f.slots.get(call.out).value_or(Scalar.Unit);
+    (call.symbol.eq("malloc") && same(input, Scalar.U64) && same(output, Scalar.Ptr)).match({
+        true  => Ok(HeapCall.Allocate),
+        false => (call.symbol.eq("free") && same(input, Scalar.Ptr) && same(output, Scalar.Unit)).match({
+            true  => Ok(HeapCall.Release),
+            false => None,
+        }),
+    })
+}
 
 // Each symbol's address, the stub, and the frame it reads: the function,
 // the stack word count, six integer registers, eight SSE registers, the
@@ -41,18 +80,22 @@ STUB_WORDS: usize = 18
 // is one.
 link* = (a: Alloc, program: Program, platform: Platform)
         Res<Linking, AllocError> {
-    symbols ::= a.Map<str, usize>();
-    refused :: Res<str> = None;
-    missing :: Res<str> = None;
-    calls   ::= false;
+    symbols    ::= a.Map<str, usize>();
+    refused    :: Res<str> = None;
+    missing    :: Res<str> = None;
+    needs_stub ::= false;
     program.functions.loop((f) {
         f.blocks.loop((block) {
             block.code.loop((i) {
                 i.match({
                     Foreign(call) => {
-                        calls = true;
-                        (platform.match({ LinuxX86_64 => false, _ => true })
-                            || stack_words(f, call) > STACK_WORDS).then(() {
+                        bridged    = heap_call(
+                            f,
+                            call
+                        ).match({ Ok(_) => true, None => false });
+                        needs_stub = needs_stub || !bridged;
+                        (!bridged && (platform.match({ LinuxX86_64 => false, _ => true })
+                            || stack_words(f, call) > STACK_WORDS)).then(() {
                             refused.match({ Ok(_) => (), None => { refused = Ok(
                                 f.name
                             ); } });
@@ -79,7 +122,7 @@ link* = (a: Alloc, program: Program, platform: Platform)
         Ok(name) => Ok(Linking.Refused(name)),
         None     => missing.match({
             Ok(symbol) => Ok(Linking.Missing(symbol)),
-            None       => calls.match({
+            None       => needs_stub.match({
                 false => Ok(Linking.Ready(Linked(
                     symbols: symbols,
                     stub: 0,
@@ -171,6 +214,19 @@ stack_words = (f: Func, call: ForeignCall) usize {
 // floats in the eight SSE registers (an f32 in the low four bytes), the rest
 // on the stack in order. Small integers are already extended in their cells.
 invoke* = (
+    linked  : Linked,
+    address : usize,
+    f       : Func,
+    call    : ForeignCall,
+    at      : (slot: usize) usize
+) Returned {
+    heap_call(f, call).match({
+        Ok(kind) => kind.invoke(pointer_at(at(call.args.get(0).value_or(0))).to<u64>().read(0)),
+        None     => invoke_stub(linked, address, f, call, (slot) { at(slot) }),
+    })
+}
+
+invoke_stub = (
     linked  : Linked,
     address : usize,
     f       : Func,

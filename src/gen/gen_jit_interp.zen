@@ -36,6 +36,7 @@
 { Sys, Platform, constant_value } = gen.gen_sys
 { Code, decode, encode, size_of, minimum, maximum, ceiling, cell_size } = gen.gen_jit_decode
 { Linked, invoke } = gen.gen_jit_extern
+{ Image, compile } = gen.gen_jit_native
 
 // How a run ended. `Returned` continues the caller; the others unwind to
 // the outermost call (or to a guarded call, for a trap).
@@ -164,7 +165,9 @@ execute* = (
                     at = at + size_of(c);
                 });
             });
-            vm ::= Interp(
+            text = a.String().try();
+            native ::= compile(a, program, platform).try();
+            vm     ::= Interp(
                 info: info,
                 codes: codes,
                 program: program,
@@ -184,10 +187,13 @@ execute* = (
                 env: address_of(envp().to<u8>()),
                 held: 0,
                 word: 0,
-                text: a.String().try(),
+                text: text,
+                native: native,
                 linked: linked
             );
-            (info == 0).match({ true => Ok(None), false => Ok(Ok(vm.main())) })
+            result = (info == 0).match({ true => Ok(None), false => Ok(Ok(vm.main())) });
+            native.close();
+            result
         },
     })
 }
@@ -221,7 +227,7 @@ argv_block = (argv: Vec<str>, anonymous: i32) usize {
 }
 
 // Code addresses are function numbers above this base: `InvokeAt` and the
-// guarded call map them back, and no host code is ever entered.
+// guarded call map them back. Native entry addresses stay private to Image.
 CODE_BASE: usize = 1152921504606846976
 
 Interp = {
@@ -254,6 +260,7 @@ Interp = {
     info: usize,
     // The C functions the program calls (gen_jit_extern).
     linked: Linked,
+    native: Image,
 
     // The entry's result, then the exit hook a program may install in its
     // first process word, as `zr_exit` runs it.
@@ -318,7 +325,12 @@ Interp = {
                                 cell_size(slot_ty(f, i))
                             );
                         });
-                        ended    = self.perform(callee, inner, out);
+                        ended    = (self.native.entries.ptr().read(
+                            callee
+                        ) == 0).match({
+                            true  => self.perform(callee, inner, out),
+                            false => self.run_native(callee, inner, out),
+                        });
                         self.top = saved;
                         ended
                     },
@@ -357,7 +369,12 @@ Interp = {
                                     second
                                 ); }
                             );
-                            ended    = self.perform(index, inner, out);
+                            ended    = (self.native.entries.ptr().read(
+                                index
+                            ) == 0).match({
+                            true  => self.perform(index, inner, out),
+                            false => self.run_native(index, inner, out),
+                        });
                             self.top = saved;
                             ended
                         },
@@ -367,9 +384,20 @@ Interp = {
         })
     }
 
+    // Call sites consult the entry table directly so interpreted recursion
+    // reaches perform without another wrapper. Publication can still fail.
+    run_native = (self :: @Self, index: usize, frame: usize, out: usize)
+              Outcome {
+        self.native.run(index, frame).match({
+            Returned(value) => { set_u64(out, value); Outcome.Returned },
+            Trapped(fault)  => self.trap(fault.span, fault.what),
+            Refused         => self.perform(index, frame, out),
+        })
+    }
+
     // The encoded steps of function `index` (gen_jit_decode `encode`).
     perform = (self :: @Self, index: usize, frame: usize, out: usize)
-              Outcome {
+                Outcome {
         table = part(self.info +% index *% 32, 0);
         image = part(self.info +% index *% 32, 2) +% part(self.info +% index *% 32, 3) *% 16;
         Range(0, part(image, 0)).loop((i) {
@@ -775,7 +803,18 @@ Interp = {
                         false => move_bytes(to, from, size),
                     });
                 });
-                ended    = self.perform(callee, inner, frame +% part(s, 1));
+                ended    = (self.native.entries.ptr().read(callee) == 0).match({
+                            true  => self.perform(
+                                callee,
+                                inner,
+                                frame +% part(s, 1)
+                            ),
+                            false => self.run_native(
+                                callee,
+                                inner,
+                                frame +% part(s, 1)
+                            ),
+                        });
                 self.top = inner;
                 ended
             },

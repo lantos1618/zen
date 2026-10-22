@@ -194,6 +194,7 @@ jitcorpus: build
 
 .PHONY: nativecheck
 nativecheck: build
+	$(PY) tests/quality/jit_native.py --zen ./zen
 	$(PY) tests/library/native-bindings/run.py --zen ./zen
 	$(PY) tests/library/native-socket/run.py --zen ./zen --ubsan
 	$(PY) tests/library/readiness/run.py --zen ./zen --ubsan

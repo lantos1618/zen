@@ -7,7 +7,7 @@
 { address_of } = std.sys
 { println } = std.io
 { encode, compile } = gen.gen_jit_native
-{ Program, Func, Scalar, BasicBlock, Terminator, Instruction, Const, NativeRecord, Binary, Op, Convert, Invocation, Branch, Load, Store, StaticBytes, Layout, Unary, UnaryOp } = gen.gen_ir
+{ Program, Func, Scalar, BasicBlock, Terminator, Instruction, Const, NativeRecord, Binary, Op, Convert, Invocation, Branch, Load, Store, StaticBytes, Layout, Unary, UnaryOp, Fault, TrapKind } = gen.gen_ir
 { Platform } = gen.gen_sys
 { nowhere } = std.source
 
@@ -35,6 +35,37 @@ binary = (
         slots: slots,
         blocks: blocks,
         result: slots.get(2).value_or(Scalar.Unit)
+    ))
+}
+
+fixed_binary = (
+    a     : Alloc,
+    ty    : Scalar,
+    op    : Op,
+    value : i64
+) Res<Func, AllocError> {
+    shifting = op.match({ Shl => true, Shr => true, Rotr => true, _ => false });
+    slots ::= a.Vec<Scalar>();
+    slots.add(ty).try();
+    slots.add(shifting.match({ true => Scalar.U64, false => ty })).try();
+    slots.add(ty).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Constant(Const(out: 1, value: value))).try();
+    code.add(Instruction.BinaryValue(Binary(
+        out: 2,
+        left: 0,
+        right: 1,
+        op: op,
+        span: nowhere()
+    ))).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(2))).try();
+    Ok(Func(
+        name: "fixed_binary",
+        parameters: 1,
+        slots: slots,
+        blocks: blocks,
+        result: ty
     ))
 }
 
@@ -156,6 +187,85 @@ memory = (a: Alloc, ty: Scalar, overflow: bool) Res<Func, AllocError> {
     ))
 }
 
+indexed_memory = (a: Alloc, ty: Scalar) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    [Scalar.Ptr, ty, Scalar.U64, Scalar.U64, Scalar.U64, Scalar.Ptr, ty, Scalar.U64, Scalar.Ptr].loop((t) { slots.add(t).try(); });
+    size: i64 = ty.match({ I8 => 1, U8 => 1, I16 => 2, U16 => 2, I32 => 4, U32 => 4, _ => 8 });
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Constant(Const(out: 3, value: size))).try();
+    code.add(Instruction.BinaryValue(Binary(
+        out: 4,
+        left: 2,
+        right: 3,
+        op: Op.WrapMul,
+        span: nowhere()
+    ))).try();
+    code.add(Instruction.BinaryValue(Binary(
+        out: 5,
+        left: 0,
+        right: 4,
+        op: Op.WrapAdd,
+        span: nowhere()
+    ))).try();
+    code.add(Instruction.LoadValue(Load(out: 6, base: 5, offset: 3))).try();
+    code.add(Instruction.BinaryValue(Binary(
+        out: 7,
+        left: 2,
+        right: 3,
+        op: Op.WrapMul,
+        span: nowhere()
+    ))).try();
+    code.add(Instruction.BinaryValue(Binary(
+        out: 8,
+        left: 0,
+        right: 7,
+        op: Op.WrapAdd,
+        span: nowhere()
+    ))).try();
+    code.add(Instruction.StoreValue(Store(base: 8, offset: 3, value: 1))).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(6))).try();
+    Ok(Func(
+        name: "indexed_memory",
+        parameters: 3,
+        slots: slots,
+        blocks: blocks,
+        result: ty
+    ))
+}
+
+displaced_memory = (
+    a            : Alloc,
+    displacement : i64,
+    offset       : usize
+) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    [Scalar.Ptr, Scalar.U64, Scalar.Ptr, Scalar.U64].loop((ty) { slots.add(ty).try(); });
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Constant(Const(out: 1, value: displacement))).try();
+    code.add(Instruction.BinaryValue(Binary(
+        out: 2,
+        left: 0,
+        right: 1,
+        op: Op.WrapAdd,
+        span: nowhere()
+    ))).try();
+    code.add(Instruction.LoadValue(Load(
+        out: 3,
+        base: 2,
+        offset: offset
+    ))).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(3))).try();
+    Ok(Func(
+        name: "displaced_memory",
+        parameters: 1,
+        slots: slots,
+        blocks: blocks,
+        result: Scalar.U64
+    ))
+}
+
 shift = (a: Alloc, ty: Scalar, op: Op) Res<Func, AllocError> {
     function = binary(a, ty, op, false).try();
     function.slots.ptr().write(1, Scalar.U64);
@@ -274,6 +384,38 @@ unary = (a: Alloc, ty: Scalar, op: UnaryOp) Res<Func, AllocError> {
     ))
 }
 
+// Every argument remains live across a native call, forcing both saved
+// registers and spills even when the target has a large register pool.
+pressure = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    Range<usize>(0, 21).loop((_) { slots.add(Scalar.U64).try(); });
+    code      ::= a.Vec<Instruction>();
+    arguments ::= a.Vec<usize>(); arguments.add(0).try(); arguments.add(1).try();
+    code.add(Instruction.Invoke(Invocation(
+        out: 10,
+        function: 100,
+        args: arguments
+    ))).try();
+    Range<usize>(0, 10).loop((i) {
+        code.add(Instruction.BinaryValue(Binary(
+            out: 11 + i,
+            left: 10 + i,
+            right: i,
+            op: Op.WrapAdd,
+            span: nowhere()
+        ))).try();
+    });
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(20))).try();
+    Ok(Func(
+        name: "pressure",
+        parameters: 10,
+        slots: slots,
+        blocks: blocks,
+        result: Scalar.U64
+    ))
+}
+
 program = (a: Alloc) Res<Program, AllocError> {
     functions ::= a.Vec<Func>();
     types = [
@@ -321,6 +463,95 @@ program = (a: Alloc) Res<Program, AllocError> {
     functions.add(literal(a).try()).try();
     [Scalar.I8, Scalar.I16, Scalar.I32, Scalar.I64].loop((ty) { functions.add(unary(a, ty, UnaryOp.Neg).try()).try(); });
     functions.add(unary(a, Scalar.Bool, UnaryOp.Not).try()).try();
+    explicit = memory(a, Scalar.U64, false).try();
+    first    = explicit.blocks.get(0).value_or(BasicBlock(code: a.Vec<Instruction>(), exit: Terminator.Return(0)));
+    explicit.blocks.ptr().write(
+        0,
+        BasicBlock(
+            code: first.code,
+            exit: Terminator.Trap(Fault(
+                what: TrapKind.OutOfBounds,
+                span: nowhere()
+            ))
+        )
+    );
+    functions.add(explicit).try();
+    functions.add(cycle(a, 250, false).try()).try();
+    functions.add(pressure(a).try()).try();
+    // At the admitted frame limit, saving allocated registers crosses the
+    // 4 KiB boundary. The wrapper supplies arguments without a large C frame.
+    large_slots ::= a.Vec<Scalar>();
+    Range<usize>(0, 508).loop((_) { large_slots.add(Scalar.U64).try(); });
+    large_code ::= a.Vec<Instruction>();
+    pair       ::= a.Vec<usize>(); pair.add(0).try(); pair.add(1).try();
+    large_code.add(Instruction.Invoke(Invocation(
+        out: 507,
+        function: 100,
+        args: pair
+    ))).try();
+    Range<usize>(0, 507).loop((i) {
+        large_code.add(Instruction.BinaryValue(Binary(
+            out: 507,
+            left: 507,
+            right: i,
+            op: Op.WrapAdd,
+            span: nowhere()
+        ))).try();
+    });
+    large_blocks ::= a.Vec<BasicBlock>();
+    large_blocks.add(BasicBlock(
+        code: large_code,
+        exit: Terminator.Return(507)
+    )).try();
+    functions.add(Func(
+        name: "large_saved_frame",
+        parameters: 507,
+        slots: large_slots,
+        blocks: large_blocks,
+        result: Scalar.U64
+    )).try();
+    wrapper_slots ::= a.Vec<Scalar>(); wrapper_slots.add(Scalar.U64).try(); wrapper_slots.add(Scalar.U64).try();
+    repeated ::= a.Vec<usize>();
+    Range<usize>(0, 507).loop((_) { repeated.add(0).try(); });
+    wrapper_code ::= a.Vec<Instruction>();
+    wrapper_code.add(Instruction.Invoke(Invocation(
+        out: 1,
+        function: 253,
+        args: repeated
+    ))).try();
+    wrapper_blocks ::= a.Vec<BasicBlock>();
+    wrapper_blocks.add(BasicBlock(
+        code: wrapper_code,
+        exit: Terminator.Return(1)
+    )).try();
+    functions.add(Func(
+        name: "large_frame_caller",
+        parameters: 1,
+        slots: wrapper_slots,
+        blocks: wrapper_blocks,
+        result: Scalar.U64
+    )).try();
+    [Scalar.U32, Scalar.U64].loop((ty) {
+        bits: i64 = ty.match({ U32 => 32, _ => 64 });
+        [Op.Shl, Op.Shr, Op.Rotr].loop((op) {
+            [0, 1, bits - 1, bits, bits + 1, 255, -1].loop((count: i64) {
+                functions.add(fixed_binary(a, ty, op, count).try()).try();
+            });
+        });
+    });
+    [Op.WrapAdd, Op.WrapSub, Op.WrapMul, Op.And, Op.Or, Op.Xor].loop((op) {
+        [0, 1, 255, 2147483647, 2147483648, 4294967295].loop((value: i64) {
+            functions.add(fixed_binary(a, Scalar.U32, op, value).try()).try();
+        });
+    });
+    [Op.WrapAdd, Op.WrapSub, Op.WrapMul, Op.And, Op.Or, Op.Xor].loop((op) {
+        [0, 1, -1, 2147483647, 2147483648, -2147483648, 81985529216486895].loop((value: i64) {
+            functions.add(fixed_binary(a, Scalar.U64, op, value).try()).try();
+        });
+    });
+    types.loop((ty) { functions.add(indexed_memory(a, ty).try()).try(); });
+    functions.add(displaced_memory(a, 2147483632, 32).try()).try();
+    functions.add(displaced_memory(a, -2147483640, 3).try()).try();
     entry = functions.len;
     entry_slots ::= a.Vec<Scalar>(); entry_slots.add(Scalar.I32).try();
     entry_code ::= a.Vec<Instruction>(); entry_code.add(Instruction.Constant(Const(

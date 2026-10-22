@@ -325,7 +325,12 @@ Interp = {
                                 cell_size(slot_ty(f, i))
                             );
                         });
-                        ended    = self.perform(callee, inner, out);
+                        ended    = (self.native.entries.ptr().read(
+                            callee
+                        ) == 0).match({
+                            true  => self.perform(callee, inner, out),
+                            false => self.run_native(callee, inner, out),
+                        });
                         self.top = saved;
                         ended
                     },
@@ -364,7 +369,12 @@ Interp = {
                                     second
                                 ); }
                             );
-                            ended    = self.perform(index, inner, out);
+                            ended    = (self.native.entries.ptr().read(
+                                index
+                            ) == 0).match({
+                            true  => self.perform(index, inner, out),
+                            false => self.run_native(index, inner, out),
+                        });
                             self.top = saved;
                             ended
                         },
@@ -374,17 +384,19 @@ Interp = {
         })
     }
 
-    // The encoded steps of function `index` (gen_jit_decode `encode`).
-    perform = (self :: @Self, index: usize, frame: usize, out: usize)
+    // Call sites consult the entry table directly so interpreted recursion
+    // reaches perform without another wrapper. Publication can still fail.
+    run_native = (self :: @Self, index: usize, frame: usize, out: usize)
               Outcome {
         self.native.run(index, frame).match({
             Returned(value) => { set_u64(out, value); Outcome.Returned },
             Trapped(fault)  => self.trap(fault.span, fault.what),
-            Refused         => self.interpret(index, frame, out),
+            Refused         => self.perform(index, frame, out),
         })
     }
 
-    interpret = (self :: @Self, index: usize, frame: usize, out: usize)
+    // The encoded steps of function `index` (gen_jit_decode `encode`).
+    perform = (self :: @Self, index: usize, frame: usize, out: usize)
                 Outcome {
         table = part(self.info +% index *% 32, 0);
         image = part(self.info +% index *% 32, 2) +% part(self.info +% index *% 32, 3) *% 16;
@@ -791,7 +803,18 @@ Interp = {
                         false => move_bytes(to, from, size),
                     });
                 });
-                ended    = self.perform(callee, inner, frame +% part(s, 1));
+                ended    = (self.native.entries.ptr().read(callee) == 0).match({
+                            true  => self.perform(
+                                callee,
+                                inner,
+                                frame +% part(s, 1)
+                            ),
+                            false => self.run_native(
+                                callee,
+                                inner,
+                                frame +% part(s, 1)
+                            ),
+                        });
                 self.top = inner;
                 ended
             },

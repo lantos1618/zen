@@ -4,8 +4,9 @@
 { Alloc, AllocError, Ptr } = std.mem
 { Vec } = std.collections
 { reads, written, exit_read, NONE } = gen.gen_asm_flow
+{ plan, Plan, Home, Pool, Address, Modes } = gen.gen_asm_regalloc
 { Res, Ok, None, Range } = std.core
-{ Program, Func, Scalar, Instruction, Binary, Unary, Op, Fault, TrapKind, width, signed, integer } = gen.gen_ir
+{ Program, Func, BasicBlock, Scalar, Instruction, Binary, Unary, Op, Fault, TrapKind, width, signed, integer } = gen.gen_ir
 { Condition, Relation } = gen.gen_condition
 { Platform } = gen.gen_sys
 { pointer_at, call_entry } = std.sys
@@ -67,10 +68,8 @@ Code* = { bytes*: Vec<u8>, entries*: Vec<usize>, faults: Vec<Fault> }
 encode* = (a: Alloc, program: Program, platform: Platform)
           Res<Code, AllocError> {
     accepted ::= a.Vec<bool>();
-    layouts  ::= a.Vec<FrameLayout>();
     program.functions.loop((f) {
         layout = frame_layout(a, f).try();
-        layouts.add(layout).try();
         accepted.add(eligible(f, layout)).try();
     });
     depths  ::= a.Vec<usize>();
@@ -146,6 +145,8 @@ encode* = (a: Alloc, program: Program, platform: Platform)
         traps: a.Vec<TrapSite>(),
         literals: a.Vec<Literal>(),
         offsets: a.Vec<usize>(),
+        homes: a.Vec<Home>(),
+        types: a.Vec<Scalar>(),
         arm: platform.match({ LinuxX86_64 => false, _ => true })
     );
     program.functions.loop((_) { out.label().try(); });
@@ -155,9 +156,14 @@ encode* = (a: Alloc, program: Program, platform: Platform)
             true  => {
                 entries.add(out.bytes.len + 1).try();
                 out.bind(index);
+                allocation = plan(a, f, out.arm.match({
+                    true  => Pool(caller: 7, callee: 8),
+                    false => Pool(caller: 6, callee: 3),
+                })).try();
                 out.function(
-                    f,
-                    layouts.get(index).value_or(FrameLayout(offsets: a.Vec<usize>(), count: 0))
+                    a,
+                    allocation,
+                    frame_layout(a, allocation.function).try()
                 ).try();
             },
             false => entries.add(0).try(),
@@ -235,7 +241,6 @@ eligible = (f: Func, layout: FrameLayout) bool {
         (h, i, ty) { good = good && (layout.offsets.get(i).value_or(NONE) == NONE || word(ty)); }
     );
     f.blocks.loop((block) {
-        block.exit.match({ Trap(_) => { good = false; }, _ => () });
         block.code.loop((instruction) {
             good = good && instruction.match({
                 Constant(_)        => true,
@@ -268,6 +273,8 @@ Encoder = {
     traps :: Vec<TrapSite>,
     literals :: Vec<Literal>,
     offsets :: Vec<usize>,
+    homes :: Vec<Home>,
+    types :: Vec<Scalar>,
     arm: bool,
 
     offset = (self: @Self, slot: usize) usize { self.offsets.get(slot).value_or(NONE) }
@@ -361,16 +368,49 @@ Encoder = {
     constant = (self :: @Self, register: usize, value: u64) Res<AllocError> {
         self.arm.match({
             true  => {
-                Range<usize>(0, 4).loop((part: usize) {
-                    base: u32 = (part == 0).match({ true => 3531603968, false => 4068474880 });
-                    self.word32(base.bit_or(part.truncate_u32().shift_left(21))
-                        .bit_or(value.shift_right(part * 16).truncate_u32().bit_and(65535).shift_left(5))
-                        .bit_or(register.truncate_u32())).try();
+                // Start with zeroes or ones, whichever needs fewer MOVKs.
+                zeroes :: usize = 0;
+                ones   :: usize = 0;
+                Range<usize>(0, 4).loop((part) {
+                    piece = value.shift_right(part * 16).truncate_u32().bit_and(65535);
+                    (piece == 0).then(() { zeroes = zeroes + 1; });
+                    (piece == 65535).then(() { ones = ones + 1; });
+                });
+                invert    = ones > zeroes;
+                fill: u32 = invert.match({ true => 65535, false => 0 });
+                first :: usize = 0;
+                found ::= false;
+                Range<usize>(0, 4).loop((part) {
+                    piece = value.shift_right(part * 16).truncate_u32().bit_and(65535);
+                    (!found && piece != fill).then(
+                        () { first = part; found = true; }
+                    );
+                });
+                initial_piece = value.shift_right(first * 16).truncate_u32().bit_and(65535);
+                initial       = invert.match({ true => 65535 - initial_piece, false => initial_piece });
+                base: u32     = invert.match({ true => 0x92800000, false => 0xd2800000 });
+                self.word32(base.bit_or(first.truncate_u32().shift_left(21)).bit_or(initial.shift_left(5)).bit_or(register.truncate_u32())).try();
+                keep: u32 = 0xf2800000;
+                Range<usize>(0, 4).loop((part) {
+                    piece = value.shift_right(part * 16).truncate_u32().bit_and(65535);
+                    (part != first && piece != fill).then(() {
+                        self.word32(keep.bit_or(part.truncate_u32().shift_left(21)).bit_or(piece.shift_left(5)).bit_or(register.truncate_u32())).try();
+                    });
                 });
             },
             false => {
-                self.byte(72).try(); self.byte(184 + register.truncate_u8()).try();
-                Range<usize>(0, 8).loop((i: usize) { self.byte(value.shift_right(i * 8).truncate_u8()).try(); });
+                (value <= 4294967295).match({
+                    true  => {
+                        (register >= 8).then(() { self.byte(65).try(); });
+                        self.byte(184 + (register % 8).truncate_u8()).try();
+                        self.word32(value.truncate_u32()).try();
+                    },
+                    false => {
+                        self.byte(72 + (register / 8).truncate_u8()).try();
+                        self.byte(184 + (register % 8).truncate_u8()).try();
+                        Range<usize>(0, 8).loop((i) { self.byte(value.shift_right(i * 8).truncate_u8()).try(); });
+                    },
+                });
             },
         });
         Ok
@@ -387,21 +427,88 @@ Encoder = {
                     .bit_or(source.shift_left(5)).bit_or(register.truncate_u32()))
             },
             false => {
-                self.byte(73).try();
+                self.byte(73 + (register / 8).truncate_u8() * 4).try();
                 self.byte(store.match({ true => 137, false => 139 })).try();
                 self.byte(
-                    128 + register.truncate_u8() * 8 + state.match({ true => 5, false => 4 })
+                    128 + (register % 8).truncate_u8() * 8 + state.match({ true => 5, false => 4 })
                 ).try();
                 (!state).then(() { self.byte(36).try(); });
                 self.word32(offset.truncate_u32())
             },
         })
     }
-    mov = (self :: @Self, dest: usize, source: usize) Res<AllocError> {
+    // Scratch registers and allocated homes never overlap. Pool numbers use
+    // the same caller/callee distinction as the assembly allocator.
+    register_of = (self: @Self, index: usize) usize {
         self.arm.match({
-            true  => self.word32(ARM_MOV.bit_or(source.truncate_u32().shift_left(16)).bit_or(dest.truncate_u32())),
-            false => { self.byte(72).try(); self.byte(137).try(); self.byte(192 + source.truncate_u8() * 8 + dest.truncate_u8()) },
+            true  => (index < 7).match({ true => 9 + index, false => 21 + index - 7 }),
+            false => index.match({ 0 => 8, 1 => 9, 2 => 10, 3 => 11, 4 => 7, 5 => 6, 6 => 3, 7 => 14, _ => 15 }),
         })
+    }
+    load = (self :: @Self, register: usize, slot: usize) Res<AllocError> {
+        self.homes.get(slot).value_or(Home.Frame).match({
+            Register(r)  => self.mov(register, self.register_of(r)),
+            Fixed(value) => self.constant(
+                register,
+                fixed_bits(value, self.types.get(slot).value_or(Scalar.Unit))
+            ),
+            _            => self.memory(
+                false,
+                register,
+                false,
+                self.offset(slot)
+            ),
+        })
+    }
+    store = (self :: @Self, register: usize, slot: usize) Res<AllocError> {
+        self.homes.get(slot).value_or(Home.Frame).match({
+            Register(r) => self.mov(self.register_of(r), register),
+            Fixed(_)    => Ok,
+            _           => self.memory(
+                true,
+                register,
+                false,
+                self.offset(slot)
+            ),
+        })
+    }
+    stack = (self :: @Self, subtract: bool, bytes: usize) Res<AllocError> {
+        self.arm.match({
+            true  => {
+                base = subtract.match({ true => ARM_SUB_SP, false => ARM_ADD_SP });
+                (bytes >= 4096).then(
+                    () { self.word32(base.bit_or(4194304).bit_or((bytes / 4096).truncate_u32().shift_left(10))).try(); }
+                );
+                (bytes % 4096 != 0).then(
+                    () { self.word32(base.bit_or((bytes % 4096).truncate_u32().shift_left(
+                        10
+                    ))).try(); }
+                );
+            },
+            false => {
+                self.byte(72).try(); self.byte(129).try();
+                self.byte(subtract.match({ true => 236, false => 196 })).try();
+                self.word32(bytes.truncate_u32()).try();
+            },
+        });
+        Ok
+    }
+    mov = (self :: @Self, dest: usize, source: usize) Res<AllocError> {
+        (dest != source).then(() {
+            self.arm.match({
+                true  => self.word32(ARM_MOV.bit_or(source.truncate_u32().shift_left(16)).bit_or(dest.truncate_u32())),
+                false => {
+                    self.byte(
+                        72 + (source / 8).truncate_u8() * 4 + (dest / 8).truncate_u8()
+                    ).try();
+                    self.byte(137).try();
+                    self.byte(
+                        192 + (source % 8).truncate_u8() * 8 + (dest % 8).truncate_u8()
+                    )
+                },
+            }).try();
+        });
+        Ok
     }
     compare = (self :: @Self) Res<AllocError> {
         self.arm.match({ true => self.word32(0xeb01001f), false => { self.byte(72).try(); self.byte(57).try(); self.byte(200) } })
@@ -419,9 +526,20 @@ Encoder = {
                     ))).try();
                 },
                 false => {
-                    self.byte(72).try(); self.byte(193).try(); self.byte(224).try(); self.byte((64 - bits).truncate_u8()).try();
-                    self.byte(72).try(); self.byte(193).try();
-                    self.byte(signed(ty).match({ true => 248, false => 232 })).try(); self.byte((64 - bits).truncate_u8()).try();
+                    signed(ty).match({
+                        true  => {
+                            self.byte(72).try();
+                            (bits == 32).match({
+                                true  => self.byte(99).try(),
+                                false => { self.byte(15).try(); self.byte((bits == 8).match({ true => 190, false => 191 })).try(); },
+                            });
+                        },
+                        false => (bits == 32).match({
+                            true  => self.byte(137).try(),
+                            false => { self.byte(15).try(); self.byte((bits == 8).match({ true => 182, false => 183 })).try(); },
+                        }),
+                    });
+                    self.byte(192).try();
                 },
             });
         });
@@ -429,7 +547,7 @@ Encoder = {
     }
     unary = (self :: @Self, f: Func, value: Unary) Res<AllocError> {
         ty = f.slots.get(value.input).value_or(Scalar.Unit);
-        self.memory(false, 0, false, self.offset(value.input)).try();
+        self.load(0, value.input).try();
         value.op.match({
             Not => { self.constant(1, 0).try(); self.compare().try(); self.set_condition(Condition.Equal).try(); },
             Neg => {
@@ -449,11 +567,150 @@ Encoder = {
             },
         });
         self.normalize(ty).try();
-        self.memory(true, 0, false, self.offset(value.out))
+        self.store(0, value.out)
     }
     binary = (self :: @Self, f: Func, value: Binary) Res<AllocError> {
-        self.memory(false, 0, false, self.offset(value.left)).try();
-        self.memory(false, 1, false, self.offset(value.right)).try();
+        self.direct_binary(f, value).try().match({ true => Ok, false => self.slow_binary(f, value) })
+    }
+
+    home_register = (self: @Self, slot: usize) usize {
+        self.homes.get(slot).value_or(Home.Frame).match({ Register(r) => self.register_of(r), _ => NONE })
+    }
+
+    // Unchecked word operations can write their allocated destination directly.
+    // Checked and narrow signed operations retain the common trapping path.
+    direct_binary = (self :: @Self, f: Func, value: Binary) Res<bool, AllocError> {
+        ty    = f.slots.get(value.left).value_or(Scalar.Unit);
+        size  = width(ty);
+        dest  = self.home_register(value.out);
+        left  = self.home_register(value.left);
+        shift = value.op.match({ Shl => true, Shr => true, Rotr => true, _ => false });
+        plain = value.op.match({ WrapAdd => true, WrapSub => true, WrapMul => true, And => true, Or => true, Xor => true, _ => false });
+        right = self.home_register(value.right);
+        fixed = self.homes.get(value.right).value_or(Home.Frame).match({ Fixed(_) => true, _ => false });
+        ((size == 4 || size == 8) && !signed(ty) && dest != NONE && left != NONE
+            && (plain && (right != NONE || fixed) || shift && fixed)).match({
+            false => Ok(false),
+            true  => {
+                literal = self.homes.get(value.right).value_or(Home.Frame).match({
+                    Fixed(v) => fixed_bits(
+                        v,
+                        f.slots.get(value.right).value_or(Scalar.Unit)
+                    ),
+                    _        => 0,
+                });
+                // x86 is destructive: copying the left operand must not erase
+                // a distinct right operand before it has been consumed.
+                (!self.arm && !fixed && dest == right && dest != left).match({
+                    true  => Ok(false),
+                    false => {
+                        shift.match({
+                            true  => self.direct_shift(
+                                value.op,
+                                size,
+                                dest,
+                                left,
+                                literal
+                            ).try(),
+                            false => self.direct_word(
+                                value.op,
+                                size,
+                                dest,
+                                left,
+                                right,
+                                fixed,
+                                literal
+                            ).try(),
+                        });
+                        Ok(true)
+                    },
+                })
+            },
+        })
+    }
+
+    direct_shift = (self :: @Self, op: Op, size: usize, dest: usize, left: usize, count: u64) Res<AllocError> {
+        bits   = size * 8;
+        rotate = op.match({ Rotr => true, _ => false });
+        (!rotate && count >= bits.to_u64()).match({
+            true  => self.constant(dest, 0),
+            false => {
+                amount = count.bit_and((bits - 1).to_u64()).to_usize().value_or(0);
+                self.arm.match({
+                    true  => {
+                        base: u32 = rotate.match({ true => 0x93c00000, false => 0xd3400000 });
+                        opcode    = (size == 4).match({ true => base.bit_and(0x7fffffff).bit_and(0xffbfffff), false => base });
+                        high      = rotate.match({ true => left, false => op.match({ Shl => (bits - amount) % bits, _ => amount }) });
+                        low       = rotate.match({ true => amount, false => op.match({ Shl => bits - 1 - amount, _ => bits - 1 }) });
+                        self.word32(opcode.bit_or(high.truncate_u32().shift_left(16)).bit_or(low.truncate_u32().shift_left(10)).bit_or(left.truncate_u32().shift_left(5)).bit_or(dest.truncate_u32()))
+                    },
+                    false => {
+                        self.mov(dest, left).try();
+                        rex: u8 = 64 + (size == 8).match({ true => 8, false => 0 }) + (dest / 8).truncate_u8();
+                        (rex != 64).then(() { self.byte(rex).try(); });
+                        self.byte(193).try();
+                        group: u8 = op.match({ Shl => 4, Shr => 5, _ => 1 });
+                        self.byte(
+                            192 + group * 8 + (dest % 8).truncate_u8()
+                        ).try();
+                        self.byte(amount.truncate_u8())
+                    },
+                })
+            },
+        })
+    }
+
+    direct_word = (self :: @Self, op: Op, size: usize, dest: usize, left: usize, right: usize, fixed: bool, literal: u64) Res<AllocError> {
+        self.arm.match({
+            true  => {
+                source = fixed.match({ true => 1, false => right });
+                fixed.then(() { self.constant(source, literal).try(); });
+                base: u32 = op.match({ WrapAdd => 0x8b000000, WrapSub => 0xcb000000, WrapMul => 0x9b007c00, And => 0x8a000000, Or => 0xaa000000, _ => 0xca000000 });
+                opcode    = (size == 4).match({ true => base.bit_and(
+                    0x7fffffff
+                ), false => base });
+                self.word32(opcode.bit_or(source.truncate_u32().shift_left(16)).bit_or(left.truncate_u32().shift_left(5)).bit_or(dest.truncate_u32()))
+            },
+            false => {
+                self.mov(dest, left).try();
+                immediate = fixed && (size == 4 || literal <= 2147483647 || literal >= 18446744071562067968);
+                source    = fixed.match({ true => 1, false => right });
+                (fixed && !immediate).then(
+                    () { self.constant(source, literal).try(); }
+                );
+                multiply = op.match({ WrapMul => true, _ => false });
+                field    = immediate.match({
+                    true  => multiply.match({ true => dest, false => op.match({ WrapAdd => 0, WrapSub => 5, And => 4, Or => 1, _ => 6 }) }),
+                    false => multiply.match({ true => dest, false => source }),
+                });
+                operand  = immediate.match({ true => dest, false => multiply.match({ true => source, false => dest }) });
+                rex: u8  = 64 + (size == 8).match({ true => 8, false => 0 }) + (field / 8).truncate_u8() * 4 + (operand / 8).truncate_u8();
+                (rex != 64).then(() { self.byte(rex).try(); });
+                immediate.match({
+                    true  => self.byte(
+                        multiply.match({ true => 105, false => 129 })
+                    ).try(),
+                    false => multiply.match({
+                        true  => { self.byte(15).try(); self.byte(175).try(); },
+                        false => self.byte(
+                            op.match({ WrapAdd => 1, WrapSub => 41, And => 33, Or => 9, _ => 49 })
+                        ).try(),
+                    }),
+                });
+                self.byte(
+                    192 + (field % 8).truncate_u8() * 8 + (operand % 8).truncate_u8()
+                ).try();
+                immediate.then(
+                    () { self.word32(literal.truncate_u32()).try(); }
+                );
+                Ok
+            },
+        })
+    }
+
+    slow_binary = (self :: @Self, f: Func, value: Binary) Res<AllocError> {
+        self.load(0, value.left).try();
+        self.load(1, value.right).try();
         ty      = f.slots.get(value.left).value_or(Scalar.Unit);
         checked = value.op.match({ Add => true, Sub => true, Mul => true, Div => true, Rem => true, _ => false });
         failed  = checked.match({
@@ -524,7 +781,7 @@ Encoder = {
                 self.normalize(f.slots.get(value.out).value_or(Scalar.Unit)).try();
             },
         });
-        self.memory(true, 0, false, self.offset(value.out))
+        self.store(0, value.out)
     }
     trap_site = (self :: @Self, fault: Fault) Res<usize, AllocError> {
         label = self.label().try();
@@ -662,70 +919,208 @@ Encoder = {
         })
     }
 
-    access = (self :: @Self, store: bool, ty: Scalar, offset: usize) Res<AllocError> {
+    folded_address = (self: @Self, allocation: Plan, block: BasicBlock, at: usize, base: usize, size: usize, offset: usize) Address {
+        found        = allocation.address(
+            block,
+            at,
+            base,
+            size,
+            Modes(any_scale: !self.arm)
+        );
+        displacement = found.displacement + offset.truncate_u32().to_i64();
+        (displacement >= -2147483648 && displacement <= 2147483647).match({
+            true  => Address(
+                base: found.base,
+                index: found.index,
+                scale: found.scale,
+                displacement: displacement,
+                absorbed: found.absorbed
+            ),
+            false => Address(
+                base: base,
+                index: NONE,
+                scale: 1,
+                displacement: offset.truncate_u32().to_i64(),
+                absorbed: 0
+            ),
+        })
+    }
+
+    access = (self :: @Self, store: bool, ty: Scalar, address: Address, slot: usize) Res<AllocError> {
         size = width(ty);
-        (size > 0).then(() {
-            self.arm.match({
-                true  => {
-                    self.constant(1, offset.to_u64()).try();
-                    self.word32(0x8b010042).try(); // add x2,x2,x1
-                    base: u32 = size.match({ 1 => 956301376, 2 => 2030043200, 4 => 3103785024, _ => 4177526848 });
-                    self.word32(
-                        store.match({ true => base, false => base.bit_or(
-                            4194304
-                        ) })
-                    ).try();
-                },
-                false => {
-                    (size == 8).then(() { self.byte(72).try(); });
-                    (size == 2 && store).then(() { self.byte(102).try(); });
-                    (!store && size < 4).match({
-                        true  => { self.byte(15).try(); self.byte((size == 1).match({ true => 182, false => 183 })).try(); },
-                        false => self.byte(
-                            store.match({ true => (size == 1).match({ true => 136, false => 137 }), false => 139 })
-                        ).try(),
-                    });
-                    self.byte(130).try(); self.word32(offset.truncate_u32()).try();
-                },
-            });
+        (size == 0).match({
+            true  => { (!store).then(
+                () { self.constant(0, 0).try(); self.store(0, slot).try(); }
+            ); },
+            false => {
+                base ::= self.home_register(address.base);
+                (base == NONE).then(
+                    () { self.load(2, address.base).try(); base = 2; }
+                );
+                index :: usize = NONE;
+                (address.index != NONE).then(() {
+                    index = self.home_register(address.index);
+                    (index == NONE).then(
+                        () { self.load(1, address.index).try(); index = 1; }
+                    );
+                });
+                home = self.home_register(slot);
+                data = (home == NONE).match({ true => 0, false => home });
+                (store && data == 0).then(() { self.load(0, slot).try(); });
+                self.arm.match({
+                    true  => self.arm_access(
+                        store,
+                        ty,
+                        data,
+                        base,
+                        index,
+                        address.scale,
+                        address.displacement
+                    ).try(),
+                    false => self.x86_access(
+                        store,
+                        ty,
+                        data,
+                        base,
+                        index,
+                        address.scale,
+                        address.displacement
+                    ).try(),
+                });
+                (!store).then(() { self.store(data, slot).try(); });
+            },
         });
         Ok
     }
 
-    function = (self :: @Self, f: Func, layout: FrameLayout) Res<AllocError> {
+    x86_access = (self :: @Self, store: bool, ty: Scalar, data: usize, base: usize, index: usize, scale: usize, displacement: i64) Res<AllocError> {
+        size = width(ty);
+        wide = size == 8 || !store && signed(ty);
+        (store && size == 2).then(() { self.byte(102).try(); });
+        extension = (index == NONE).match({ true => 0, false => index / 8 });
+        self.byte(
+            64 + wide.match({ true => 8, false => 0 }) + (data / 8).truncate_u8() * 4 + extension.truncate_u8() * 2 + (base / 8).truncate_u8()
+        ).try();
+        (!store && size < 4).match({
+            true  => {
+                self.byte(15).try();
+                self.byte(signed(ty).match({
+                    true  => (size == 1).match({ true => 190, false => 191 }),
+                    false => (size == 1).match({ true => 182, false => 183 }),
+                })).try();
+            },
+            false => self.byte(store.match({
+                true  => (size == 1).match({ true => 136, false => 137 }),
+                false => (size == 4 && signed(
+                    ty
+                )).match({ true => 99, false => 139 }),
+            })).try(),
+        });
+        sib = index != NONE || base % 8 == 4;
+        self.byte(
+            128 + (data % 8).truncate_u8() * 8 + sib.match({ true => 4, false => (base % 8).truncate_u8() })
+        ).try();
+        sib.then(() {
+            shift: u8 = scale.match({ 1 => 0, 2 => 1, 4 => 2, _ => 3 });
+            at: u8    = (index == NONE).match({ true => 4, false => (index % 8).truncate_u8() });
+            self.byte(shift * 64 + at * 8 + (base % 8).truncate_u8()).try();
+        });
+        self.word32(unsigned_bits(displacement).truncate_u32())
+    }
+
+    arm_access = (self :: @Self, store: bool, ty: Scalar, data: usize, base: usize, index: usize, scale: usize, displacement: i64) Res<AllocError> {
+        size = width(ty);
+        pointer ::= base;
+        indexed ::= index != NONE;
+        direct = !indexed && displacement >= 0 && displacement.to_usize().value_or(0) % size == 0 && displacement.to_usize().value_or(0) / size < 4096;
+        ((indexed && displacement != 0) || (!indexed && !direct)).then(() {
+            indexed.match({
+                true  => {
+                    shift: u32 = scale.match({ 1 => 0, 2 => 1, 4 => 2, _ => 3 });
+                    add: u32   = 0x8b000002;
+                    self.word32(add.bit_or(index.truncate_u32().shift_left(16)).bit_or(shift.shift_left(10)).bit_or(base.truncate_u32().shift_left(5))).try();
+                },
+                false => self.mov(2, base).try(),
+            });
+            self.constant(1, unsigned_bits(displacement)).try();
+            self.word32(0x8b010042).try();
+            pointer = 2;
+            indexed = false;
+        });
+        opcode: u32 = indexed.match({
+            true  => store.match({
+                true  => size.match({ 1 => 0x38206800, 2 => 0x78206800, 4 => 0xb8206800, _ => 0xf8206800 }),
+                false => signed(ty).match({
+                    true  => size.match({ 1 => 0x38a06800, 2 => 0x78a06800, 4 => 0xb8a06800, _ => 0xf8606800 }),
+                    false => size.match({ 1 => 0x38606800, 2 => 0x78606800, 4 => 0xb8606800, _ => 0xf8606800 }),
+                }),
+            }),
+            false => store.match({
+                true  => size.match({ 1 => 0x39000000, 2 => 0x79000000, 4 => 0xb9000000, _ => 0xf9000000 }),
+                false => signed(ty).match({
+                    true  => size.match({ 1 => 0x39800000, 2 => 0x79800000, 4 => 0xb9800000, _ => 0xf9400000 }),
+                    false => size.match({ 1 => 0x39400000, 2 => 0x79400000, 4 => 0xb9400000, _ => 0xf9400000 }),
+                }),
+            }),
+        });
+        offset: u32 = indexed.match({
+            true  => index.truncate_u32().shift_left(16).bit_or((scale > 1).match({ true => 4096, false => 0 })),
+            false => direct.match({ true => (displacement.to_usize().value_or(0) / size).truncate_u32().shift_left(10), false => 0 }),
+        });
+        self.word32(opcode.bit_or(offset).bit_or(pointer.truncate_u32().shift_left(5)).bit_or(data.truncate_u32()))
+    }
+
+    function = (self :: @Self, a: Alloc, allocation: Plan, layout: FrameLayout) Res<AllocError> {
+        f            = allocation.function;
         self.offsets = layout.offsets;
+        self.homes   = allocation.homes;
+        self.types   = f.slots;
         blocks       = self.labels.len;
         f.blocks.loop((_) { self.label().try(); });
         failed   = self.label().try();
         finish   = self.label().try();
         slots    = layout.count;
         outgoing = argument_words(f);
-        frame    = (slots * 8 + outgoing * 8 + 15) / 16 * 16;
+        frame    = ((slots + outgoing + allocation.saved.len) * 8 + 15) / 16 * 16;
         self.arm.match({
             true  => {
                 self.word32(0xa9be7bfd).try(); // stp x29,x30,[sp,#-32]!
                 self.word32(0xa90153f3).try(); // stp x19,x20,[sp,#16]
                 self.word32(0x910003fd).try(); // mov x29,sp
-                self.word32(ARM_SUB_SP.bit_or(frame.truncate_u32().shift_left(
-                    10
-                ))).try();
+                self.stack(true, frame).try();
                 self.word32(0x910003f3).try(); // mov x19,sp
                 self.word32(0xaa0103f4).try(); // mov x20,x1
                 self.mov(2, 0).try();
+                allocation.saved.loop(
+                    (h, i, r) { self.memory(
+                        true,
+                        self.register_of(r),
+                        false,
+                        (slots + outgoing + i) * 8
+                    ).try(); }
+                );
                 Range(0, f.parameters).loop((i) {
                     self.word32(ARM_LOAD_ARG.bit_or(i.truncate_u32().shift_left(
                         10
                     ))).try(); // ldr x0,[x2,#i*8]
-                    self.memory(true, 0, false, self.offset(i)).try();
+                    self.store(0, i).try();
                 });
             },
             false => {
-                [85, 72, 137, 229, 65, 84, 65, 85, 72, 129, 236].loop((b: u8) { self.byte(b).try(); });
-                self.word32(frame.truncate_u32()).try();
-                [73, 137, 228, 73, 137, 245].loop((b: u8) { self.byte(b).try(); });
+                [85, 72, 137, 229, 65, 84, 65, 85].loop((b: u8) { self.byte(b).try(); });
+                self.stack(true, frame).try();
+                [73, 137, 228, 73, 137, 245, 72, 137, 250].loop((b: u8) { self.byte(b).try(); });
+                allocation.saved.loop(
+                    (h, i, r) { self.memory(
+                        true,
+                        self.register_of(r),
+                        false,
+                        (slots + outgoing + i) * 8
+                    ).try(); }
+                );
                 Range(0, f.parameters).loop((i) {
-                    [72, 139, 135].loop((b: u8) { self.byte(b).try(); }); self.word32((i * 8).truncate_u32()).try();
-                    self.memory(true, 0, false, self.offset(i)).try();
+                    [72, 139, 130].loop((b: u8) { self.byte(b).try(); }); self.word32((i * 8).truncate_u32()).try();
+                    self.store(0, i).try();
                 });
             },
         });
@@ -736,12 +1131,56 @@ Encoder = {
         self.constant(1, 128).try(); self.compare().try(); self.branch(Condition.Above, failed).try();
         f.blocks.loop((h, index, block) {
             self.bind(blocks + index);
-            block.code.loop((instruction) {
+            skipped ::= a.Vec<bool>();
+            block.code.loop((_) { skipped.add(false).try(); });
+            block.code.loop((h, k, instruction) {
+                memory :: Res<Address> = instruction.match({
+                    LoadValue(v)  => Ok(self.folded_address(
+                        allocation,
+                        block,
+                        k,
+                        v.base,
+                        width(f.slots.get(v.out).value_or(Scalar.Unit)),
+                        v.offset
+                    )),
+                    StoreValue(v) => Ok(self.folded_address(
+                        allocation,
+                        block,
+                        k,
+                        v.base,
+                        width(f.slots.get(v.value).value_or(Scalar.Unit)),
+                        v.offset
+                    )),
+                    _             => None,
+                });
+                memory.when_ok(
+                    (address) { Range(k - address.absorbed, k).loop((before) { skipped.ptr().write(before, true); }); }
+                );
+            });
+            fused :: Res<Binary> = None;
+            block.exit.match({
+                Branch(branch) => (block.code.len > 0).then(() {
+                    block.code.get(block.code.len - 1).when_ok((last) { last.match({
+                        BinaryValue(v) => (v.out == branch.value && allocation.single(v.out)).then(() {
+                            relation(v.op).when_ok((_) { fused = Ok(v); skipped.ptr().write(block.code.len - 1, true); });
+                        }),
+                        _              => (),
+                    }); });
+                }),
+                _              => (),
+            });
+            block.code.loop((h, k, instruction) {
+                (!skipped.get(k).value_or(false)).then(() {
                 instruction.match({
                     Constant(v)    => {
-                        self.constant(0, unsigned_bits(v.value)).try();
-                        self.normalize(f.slots.get(v.out).value_or(Scalar.Unit)).try();
-                        self.memory(true, 0, false, self.offset(v.out)).try();
+                        self.homes.get(v.out).value_or(Home.Frame).match({
+                            Fixed(_) => (),
+                            _        => {
+                                self.constant(0, unsigned_bits(v.value)).try();
+                                self.normalize(f.slots.get(v.out).value_or(Scalar.Unit)).try();
+                                self.store(0, v.out).try();
+                            },
+                        });
                     },
                     Bytes(v)       => {
                         label = self.label().try();
@@ -774,61 +1213,49 @@ Encoder = {
                                 self.word32(0).try();
                             },
                         });
-                        self.memory(true, 0, false, self.offset(v.out)).try();
+                        self.store(0, v.out).try();
                     },
                     Copy(v)        => {
-                        self.memory(
-                            false,
-                            0,
-                            false,
-                            self.offset(v.source)
-                        ).try();
-                        self.memory(true, 0, false, self.offset(v.out)).try();
+                        self.load(0, v.source).try();
+                        self.store(0, v.out).try();
                     },
                     Cast(v)        => {
-                        self.memory(
-                            false,
-                            0,
-                            false,
-                            self.offset(v.input)
-                        ).try();
+                        self.load(0, v.input).try();
                         f.slots.get(v.out).value_or(Scalar.Unit).match({
                             Bool => { self.constant(1, 0).try(); self.compare().try(); self.set_condition(Condition.NotEqual).try(); },
                             ty   => self.normalize(ty).try(),
                         });
-                        self.memory(true, 0, false, self.offset(v.out)).try();
+                        self.store(0, v.out).try();
                     },
                     LoadValue(v)   => {
-                        self.memory(false, 2, false, self.offset(v.base)).try();
-                        ty = f.slots.get(v.out).value_or(Scalar.Unit);
-                        self.access(false, ty, v.offset).try();
-                        self.normalize(ty).try();
-                        self.memory(true, 0, false, self.offset(v.out)).try();
+                        ty      = f.slots.get(v.out).value_or(Scalar.Unit);
+                        address = self.folded_address(
+                            allocation,
+                            block,
+                            k,
+                            v.base,
+                            width(ty),
+                            v.offset
+                        );
+                        self.access(false, ty, address, v.out).try();
                     },
                     StoreValue(v)  => {
-                        self.memory(false, 2, false, self.offset(v.base)).try();
-                        self.memory(
-                            false,
-                            0,
-                            false,
-                            self.offset(v.value)
-                        ).try();
-                        self.access(
-                            true,
-                            f.slots.get(v.value).value_or(Scalar.Unit),
+                        ty      = f.slots.get(v.value).value_or(Scalar.Unit);
+                        address = self.folded_address(
+                            allocation,
+                            block,
+                            k,
+                            v.base,
+                            width(ty),
                             v.offset
-                        ).try();
+                        );
+                        self.access(true, ty, address, v.value).try();
                     },
                     BinaryValue(v) => self.binary(f, v).try(),
                     UnaryValue(v)  => self.unary(f, v).try(),
                     Invoke(call)   => {
                         call.args.loop((h, i, slot) {
-                            self.memory(
-                                false,
-                                0,
-                                false,
-                                self.offset(slot)
-                            ).try();
+                            self.load(0, slot).try();
                             self.memory(true, 0, false, (slots + i) * 8).try();
                         });
                         self.arm.match({
@@ -851,30 +1278,42 @@ Encoder = {
                             },
                         });
                         self.memory(false, 0, true, 8).try(); self.constant(1, 0).try(); self.compare().try(); self.branch(Condition.NotEqual, finish).try();
-                        self.memory(false, 0, true, 0).try(); self.memory(true, 0, false, self.offset(call.out)).try();
+                        self.memory(false, 0, true, 0).try(); self.store(0, call.out).try();
                     },
                     _              => (),
+                });
                 });
             });
             block.exit.match({
                 Return(slot)   => {
                     f.result.match({
                         Unit => self.constant(0, 0).try(),
-                        _    => self.memory(
-                            false,
-                            0,
-                            false,
-                            self.offset(slot)
-                        ).try(),
+                        _    => self.load(0, slot).try(),
                     });
                     self.memory(true, 0, true, 0).try(); self.jump(finish).try();
                 },
                 Jump(next)     => self.jump(blocks + next).try(),
                 Branch(branch) => {
-                    self.memory(false, 0, false, self.offset(branch.value)).try(); self.constant(1, 0).try(); self.compare().try();
-                    self.branch(Condition.NotEqual, blocks + branch.yes).try(); self.jump(blocks + branch.no).try();
+                    fused.match({
+                        Ok(value) => {
+                            self.load(0, value.left).try(); self.load(1, value.right).try(); self.compare().try();
+                            condition = relation(value.op).value_or(Relation.Equal).condition(signed(f.slots.get(value.left).value_or(Scalar.Unit)), false);
+                            self.branch(condition, blocks + branch.yes).try();
+                        },
+                        None      => {
+                            self.load(0, branch.value).try(); self.constant(1, 0).try(); self.compare().try();
+                            self.branch(
+                                Condition.NotEqual,
+                                blocks + branch.yes
+                            ).try();
+                        },
+                    });
+                    self.jump(blocks + branch.no).try();
                 },
-                Trap(_)        => (),
+                Trap(fault)    => {
+                    site = self.trap_site(fault).try();
+                    self.jump(site).try();
+                },
             });
         });
         self.traps.loop((site) {
@@ -890,15 +1329,21 @@ Encoder = {
         self.memory(false, 0, true, 16).try(); self.constant(1, 1).try();
         self.arm.match({ true => self.word32(0xcb010000).try(), false => { [72, 41, 200].loop((b: u8) { self.byte(b).try(); }); } });
         self.memory(true, 0, true, 16).try();
+        allocation.saved.loop(
+            (h, i, r) { self.memory(
+                false,
+                self.register_of(r),
+                false,
+                (slots + outgoing + i) * 8
+            ).try(); }
+        );
         self.arm.match({
             true  => {
-                self.word32(ARM_ADD_SP.bit_or(frame.truncate_u32().shift_left(
-                    10
-                ))).try();
+                self.stack(false, frame).try();
                 self.word32(0xa94153f3).try(); self.word32(0xa8c27bfd).try(); self.word32(0xd65f03c0)
             },
             false => {
-                [72, 129, 196].loop((b: u8) { self.byte(b).try(); }); self.word32(frame.truncate_u32()).try();
+                self.stack(false, frame).try();
                 [65, 93, 65, 92, 93, 195].loop((b: u8) { self.byte(b).try(); }); Ok
             },
         })
@@ -916,6 +1361,26 @@ x86_condition = (condition: Condition) u8 {
 }
 arm_condition = (condition: Condition) u32 {
     condition.match({ Equal => 0, NotEqual => 1, Less => 11, LessEqual => 13, Greater => 12, GreaterEqual => 10, Below => 3, BelowEqual => 9, Above => 8, AboveEqual => 2, Overflow => 6, NoOverflow => 7 })
+}
+
+// Materialized constants have the same canonical word bits as a slot write.
+fixed_bits = (value: i64, ty: Scalar) u64 {
+    bits     = width(ty) * 8;
+    one: u64 = 1;
+    (bits == 0).match({
+        true  => 0,
+        false => (bits >= 64).match({
+            true  => unsigned_bits(value),
+            false => {
+                mask = one.shift_left(bits) - 1;
+                word = unsigned_bits(value).bit_and(mask);
+                (signed(ty) && word.bit_and(one.shift_left(bits - 1)) != 0).match({
+                    true  => word.bit_or(18446744073709551615 - mask),
+                    false => word,
+                })
+            },
+        }),
+    })
 }
 
 unsigned_bits = (value: i64) u64 {

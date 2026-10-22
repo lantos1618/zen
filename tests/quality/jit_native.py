@@ -91,6 +91,33 @@ def cases():
             refused=a==-(1 << (bits-1))
             result.append((245+kind,a&MASK,0,(-a)&MASK,int(refused)))
     result += [(249,0,0,1,0),(249,1,0,0,0)]
+    result += [(252,a&MASK,b&MASK,(2*a+2*b+756)&MASK,0) for a,b in PAIRS]
+    result += [(254,a,0,(509*a)&MASK,0) for a in (0,1,100,MASK)]
+    function = 255
+    for bits in (32,64):
+        for op in ('shl','shr','rotr'):
+            for count in (0,1,bits-1,bits,bits+1,255,MASK):
+                for left,_ in PAIRS:
+                    a=narrow(left,bits,False)
+                    if op=='rotr':
+                        n=count%bits
+                        value=a if n==0 else (a>>n)|(a<<(bits-n))
+                    elif count>=bits:
+                        value=0
+                    else:
+                        value=a<<count if op=='shl' else a>>count
+                    result.append((function,a,0,narrow(value,bits,False),0))
+                function+=1
+    for bits,constants in ((32,(0,1,255,2147483647,2147483648,4294967295)),
+                           (64,(0,1,-1,2147483647,2147483648,-2147483648,81985529216486895))):
+        for op in range(6):
+            for constant in constants:
+                b=narrow(constant,bits,False)
+                for left,_ in PAIRS:
+                    a=narrow(left,bits,False)
+                    value=(a+b,a-b,a*b,a&b,a|b,a^b)[op]
+                    result.append((function,a,0,narrow(value,bits,False),0))
+                function+=1
     return result
 
 
@@ -131,36 +158,55 @@ int main(void) {
         memcpy(copy,args,sizeof(args));
 #if defined(__aarch64__)
         register uint64_t guard1 asm("x19")=1234567, guard2 asm("x20")=9876543;
+        register uint64_t guard3 asm("x21")=2345678, guard4 asm("x22")=8765432, guard5 asm("x28")=3456789;
 #else
         register uint64_t guard1 asm("r12")=1234567, guard2 asm("r13")=9876543;
+        register uint64_t guard3 asm("rbx")=2345678, guard4 asm("r14")=8765432, guard5 asm("r15")=3456789;
 #endif
-        asm volatile("" : "+r"(guard1), "+r"(guard2));
+        asm volatile("" : "+r"(guard1), "+r"(guard2), "+r"(guard3), "+r"(guard4), "+r"(guard5));
         ((void (*)(uint64_t*,uint64_t*))((char*)image+entries[t.fn]-1))(args,out);
-        asm volatile("" : "+r"(guard1), "+r"(guard2));
+        asm volatile("" : "+r"(guard1), "+r"(guard2), "+r"(guard3), "+r"(guard4), "+r"(guard5));
         if ((out[1] != 0) != t.refused || (!t.refused && out[0] != t.want) || out[2] ||
-            memcmp(copy,args,sizeof(args)) || guard1!=1234567 || guard2!=9876543) {
+            memcmp(copy,args,sizeof(args)) || guard1!=1234567 || guard2!=9876543 ||
+            guard3!=2345678 || guard4!=8765432 || guard5!=3456789) {
             fprintf(stderr,"case %zu fn %zu (%llu,%llu): got %llu refuse %llu depth %llu; want %llu refuse %d\n",
               i,t.fn,(unsigned long long)t.a,(unsigned long long)t.b,(unsigned long long)out[0],
               (unsigned long long)out[1],(unsigned long long)out[2],(unsigned long long)t.want,t.refused);
             return 1;
         }
     }
+    for (size_t indexed=0; indexed<2; ++indexed) {
     for (size_t kind=0; kind<8; ++kind) {
-        unsigned char memory[24], expected[24];
+        unsigned char memory[40], expected[40];
         memset(memory,0x81,sizeof(memory)); memcpy(expected,memory,sizeof(memory));
         size_t size=(size_t)1 << (kind/2);
         uint64_t value=UINT64_C(0xfedcba9876543210), old=0;
-        memcpy(&old,memory+3,size);
+        size_t offset=3+(indexed ? 2*size : 0);
+        memcpy(&old,memory+offset,size);
         if (!(kind&1) && size<8 && ((old>>(size*8-1))&1)) old |= UINT64_MAX << (size*8);
-        memcpy(expected+3,&value,size);
-        uint64_t args[4]={(uintptr_t)memory,value,0,0}, state[3]={0};
-        ((void (*)(uint64_t*,uint64_t*))((char*)image+entries[179+kind]-1))(args,state);
-        if(state[0]!=old || state[1] || state[2] || memcmp(memory,expected,sizeof(memory))) return 7;
+        memcpy(expected+offset,&value,size);
+        uint64_t args[4]={(uintptr_t)memory,value,2,0}, state[3]={0};
+        ((void (*)(uint64_t*,uint64_t*))((char*)image+entries[(indexed ? 375 : 179)+kind]-1))(args,state);
+        if(state[0]!=old || state[1] || state[2] || memcmp(memory,expected,sizeof(memory))) {
+            fprintf(stderr,"memory case indexed=%zu kind=%zu: got %llu status %llu depth %llu; expected %llu\n",indexed,kind,(unsigned long long)state[0],(unsigned long long)state[1],(unsigned long long)state[2],(unsigned long long)old);
+            return 7;
+        }
     }
-    for (int attempt=0; attempt<2; ++attempt) {
+    }
+    for (size_t i=0; i<2; ++i) {
+        const int64_t displacement[2]={INT64_C(2147483664),-INT64_C(2147483637)};
+        uint64_t word=UINT64_C(0x123456789abcdef), args[4]={0}, state[3]={0};
+        args[0]=(uint64_t)(uintptr_t)&word-(uint64_t)displacement[i];
+        if(!entries[383+i]) return 5;
+        ((void (*)(uint64_t*,uint64_t*))((char*)image+entries[383+i]-1))(args,state);
+        if(state[0]!=word || state[1] || state[2]) return 9;
+    }
+    if (!entries[250] || !entries[251]) return 5;
+    static const size_t trapping[] = {187,243,250,251};
+    for (int attempt=0; attempt<4; ++attempt) {
         unsigned char memory[24]={0};
         uint64_t args[4]={(uintptr_t)memory,INT64_MAX,0,0}, state[3]={0}, stored;
-        ((void (*)(uint64_t*,uint64_t*))((char*)image+entries[attempt ? 243 : 187]-1))(args,state);
+        ((void (*)(uint64_t*,uint64_t*))((char*)image+entries[trapping[attempt]]-1))(args,state);
         memcpy(&stored,memory+3,8);
         if(!state[1] || state[2] || stored!=INT64_MAX) return 8;
     }

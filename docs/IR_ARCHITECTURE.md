@@ -462,16 +462,23 @@ renderer with no semantic work:
   measures Python's C dict.
 - **Tier 1:** `gen_jit_native` emits x86-64 and AArch64 bytes directly for
   closed groups of word functions. It supports integer arithmetic, comparisons,
-  casts, 32/64-bit rotations, word loads/stores and direct calls. Unsupported
-  functions stay in the interpreter. Code uses private stack cells and a
-  two-pointer entry ABI; it does not yet use the assembly register allocator.
+  casts, 32/64-bit rotations, word loads/stores, explicit traps and direct calls.
+  Unsupported functions stay in the interpreter. The assembly backend's
+  register allocator assigns register, constant and stack homes; the native
+  encoders preserve its callee-saved registers around the two-pointer entry ABI.
+  Unchecked word operations write allocated registers directly where the target
+  permits it. Shared address analysis folds single-use pointer arithmetic into
+  loads and stores, preserving the access's own field offset. A comparison used
+  only by the following branch does not materialize a temporary boolean.
+  Checked arithmetic retains its source-positioned trap path.
   Effectful groups must have an acyclic call tree of depth at most 128. Pure
   recursion can refuse at that depth and restart in the interpreter with its
-  unchanged arguments. Native arithmetic traps carry their original source
-  position and unwind without replaying writes. Only slots referenced by the
+  unchanged arguments. Native arithmetic and explicit traps carry their original
+  source position and unwind without replaying writes. Only slots referenced by the
   prepared IR receive storage. A function
   requires at most 4,080 bytes for its local and outgoing argument area so
-  both encoders can address its frame directly.
+  both encoders can address its frame directly. Saved registers have separate
+  storage; AArch64 stack adjustment also covers a frame that crosses 4 KiB.
   `gen_jit_memory` owns publication: Linux changes RW pages to RX, while Darwin
   uses `MAP_JIT`, thread-local write protection and instruction-cache
   invalidation. A failed publication leaves execution in the interpreter.
@@ -479,9 +486,9 @@ renderer with no semantic work:
   protection failures; AArch64 Linux execution and cache publication can also
   run under QEMU. The `native-jit-macos` CI job checks actual Apple Silicon
   execution and compares a complete JIT SHA-256 run with C.
-  Sharing instruction selection and register allocation with the text assembly
-  writers remains work to do, as do native aggregate, floating-point and
-  recursive effectful calls. Those limits must remain visible in benchmarks.
+  Sharing instruction selection with the text assembly writers remains work
+  to do, as do native aggregate, floating-point and recursive effectful calls.
+  Those limits must remain visible in benchmarks.
 - **Alternative:** LLVM ORC via zen-llvm. The IR contract is the same, so the
   choice can wait.
 

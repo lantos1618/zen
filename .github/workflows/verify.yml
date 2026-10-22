@@ -81,9 +81,10 @@ jobs:
 
       - name: Compare native JIT SHA-256 with C
         run: |
+          set -euo pipefail
           mkdir -p build/native-jit-macos
           ./zen build tests/native/bench/sha256 --entry main.zen --backend c -o build/native-jit-macos/sha.c
           cc -O2 build/native-jit-macos/sha.c -lm -o build/native-jit-macos/sha
-          build/native-jit-macos/sha 1 > build/native-jit-macos/expected
-          ./zen build tests/native/bench/sha256 --entry main.zen --backend jit -- 1 > build/native-jit-macos/actual
+          build/native-jit-macos/sha 1 | tee build/native-jit-macos/expected
+          ./zen build tests/native/bench/sha256 --entry main.zen --backend jit -- 1 | tee build/native-jit-macos/actual
           diff -u build/native-jit-macos/expected build/native-jit-macos/actual

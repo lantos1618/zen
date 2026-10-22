@@ -458,10 +458,27 @@ renderer with no semantic work:
   slope and its 95% interval. The JS row is Zen's generated JS, which
   emulates 64-bit integers, not hand-written JS; the CPython map row mostly
   measures Python's C dict.
-- **Tier 1:** an in-memory encoder that reuses the asm backend's instruction
-  selection and register allocation, and writes machine code bytes instead of
-  text into `mmap`ed pages (W^X, with `MAP_JIT` plus
-  `pthread_jit_write_protect_np` on Darwin arm64).
+- **Tier 1:** `gen_jit_native` emits x86-64 and AArch64 bytes directly for
+  closed groups of word functions. It supports integer arithmetic, comparisons,
+  casts, 32/64-bit rotations, word loads/stores and direct calls. Unsupported
+  functions stay in the interpreter. Code uses private stack cells and a
+  two-pointer entry ABI; it does not yet use the assembly register allocator.
+  Effectful groups must have an acyclic call tree of depth at most 128. Pure
+  recursion can refuse at that depth and restart in the interpreter with its
+  unchanged arguments. Native arithmetic traps carry their original source
+  position and unwind without replaying writes. Only slots referenced by the
+  prepared IR receive storage. A function
+  requires at most 4,080 bytes for its local and outgoing argument area so
+  both encoders can address its frame directly.
+  `gen_jit_memory` owns publication: Linux changes RW pages to RX, while Darwin
+  uses `MAP_JIT`, thread-local write protection and instruction-cache
+  invalidation. A failed publication leaves execution in the interpreter.
+  The native tests exercise both encoders, calling conventions, overflow and
+  protection failures; AArch64 Linux execution and cache publication can also
+  run under QEMU. Native macOS execution still requires an Apple Silicon runner.
+  Sharing instruction selection and register allocation with the text assembly
+  writers remains work to do, as do native aggregate, floating-point and
+  recursive effectful calls. Those limits must remain visible in benchmarks.
 - **Alternative:** LLVM ORC via zen-llvm. The IR contract is the same, so the
   choice can wait.
 

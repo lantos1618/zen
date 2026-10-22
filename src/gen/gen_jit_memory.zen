@@ -1,0 +1,112 @@
+// Publication of executable memory. Linux changes RW pages to RX; Darwin
+// uses MAP_JIT and thread-local write protection. Instruction cache publication
+// finishes before an address is returned to a caller.
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, None, Range } = std.core
+{ Platform } = gen.gen_sys
+{ mmap, mprotect, munmap, pointer_at, address_of, call_entry } = std.sys
+{ str, c_text } = std.text
+
+Dl = c.bind("dlfcn.h", {
+    RTLD_NOW: i32
+    dlopen = (path: Ptr<u8>, flags: i32) Ptr<u8>
+    dlsym = (handle: Ptr<u8>, symbol: Ptr<u8>) Ptr<u8>
+})
+
+Executable* = {
+    address* :: usize,
+    size: usize,
+
+    // Close after the last call through this mapping. A closed descriptor
+    // can be closed again; copies still share the original mapping's lifetime.
+    close* = (self :: @Self) {
+        (self.address != 0).then(() {
+            munmap(self.address, self.size);
+            self.address = 0;
+        });
+    }
+}
+
+publish* = (a: Alloc, bytes: Vec<u8>, platform: Platform)
+           Res<Executable, AllocError> {
+    address = publish_address(a, bytes, platform).try();
+    Ok(Executable(address: address, size: bytes.len))
+}
+
+symbol = (a: Alloc, library: str, name: str) Res<usize, AllocError> {
+    file   = library.c_text(a).try();
+    handle = Dl.dlopen(file.ptr(), Dl.RTLD_NOW);
+    (address_of(handle) != 0).ensure().match({
+        Ok(_) => { text = name.c_text(a).try(); Ok(address_of(Dl.dlsym(handle, text.ptr()))) },
+        None  => Ok(0),
+    })
+}
+
+// Linux publishes RW -> RX. Apple Silicon's MAP_JIT mapping uses thread-local
+// write protection, then invalidates the instruction cache before entry.
+publish_address = (
+    a        : Alloc,
+    bytes    : Vec<u8>,
+    platform : Platform
+) Res<usize, AllocError> {
+    (bytes.len > 0).ensure().match({
+        None  => Ok(0),
+        Ok(_) => {
+            darwin = platform.match({ Darwin => true, _ => false });
+            arm    = platform.match({ LinuxX86_64 => false, _ => true });
+            toggle = darwin.match({ true => symbol(
+                a,
+                "/usr/lib/libSystem.B.dylib",
+                "pthread_jit_write_protect_np"
+            ).try(), false => 0 });
+            flush  = arm.match({ true => symbol(
+                a,
+                darwin.match({ true => "/usr/lib/libSystem.B.dylib", false => "libgcc_s.so.1" }),
+                darwin.match({ true => "sys_icache_invalidate", false => "__clear_cache" })
+            ).try(), false => 0 });
+            ((darwin && toggle == 0) || (arm && flush == 0)).match({
+                true  => Ok(0),
+                false => {
+                    mapped = mmap(0, bytes.len, darwin.match({ true => 7, false => 3 }), darwin.match({ true => 6146, false => 34 }), -1, 0).to_usize().value_or(0);
+                    (mapped != 0).then(() {
+                        darwin.then(
+                            () { call_entry(
+                                toggle,
+                                null_ptr<u8>(),
+                                null_ptr<u8>()
+                            ); }
+                        );
+                        Range(0, bytes.len).loop((i) { pointer_at(mapped).write(i, bytes.get(i).value_or(0)); });
+                        darwin.then(
+                            () { call_entry(
+                                toggle,
+                                pointer_at(1),
+                                null_ptr<u8>()
+                            ); }
+                        );
+                    });
+                    (mapped != 0 && !darwin && mprotect(
+                        mapped,
+                        bytes.len,
+                        5
+                    ) != 0).match({
+                        true  => { munmap(mapped, bytes.len); Ok(0) },
+                        false => {
+                            (mapped != 0 && arm).then(
+                                () { call_entry(
+                                    flush,
+                                    pointer_at(mapped),
+                                    pointer_at(
+                                        darwin.match({ true => bytes.len, false => mapped + bytes.len })
+                                    )
+                                ); }
+                            );
+                            Ok(mapped)
+                        },
+                    })
+                },
+            })
+        },
+    })
+}

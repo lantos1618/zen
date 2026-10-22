@@ -1,0 +1,387 @@
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ verify, message } = gen.gen_verify
+{ Res, Ok, Range } = std.core
+{ Vec } = std.collections
+{ address_of } = std.sys
+{ println } = std.io
+{ encode, compile } = gen.gen_jit_native
+{ Program, Func, Scalar, BasicBlock, Terminator, Instruction, Const, NativeRecord, Binary, Op, Convert, Invocation, Branch, Load, Store, StaticBytes, Layout, Unary, UnaryOp } = gen.gen_ir
+{ Platform } = gen.gen_sys
+{ nowhere } = std.source
+
+binary = (
+    a          : Alloc,
+    ty         : Scalar,
+    op         : Op,
+    comparison : bool
+) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    [ty, ty, comparison.match({ true => Scalar.Bool, false => ty })].loop((t) { slots.add(t).try(); });
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.BinaryValue(Binary(
+        out: 2,
+        left: 0,
+        right: 1,
+        op: op,
+        span: nowhere()
+    ))).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(2))).try();
+    Ok(Func(
+        name: "binary",
+        parameters: 2,
+        slots: slots,
+        blocks: blocks,
+        result: slots.get(2).value_or(Scalar.Unit)
+    ))
+}
+
+cast = (a: Alloc, from: Scalar, to: Scalar) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(from).try(); slots.add(to).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Cast(Convert(out: 1, input: 0))).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(1))).try();
+    Ok(Func(
+        name: "cast",
+        parameters: 1,
+        slots: slots,
+        blocks: blocks,
+        result: to
+    ))
+}
+
+args = (a: Alloc, slot: usize) Res<Vec<usize>, AllocError> {
+    out ::= a.Vec<usize>(); out.add(slot).try(); Ok(out)
+}
+
+recursive = (a: Alloc, index: usize, fib: bool) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    [Scalar.U64, Scalar.U64, Scalar.Bool, Scalar.U64, Scalar.U64, Scalar.U64, Scalar.U64, Scalar.U64, Scalar.U64].loop((t) { slots.add(t).try(); });
+    head ::= a.Vec<Instruction>();
+    head.add(Instruction.Constant(Const(
+        out: 1,
+        value: fib.match({ true => 2, false => 1 })
+    ))).try();
+    head.add(Instruction.BinaryValue(Binary(
+        out: 2,
+        left: 0,
+        right: 1,
+        op: Op.Less,
+        span: nowhere()
+    ))).try();
+    body ::= a.Vec<Instruction>();
+    body.add(Instruction.Constant(Const(out: 3, value: 1))).try();
+    body.add(Instruction.BinaryValue(Binary(
+        out: 4,
+        left: 0,
+        right: 3,
+        op: Op.Sub,
+        span: nowhere()
+    ))).try();
+    body.add(Instruction.Invoke(Invocation(
+        out: 5,
+        function: index,
+        args: args(a, 4).try()
+    ))).try();
+    fib.then(() {
+        body.add(Instruction.BinaryValue(Binary(
+            out: 6,
+            left: 0,
+            right: 1,
+            op: Op.Sub,
+            span: nowhere()
+        ))).try();
+        body.add(Instruction.Invoke(Invocation(
+            out: 7,
+            function: index,
+            args: args(a, 6).try()
+        ))).try();
+        body.add(Instruction.BinaryValue(Binary(
+            out: 8,
+            left: 5,
+            right: 7,
+            op: Op.Add,
+            span: nowhere()
+        ))).try();
+    });
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(
+        code: head,
+        exit: Terminator.Branch(Branch(value: 2, yes: 1, no: 2))
+    )).try();
+    blocks.add(BasicBlock(
+        code: a.Vec<Instruction>(),
+        exit: Terminator.Return(0)
+    )).try();
+    blocks.add(BasicBlock(
+        code: body,
+        exit: Terminator.Return(fib.match({ true => 8, false => 5 }))
+    )).try();
+    Ok(Func(
+        name: "recursive",
+        parameters: 1,
+        slots: slots,
+        blocks: blocks,
+        result: Scalar.U64
+    ))
+}
+
+memory = (a: Alloc, ty: Scalar, overflow: bool) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    [Scalar.Ptr, ty, ty, ty].loop((t) { slots.add(t).try(); });
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.LoadValue(Load(out: 2, base: 0, offset: 3))).try();
+    code.add(Instruction.StoreValue(Store(base: 0, offset: 3, value: 1))).try();
+    overflow.then(
+        () { code.add(Instruction.BinaryValue(Binary(
+            out: 3,
+            left: 1,
+            right: 1,
+            op: Op.Add,
+            span: nowhere()
+        ))).try(); }
+    );
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(2))).try();
+    Ok(Func(
+        name: "memory",
+        parameters: 2,
+        slots: slots,
+        blocks: blocks,
+        result: ty
+    ))
+}
+
+shift = (a: Alloc, ty: Scalar, op: Op) Res<Func, AllocError> {
+    function = binary(a, ty, op, false).try();
+    function.slots.ptr().write(1, Scalar.U64);
+    Ok(function)
+}
+
+cycle = (a: Alloc, callee: usize, writes: bool) Res<Func, AllocError> {
+    ty = (callee == 187).match({ true => Scalar.I64, false => Scalar.U64 });
+    slots ::= a.Vec<Scalar>();
+    [Scalar.Ptr, ty, ty].loop((t) { slots.add(t).try(); });
+    code ::= a.Vec<Instruction>();
+    writes.then(
+        () { code.add(Instruction.StoreValue(Store(
+            base: 0,
+            offset: 0,
+            value: 1
+        ))).try(); }
+    );
+    arguments ::= a.Vec<usize>(); arguments.add(0).try(); arguments.add(1).try();
+    code.add(Instruction.Invoke(Invocation(
+        out: 2,
+        function: callee,
+        args: arguments
+    ))).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(2))).try();
+    Ok(Func(
+        name: "effect_cycle",
+        parameters: 2,
+        slots: slots,
+        blocks: blocks,
+        result: ty
+    ))
+}
+
+many_arguments = (a: Alloc, callee: usize, count: usize) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    Range<usize>(0, 11).loop((_) { slots.add(Scalar.U64).try(); });
+    code      ::= a.Vec<Instruction>();
+    arguments ::= a.Vec<usize>();
+    (count > 0).then(() {
+        (count == 2).match({
+            true  => { arguments.add(0).try(); arguments.add(9).try(); },
+            false => Range<usize>(0, 10).loop((i) { arguments.add(9 - i).try(); }),
+        });
+        code.add(Instruction.Invoke(Invocation(
+            out: 10,
+            function: callee,
+            args: arguments
+        ))).try();
+    });
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(
+        code: code,
+        exit: Terminator.Return((count == 0).match({ true => 9, false => 10 }))
+    )).try();
+    Ok(Func(
+        name: "many_arguments",
+        parameters: 10,
+        slots: slots,
+        blocks: blocks,
+        result: Scalar.U64
+    ))
+}
+
+literal = (a: Alloc) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    slots.add(Scalar.U64).try();
+    Range<usize>(1, 900).loop((_) { slots.add(Scalar.Block(Layout(size: 8, align: 8))).try(); });
+    slots.add(Scalar.Ptr).try(); slots.add(Scalar.Ptr).try(); slots.add(Scalar.U8).try();
+    bytes ::= a.String().try();
+    Range<usize>(0, 8192).loop((i) { bytes.add((i % 251).truncate_u8()).try(); });
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Bytes(StaticBytes(
+        out: 900,
+        bytes: bytes.view()
+    ))).try();
+    code.add(Instruction.BinaryValue(Binary(
+        out: 901,
+        left: 900,
+        right: 0,
+        op: Op.WrapAdd,
+        span: nowhere()
+    ))).try();
+    code.add(Instruction.LoadValue(Load(out: 902, base: 901, offset: 0))).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(902))).try();
+    Ok(Func(
+        name: "literal",
+        parameters: 1,
+        slots: slots,
+        blocks: blocks,
+        result: Scalar.U8
+    ))
+}
+
+unary = (a: Alloc, ty: Scalar, op: UnaryOp) Res<Func, AllocError> {
+    slots ::= a.Vec<Scalar>(); slots.add(ty).try(); slots.add(ty).try();
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.UnaryValue(Unary(
+        out: 1,
+        input: 0,
+        op: op,
+        span: nowhere()
+    ))).try();
+    blocks ::= a.Vec<BasicBlock>(); blocks.add(BasicBlock(
+        code: code,
+        exit: Terminator.Return(1)
+    )).try();
+    Ok(Func(
+        name: "unary",
+        parameters: 1,
+        slots: slots,
+        blocks: blocks,
+        result: ty
+    ))
+}
+
+program = (a: Alloc) Res<Program, AllocError> {
+    functions ::= a.Vec<Func>();
+    types = [
+        Scalar.I8, Scalar.U8, Scalar.I16, Scalar.U16, Scalar.I32, Scalar.U32,
+        Scalar.I64, Scalar.U64
+    ];
+    types.loop((ty) {
+        [Op.Add, Op.Sub, Op.WrapAdd, Op.WrapSub, Op.WrapMul, Op.And, Op.Or, Op.Xor, Op.Equal, Op.NotEqual, Op.Less, Op.LessEqual, Op.Greater, Op.GreaterEqual].loop((op) {
+            comparison = op.match({ Equal => true, NotEqual => true, Less => true, LessEqual => true, Greater => true, GreaterEqual => true, _ => false });
+            functions.add(binary(a, ty, op, comparison).try()).try();
+        });
+    });
+    types.loop(
+        (from) { types.loop(
+            (to) { functions.add(cast(a, from, to).try()).try(); }
+        ); }
+    );
+    functions.add(recursive(a, functions.len, true).try()).try();
+    functions.add(recursive(a, functions.len, false).try()).try();
+    unsupported = binary(a, Scalar.U64, Op.Div, false).try();
+    unsupported_code ::= unsupported.blocks.get(0).value_or(BasicBlock(code: a.Vec<Instruction>(), exit: Terminator.Return(0))).code;
+    unsupported_code.add(Instruction.Text("effect")).try();
+    unsupported.blocks.ptr().write(
+        0,
+        BasicBlock(code: unsupported_code, exit: Terminator.Return(2))
+    );
+    functions.add(unsupported).try();
+    types.loop((ty) { functions.add(memory(a, ty, false).try()).try(); });
+    functions.add(memory(a, Scalar.I64, true).try()).try();
+    types.loop((ty) {
+        [Op.Shl, Op.Shr].loop((op) { functions.add(shift(a, ty, op).try()).try(); });
+    });
+    [Scalar.U32, Scalar.U64].loop((ty) { functions.add(shift(a, ty, Op.Rotr).try()).try(); });
+    types.loop((ty) { functions.add(cast(a, ty, Scalar.Bool).try()).try(); });
+    cycle_index = functions.len;
+    functions.add(cycle(a, cycle_index, true).try()).try();
+    functions.add(cycle(a, cycle_index, false).try()).try();
+    types.loop((ty) {
+        [Op.Mul, Op.Div, Op.Rem].loop((op) { functions.add(binary(a, ty, op, false).try()).try(); });
+    });
+    functions.add(many_arguments(a, 98, 2).try()).try();
+    functions.add(many_arguments(a, 0, 0).try()).try();
+    functions.add(many_arguments(a, 241, 10).try()).try();
+    functions.add(cycle(a, 187, false).try()).try();
+    functions.add(literal(a).try()).try();
+    [Scalar.I8, Scalar.I16, Scalar.I32, Scalar.I64].loop((ty) { functions.add(unary(a, ty, UnaryOp.Neg).try()).try(); });
+    functions.add(unary(a, Scalar.Bool, UnaryOp.Not).try()).try();
+    entry = functions.len;
+    entry_slots ::= a.Vec<Scalar>(); entry_slots.add(Scalar.I32).try();
+    entry_code ::= a.Vec<Instruction>(); entry_code.add(Instruction.Constant(Const(
+        out: 0,
+        value: 0
+    ))).try();
+    entry_blocks ::= a.Vec<BasicBlock>(); entry_blocks.add(BasicBlock(
+        code: entry_code,
+        exit: Terminator.Return(0)
+    )).try();
+    functions.add(Func(
+        name: "entry",
+        parameters: 0,
+        slots: entry_slots,
+        blocks: entry_blocks,
+        result: Scalar.I32
+    )).try();
+    Ok(Program(
+        functions: functions,
+        entry: entry,
+        natives: a.Vec<NativeRecord>()
+    ))
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a     = env.mem.alloc();
+    p     = program(a).try();
+    valid = p.verify(a).match({
+        Ok(_)      => true,
+        Err(error) => { error.match({ Invalid(fault) => println("invalid function {} block {}: {}", fault.function, fault.block, fault.reason.message()), _ => println("verification allocation failed") }); false },
+    });
+    status :: i32 = 0;
+    valid.match({
+    false => { status = 1; },
+    true  => {
+    mode = env.argv.get(1).value_or("run");
+    mode.starts_with("publish").match({
+        true  => {
+            platform = mode.eq("publish-darwin").match({ true => Platform.Darwin, false => mode.eq("publish-arm").match({ true => Platform.LinuxArm64, false => Platform.LinuxX86_64 }) });
+            image ::= compile(a, p, platform).try();
+            input = a.raw(24, 8).try().to<u64>();
+            input.write(0, 19); input.write(1, 23); input.write(2, 55);
+            result = image.run(6 * 14, address_of(input.to<u8>()));
+            println(
+                "published {} result {} preserved {}",
+                image.published(),
+                result.match({ Returned(value) => value, _ => 0 }),
+                input.read(0) == 19 && input.read(2) == 55
+            );
+            image.close();
+        },
+        false => {
+            target = mode.eq(
+                "arm"
+            ).match({ true => Platform.LinuxArm64, false => Platform.LinuxX86_64 });
+            code   = encode(a, p, target).try();
+            println("{}", code.entries.len);
+            code.entries.loop((entry) { println("{}", entry); });
+            code.bytes.loop((byte) { println("{}", byte); });
+        },
+    });
+    },
+    });
+    Ok(status)
+}

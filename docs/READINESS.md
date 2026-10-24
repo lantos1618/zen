@@ -50,8 +50,10 @@ actor I/O. Such integration needs a wake descriptor and explicit scheduling poli
 
 Validation: `python3 tests/library/readiness/run.py --zen ./zen --std src --ubsan`
 checks real socketpair read/write readiness, level triggering, identities, interest
-changes, unregister, timeout, signal interruption, EOF, invalid arguments,
-close-on-exec and explicit/Drop cleanup. A corrupted slot expectation must fail.
+changes, unregister, timeout, signal interruption, EOF under read and write interest
+(including a peer half-close with the send buffer full, so EPOLLOUT is not pending),
+invalid arguments, close-on-exec and explicit/Drop cleanup. A corrupted slot
+expectation must fail.
 EOF/error readiness is not a guarantee of a successful subsequent read or write.
 
 The focused UBSan suite and negative control passed on macOS arm64 and Linux

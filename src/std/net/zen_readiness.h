@@ -31,12 +31,21 @@ static int zen_ready_change(int queue, int fd, size_t slot, int write, int fresh
 #ifdef __APPLE__
     (void)fresh;
     struct kevent changes[2];
-    EV_SET(&changes[0], fd, EVFILT_READ, EV_ADD | (write ? EV_DISABLE : EV_ENABLE), 0, 0, (void *)(uintptr_t)slot);
+    // EVFILT_READ stays enabled under Write interest too, so a peer half-close
+    // (EOF on the read filter) can wake the wait; EVFILT_WRITE never reports it.
+    EV_SET(&changes[0], fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, (void *)(uintptr_t)slot);
     EV_SET(&changes[1], fd, EVFILT_WRITE, EV_ADD | (write ? EV_ENABLE : EV_DISABLE), 0, 0, (void *)(uintptr_t)slot);
     return kevent(queue, changes, 2, NULL, 0, NULL);
 #else
     struct epoll_event event = {0};
-    event.events = write ? EPOLLOUT : EPOLLIN;
+    // Write interest must also see a peer half-close: with the send buffer full
+    // EPOLLOUT is not pending, so EPOLLIN (and EPOLLRDHUP where available) lets
+    // the FIN wake the wait instead of hanging on a dead connection.
+#ifdef EPOLLRDHUP
+    event.events = write ? (EPOLLOUT | EPOLLRDHUP | EPOLLIN) : EPOLLIN;
+#else
+    event.events = write ? (EPOLLOUT | EPOLLIN) : EPOLLIN;
+#endif
     event.data.u64 = slot;
     return epoll_ctl(queue, fresh ? EPOLL_CTL_ADD : EPOLL_CTL_MOD, fd, &event);
 #endif

@@ -72,4 +72,42 @@ static int fixture_signal_count(void) { return fixture_signals; }
 static void fixture_check(int value, int line) {
     if (!value) { fprintf(stderr, "readiness assertion failed at test line %d\n", line); exit(1); }
 }
+
+// A second, isolated nonblocking socketpair reserved for the Write-interest
+// peer half-close case. The watched end (index 0) is the descriptor whose
+// readiness is observed; the peer (index 1) is the side that half-closes.
+static int fixture_block_pair[2] = {-1, -1};
+static int fixture_block_open(void) {
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fixture_block_pair)) return 0;
+    for (int i = 0; i < 2; ++i) {
+        int flags = fcntl(fixture_block_pair[i], F_GETFL);
+        if (flags < 0 || fcntl(fixture_block_pair[i], F_SETFL, flags | O_NONBLOCK)) {
+            close(fixture_block_pair[0]); close(fixture_block_pair[1]);
+            fixture_block_pair[0] = fixture_block_pair[1] = -1;
+            return 0;
+        }
+    }
+    return 1;
+}
+static int fixture_block_fd(int index) { return fixture_block_pair[index]; }
+// Fill the watched end's send buffer until EAGAIN, so EPOLLOUT/EVFILT_WRITE is
+// not pending and only an EOF (peer half-close) can wake the Write-interest wait.
+static int fixture_block_fill(void) {
+    static char block[4096];
+    for (;;) {
+        ssize_t n = send(fixture_block_pair[0], block, sizeof(block), 0);
+        if (n > 0) continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 1;
+        if (n < 0 && errno == EINTR) continue;
+        return 0;
+    }
+}
+static int fixture_block_half_close(void) {
+    return shutdown(fixture_block_pair[1], SHUT_WR) == 0 ? 1 : 0;
+}
+static void fixture_block_finish(void) {
+    if (fixture_block_pair[0] >= 0) close(fixture_block_pair[0]);
+    if (fixture_block_pair[1] >= 0) close(fixture_block_pair[1]);
+    fixture_block_pair[0] = fixture_block_pair[1] = -1;
+}
 #endif

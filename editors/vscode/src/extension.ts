@@ -131,8 +131,17 @@ async function startClient(): Promise<void> {
   // document's URI is `vscode-remote://…` and not `file://`, so pinning the
   // scheme to "file" is the classic way to make an extension that installs
   // correctly and then never attaches to anything.
+  //
+  // `workspaceFolder` is set for the same reason. vscode-languageclient derives
+  // `rootUri` from the first workspace folder only when that folder's URI
+  // scheme is `file`; on a remote host every folder is `vscode-remote://`, so
+  // without this override the server is handed `rootUri: null` and runs (or, if
+  // `zen.sourceRoots` is set, fails to initialize at all) believing the
+  // workspace is empty. Locking the folder makes the client send the remote
+  // `fsPath` as a `file://` `rootUri`, which the server's `path_of` accepts.
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ language: "zen" }],
+    workspaceFolder: vscode.workspace.workspaceFolders?.[0],
     outputChannel: output,
     initializationOptions:
       Array.isArray(sourceRoots) && sourceRoots.length === 0

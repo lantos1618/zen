@@ -6,7 +6,7 @@ const { test } = require("node:test");
 
 // Exercise the compiled extension's activation and configuration listener.
 // The host and language client are doubles; no editor or server is restarted.
-function host(sourceRoots) {
+function host(sourceRoots, folder) {
   const settings = { sourceRoots };
   const clients = [];
   const lifecycle = [];
@@ -27,7 +27,7 @@ function host(sourceRoots) {
       }),
     },
     workspace: {
-      workspaceFolders: [{ uri: { fsPath: "/workspace" } }],
+      workspaceFolders: [folder ?? { uri: { fsPath: "/workspace" } }],
       fs: { stat: async () => ({ type: 1 }) },
       createFileSystemWatcher: () => disposable,
       getConfiguration: (section) => ({
@@ -187,4 +187,19 @@ test("deactivation drains restarts without launching another server", async () =
   await tick();
   assert.deepEqual(extension.lifecycle, ["start 0", "stop 0"]);
   assert.ok(extension.clients.every((client) => !client.active));
+});
+
+test("client options lock the workspace folder so a remote host derives a rootUri", async () => {
+  // vscode-languageclient computes rootUri from the first workspace folder
+  // only when its URI scheme is `file`; a `vscode-remote` folder yields
+  // rootUri: null. The extension pins `workspaceFolder` so the client sends a
+  // real rootUri regardless of scheme — the fix for the remote-host bug.
+  const folder = {
+    uri: { fsPath: "/home/dev/project", scheme: "vscode-remote" },
+    name: "project",
+  };
+  const extension = host([], folder);
+  await extension.activate();
+  assert.equal(extension.clients[0].clientOptions.workspaceFolder, folder);
+  await extension.deactivate();
 });

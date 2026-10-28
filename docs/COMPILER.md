@@ -2,7 +2,7 @@
 
 Language-neutral pseudocode for the compiler's contract. Follow one native path: validated IR → selected templates → physical assembly → text. MacArm64 is the primary target; Linux differences are in Appendix A. The language it compiles is [ZEN_LANGUAGE.md](ZEN_LANGUAGE.md); building, packages and FFI are [BUILD_AND_PACKAGES.md](BUILD_AND_PACKAGES.md).
 
-This is the v0.7 reference ([COMPILER_REFERENCE_V0_7.md](COMPILER_REFERENCE_V0_7.md), kept unchanged) trimmed to a core profile for a small, elegant compiler with a low attack surface:
+This is the v0.7 reference (in git history, commit 4955d5932) trimmed to a core profile for a small, elegant compiler with a low attack surface:
 
 - **Removed from the core:** atomics (`AtomicLoad/Store/Rmw`, `CompareExchange`, `Fence`, `MemoryOrder`), `NativeAddress` and `IntegerToPointer`, the browser/Wasm route, and the coverage registry. Each can return later as a separate, gated feature.
 - **Routes:** the C route and MacArm64 / LinuxArm64. LinuxX64 (Appendix A.2) is the optional second ISA.

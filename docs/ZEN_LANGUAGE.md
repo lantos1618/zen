@@ -210,7 +210,7 @@ SIMD (`u8x16`…), wide multiply / carry ops, explicit truncation, volatile acce
 - **Operator overloading:** only `==` (via `Eq`) dispatches. Should `+` on `Duration`?
 - **Ordering:** there is no `Ord`. It must agree with `Eq`.
 
-## Minimal compiler profile (marrying with the v0.7 design)
+## Minimal compiler profile (marrying with COMPILER.md)
 
 | Tier | Language | Compiler pieces |
 |---|---|---|

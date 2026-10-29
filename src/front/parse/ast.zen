@@ -1,0 +1,48 @@
+// The syntax tree: what parse produces and check reads. Nodes live in one list and
+// refer to their children by position, so the tree is plain data with no pointers.
+
+{ Res, Ok, None, to_usize } = std.core
+{ Vec } = std.collections
+{ str } = std.text
+{ Source } = front.parse.source
+
+NodeKind* = {
+    | Function      // name = (params) result { body }: params, then result, then body
+    | Param         // name: type: one child, the type
+    | Block         // { expression }: one child
+    | Call          // callee(args): the callee, then the arguments
+    | Binary: BinaryOp
+    | Name
+    | Int
+}
+
+BinaryOp* = {
+    | Add
+    | Subtract
+    | Multiply,
+
+    // Higher binds tighter: `a + b * c` is `a + (b * c)`.
+    precedence* = (self: @Self) u8 {
+        self.match({ Multiply => 2, _ => 1 })
+    }
+}
+
+// A node's own text is source[start, end). Its children are tree.children[first, first + count).
+Node* = { kind*: NodeKind, start*: u32, end*: u32, first*: u32, count*: u32 }
+
+Tree* = {
+    source*: Source,
+    nodes*: Vec<Node>,
+    children*: Vec<u32>,
+    roots*: Vec<u32>,          // the top-level declarations, in order
+
+    node* = (self: @Self, id: u32) Res<Node> { self.nodes.get(id.to_usize()) }
+
+    // The k-th child of a node.
+    child* = (self: @Self, n: Node, k: u32) Res<Node> {
+        (k < n.count).ensure().try();
+        self.node(self.children.get((n.first + k).to_usize()).try())
+    }
+
+    text* = (self: @Self, n: Node) str { self.source.text.slice(n.start.to_usize(), n.end.to_usize()) }
+}

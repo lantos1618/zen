@@ -52,7 +52,10 @@ Kind* = {
     | And           // &&
     | Or            // ||
     | End
-    | Fault: Fault
+    | Fault: Fault,
+
+    // The same kind of token; any two faults count as the same kind.
+    is* = (self: @Self, other: Kind) bool { self.variant_name().eq(other.variant_name()) }
 }
 
 Fault* = {

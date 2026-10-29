@@ -22,13 +22,13 @@
 { Ir } = ir.validate
 
 RuntimeValue* = {
-    Int: IntegerConstant
-        | Bool: bool
-        | F32: u32
-        | F64: u64
-        | NullPointer
-        | Function: FunctionId
-        | NullFunction,
+    | Int: IntegerConstant
+    | Bool: bool
+    | F32: u32
+    | F64: u64
+    | NullPointer
+    | Function: FunctionId
+    | NullFunction,
 
     // Whether this value is a well-formed value of type t (integers masked to the width).
     fits_type* = (self: @Self, t: ScalarType) bool {
@@ -46,26 +46,32 @@ RuntimeValue* = {
 
 // B.2: a program fault that is neither a value nor a trap.
 InterpreterFault* = {
-    DeadAllocation
-        | OutOfBoundsAccess
-        | Misaligned
-        | PermissionDenied
-        | UninitializedMemory
-        | InvalidPointer
-        | ImportContractViolation
+    | DeadAllocation
+    | OutOfBoundsAccess
+    | Misaligned
+    | PermissionDenied
+    | UninitializedMemory
+    | InvalidPointer
+    | ImportContractViolation
 }
 
 Outcome* = {
-    Returned: Res<RuntimeValue>
-        | Trapped: TrapCode
-        | Fault: InterpreterFault
-        | ResourceLimit
+    | Returned: Res<RuntimeValue>
+    | Trapped: TrapCode
+    | Fault: InterpreterFault
+    | ResourceLimit
 }
 
 // Why execution stopped early: an outcome to report (a trap, a limit), or a diagnostic.
-Stop = { Halt: Outcome | Fail: Diagnostic }
+Stop = {
+    | Halt: Outcome
+    | Fail: Diagnostic
+}
 
-Next = { Go: BlockId | Done: Res<RuntimeValue> }
+Next = {
+    | Go: BlockId
+    | Done: Res<RuntimeValue>
+}
 
 FULL: u64 = 18446744073709551615
 ONE: u64 = 1

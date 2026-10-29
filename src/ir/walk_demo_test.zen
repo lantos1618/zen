@@ -76,7 +76,7 @@ trap_sites = (f: Function) {
                 false => (),
             });
         });
-        b.exit.match({ Trap(t) => println("  b{} exit traps: code {}", b.id.index, t.code.code()), _ => () });
+        b.exit.match({ Trap(t) => println("  b{} exit traps: code {}", b.id.index, t.code.discriminant()), _ => () });
     });
 }
 

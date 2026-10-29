@@ -38,7 +38,12 @@ is_power_of_two = (n: u64) bool { n != 0 && n.bit_and(n - 1) == 0 }
 ONE: u64 = 1
 
 // What defines a symbol. Built once, so every symbol lookup is one index.
-Owner = { Free | Function: FunctionId | Global: GlobalId | Import: FunctionId }
+Owner = {
+    | Free
+    | Function: FunctionId
+    | Global: GlobalId
+    | Import: FunctionId
+}
 
 Validator = {
     m: Module,

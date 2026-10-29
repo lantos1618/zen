@@ -157,7 +157,7 @@ ran = (a: Alloc, args: Vec<RuntimeValue>, expected: u64) Res<str, AllocError> {
             Err(d)      => d.code.name(),
             Ok(outcome) => outcome.match({
                 Returned(v)   => returned(v, expected),
-                Trapped(code) => (code.code() == 1).match({ true => "IntegerOverflow", false => "another trap" }),
+                Trapped(code) => (code.discriminant() == 1).match({ true => "IntegerOverflow", false => "another trap" }),
                 Fault(_)      => "Fault",
                 ResourceLimit => "ResourceLimit",
             }),

@@ -16,19 +16,19 @@ StackObjectId* = { index*: u32 }
 GlobalId* = { index*: u32 }
 
 ScalarType* = {
-    Bool
-        | I8
-        | U8
-        | I16
-        | U16
-        | I32
-        | U32
-        | I64
-        | U64
-        | F32
-        | F64
-        | Pointer
-        | FunctionPointer: SignatureId,
+    | Bool
+    | I8
+    | U8
+    | I16
+    | U16
+    | I32
+    | U32
+    | I64
+    | U64
+    | F32
+    | F64
+    | Pointer
+    | FunctionPointer: SignatureId,
 
     // Equal codes are equal types, except FunctionPointer, which also compares signatures.
     code* = (self: @Self) u8 {
@@ -65,12 +65,12 @@ ScalarType* = {
 IntegerConstant* = { type*: ScalarType, bits*: u64 }
 
 Constant* = {
-    Bool: bool
-        | Integer: IntegerConstant
-        | F32Bits: u32
-        | F64Bits: u64
-        | NullPointer
-        | NullFunctionPointer: SignatureId,
+    | Bool: bool
+    | Integer: IntegerConstant
+    | F32Bits: u32
+    | F64Bits: u64
+    | NullPointer
+    | NullFunctionPointer: SignatureId,
 
     type* = (self: @Self) ScalarType {
         self.match({
@@ -84,73 +84,92 @@ Constant* = {
     }
 }
 
-Value* = { Register: RegisterId | Constant: Constant }
+Value* = {
+    | Register: RegisterId
+    | Constant: Constant
+}
 
-Overflow* = { Checked | Wrapping }
+Overflow* = {
+    | Checked
+    | Wrapping
+}
 IntOp* = {
-    Add: Overflow
-        | Subtract: Overflow
-        | Multiply: Overflow
-        | Divide
-        | Remainder
-        | And
-        | Or
-        | Xor
-        | ShiftLeft
-        | ShiftRightLogical
-        | ShiftRightArithmetic,
+    | Add: Overflow
+    | Subtract: Overflow
+    | Multiply: Overflow
+    | Divide
+    | Remainder
+    | And
+    | Or
+    | Xor
+    | ShiftLeft
+    | ShiftRightLogical
+    | ShiftRightArithmetic,
 
     is_shift* = (self: @Self) bool {
         self.match({ ShiftLeft => true, ShiftRightLogical => true, ShiftRightArithmetic => true, _ => false })
     }
 }
-FloatOp* = { Add | Subtract | Multiply | Divide }
+FloatOp* = {
+    | Add
+    | Subtract
+    | Multiply
+    | Divide
+}
 IntPredicate* = {
-    Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual,
+    | Equal
+    | NotEqual
+    | Less
+    | LessEqual
+    | Greater
+    | GreaterEqual,
 
     is_equality* = (self: @Self) bool { self.match({ Equal => true, NotEqual => true, _ => false }) }
 }
-FloatPredicate* = { Equal
+FloatPredicate* = {
+    | Equal
     | NotEqual
     | Less
     | LessEqual
     | Greater
     | GreaterEqual
-    | Unordered }
-ConvertOp* = {
-    IntegerChecked
-        | IntegerWrapping
-        | IntegerToFloat
-        | FloatToIntegerChecked
-        | FloatWidth
-        | BoolToInteger
-        | PointerToInteger
-        | Bitcast
+    | Unordered
 }
-AddressBase* = { Register: RegisterId
+ConvertOp* = {
+    | IntegerChecked
+    | IntegerWrapping
+    | IntegerToFloat
+    | FloatToIntegerChecked
+    | FloatWidth
+    | BoolToInteger
+    | PointerToInteger
+    | Bitcast
+}
+AddressBase* = {
+    | Register: RegisterId
     | StackObject: StackObjectId
-    | Symbol: SymbolId }
-Callee* = { Function: FunctionId | Register: RegisterId }
-Access* = { Ordinary | Volatile }
+    | Symbol: SymbolId
+}
+Callee* = {
+    | Function: FunctionId
+    | Register: RegisterId
+}
+Access* = {
+    | Ordinary
+    | Volatile
+}
 MemoryAccess* = { alignment*: u32, access*: Access }
 
+// The trap's program result (§1.2) is its discriminant. Explicit codes are the
+// catch-all, made only by TrapCode.from_discriminant(n), and validation requires n >= 65536.
 TrapCode* = {
-    IntegerOverflow
-        | DivisionByZero
-        | InvalidShift
-        | InvalidConversion
-        | InvalidValue
-        | StackOverflow
-        | Explicit: u32,
-
-    // The program result a trap reports (§1.2).
-    code* = (self: @Self) u32 {
-        self.match({
-            IntegerOverflow => 1, DivisionByZero => 2, InvalidShift => 3,
-            InvalidConversion => 4, InvalidValue => 5, StackOverflow => 6,
-            Explicit(n) => n,
-        })
-    }
+    | IntegerOverflow = 1
+    | DivisionByZero = 2
+    | InvalidShift = 3
+    | InvalidConversion = 4
+    | InvalidValue = 5
+    | StackOverflow = 6
+    | Explicit: u32
 }
 
 Set* = { dst*: RegisterId, value*: Value }
@@ -168,19 +187,19 @@ Store* = { address*: Value, value*: Value, memory*: MemoryAccess }
 Call* = { dst*: Res<RegisterId>, callee*: Callee, args*: Vec<Value> }
 
 Instruction* = {
-    Set: Set
-        | Select: Select
-        | IntBinary: IntBinary
-        | FloatBinary: FloatBinary
-        | FloatNegate: FloatNegate
-        | IntCompare: IntCompare
-        | PointerCompare: PointerCompare
-        | FloatCompare: FloatCompare
-        | Convert: Convert
-        | Address: Address
-        | Load: Load
-        | Store: Store
-        | Call: Call
+    | Set: Set
+    | Select: Select
+    | IntBinary: IntBinary
+    | FloatBinary: FloatBinary
+    | FloatNegate: FloatNegate
+    | IntCompare: IntCompare
+    | PointerCompare: PointerCompare
+    | FloatCompare: FloatCompare
+    | Convert: Convert
+    | Address: Address
+    | Load: Load
+    | Store: Store
+    | Call: Call
 }
 
 SwitchCase* = { value*: Constant, target*: BlockId }
@@ -192,18 +211,31 @@ CallNever* = { callee*: Callee, args*: Vec<Value> }
 Trap* = { code*: TrapCode }
 
 Exit* = {
-    Jump: Jump
-        | Branch: Branch
-        | Switch: Switch
-        | Return: Return
-        | CallNever: CallNever
-        | Trap: Trap
+    | Jump: Jump
+    | Branch: Branch
+    | Switch: Switch
+    | Return: Return
+    | CallNever: CallNever
+    | Trap: Trap
 }
 
-ReturnContract* = { Returns: Res<ScalarType> | Never }
-Abi* = { AppleArm64 | Aapcs64Linux | SysVAMD64 }
-Backend* = { NativeAssembly | C }
-CallingConvention* = { PlatformDefault | Exact: Abi }
+ReturnContract* = {
+    | Returns: Res<ScalarType>
+    | Never
+}
+Abi* = {
+    | AppleArm64
+    | Aapcs64Linux
+    | SysVAMD64
+}
+Backend* = {
+    | NativeAssembly
+    | C
+}
+CallingConvention* = {
+    | PlatformDefault
+    | Exact: Abi
+}
 
 Signature* = {
     parameters*: Vec<ScalarType>,
@@ -213,19 +245,31 @@ Signature* = {
     is_never* = (self: @Self) bool { self.result.match({ Never => true, Returns(_) => false }) }
 }
 
-SymbolKind* = { Function | Data }
-Linkage* = { Internal | ExternalDefinition | ExternalImport }
+SymbolKind* = {
+    | Function
+    | Data
+}
+Linkage* = {
+    | Internal
+    | ExternalDefinition
+    | ExternalImport
+}
 Symbol* = { id*: SymbolId, kind*: SymbolKind, linkage*: Linkage, external_name*: Res<str> }
 
 AddressPart* = { symbol*: SymbolId, addend*: i64, type*: ScalarType }
 InitializerPart* = {
-    Bytes: Vec<u8> | ZeroBytes: u64 | Address: AddressPart,
+    | Bytes: Vec<u8>
+    | ZeroBytes: u64
+    | Address: AddressPart,
 
     size* = (self: @Self) u64 {
         self.match({ Bytes(b) => b.len.to_u64(), ZeroBytes(n) => n, Address(_) => 8 })
     }
 }
-Definition* = { Function: FunctionId | Global: GlobalId }
+Definition* = {
+    | Function: FunctionId
+    | Global: GlobalId
+}
 Export* = { symbol*: SymbolId, definition*: Definition }
 Global* = {
     symbol*: SymbolId, size*: u64, alignment*: u32, mutable*: bool,

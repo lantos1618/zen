@@ -5,41 +5,43 @@
 { FunctionId, BlockId, InstructionId } = ir.records
 
 DiagnosticCode* = {
-    UnknownName
-        | DuplicateName
-        | PrivateImport
-        | InvalidRecursiveType
-        | InvalidId
-        | DuplicateId
-        | TypeMismatch
-        | ArityMismatch
-        | MissingExit
-        | InvalidSuccessor
-        | DuplicateSwitchCase
-        | UninitializedRegister
-        | InvalidConstant
-        | InvalidAlignment
-        | InvalidLayout
-        | InvalidSymbol
-        | InvalidInstructionForm
-        | InvalidReturnContract
-        | UnsupportedTarget
-        | UnsupportedFeature
-        | MissingLowering
-        | ResourceLimit
-        | ExternalToolFailure,
+    | UnknownName
+    | DuplicateName
+    | PrivateImport
+    | InvalidRecursiveType
+    | InvalidId
+    | DuplicateId
+    | TypeMismatch
+    | ArityMismatch
+    | MissingExit
+    | InvalidSuccessor
+    | DuplicateSwitchCase
+    | UninitializedRegister
+    | InvalidConstant
+    | InvalidAlignment
+    | InvalidLayout
+    | InvalidSymbol
+    | InvalidInstructionForm
+    | InvalidReturnContract
+    | UnsupportedTarget
+    | UnsupportedFeature
+    | MissingLowering
+    | ResourceLimit
+    | ExternalToolFailure,
 
     // The variant's own name, so it can never drift from the enum.
     name* = (self: @Self) str { self.variant_name() }
 }
 
-DiagnosticStage* = { Source
+DiagnosticStage* = {
+    | Source
     | IR
     | Target
     | Selection
     | Allocation
     | Assembly
-    | Toolchain }
+    | Toolchain
+}
 
 Diagnostic* = {
     code*: DiagnosticCode,

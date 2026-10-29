@@ -29,22 +29,8 @@ DiagnosticCode* = {
         | ResourceLimit
         | ExternalToolFailure,
 
-    name* = (self: @Self) str {
-        self.match({
-            UnknownName => "UnknownName", DuplicateName => "DuplicateName",
-            PrivateImport => "PrivateImport", InvalidRecursiveType => "InvalidRecursiveType",
-            InvalidId => "InvalidId", DuplicateId => "DuplicateId",
-            TypeMismatch => "TypeMismatch", ArityMismatch => "ArityMismatch",
-            MissingExit => "MissingExit", InvalidSuccessor => "InvalidSuccessor",
-            DuplicateSwitchCase => "DuplicateSwitchCase", UninitializedRegister => "UninitializedRegister",
-            InvalidConstant => "InvalidConstant", InvalidAlignment => "InvalidAlignment",
-            InvalidLayout => "InvalidLayout", InvalidSymbol => "InvalidSymbol",
-            InvalidInstructionForm => "InvalidInstructionForm", InvalidReturnContract => "InvalidReturnContract",
-            UnsupportedTarget => "UnsupportedTarget", UnsupportedFeature => "UnsupportedFeature",
-            MissingLowering => "MissingLowering", ResourceLimit => "ResourceLimit",
-            ExternalToolFailure => "ExternalToolFailure",
-        })
-    }
+    // The variant's own name, so it can never drift from the enum.
+    name* = (self: @Self) str { self.variant_name() }
 }
 
 DiagnosticStage* = { Source

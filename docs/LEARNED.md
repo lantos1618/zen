@@ -19,6 +19,10 @@ Short, current facts that save the next person (or agent) an hour. Delete an ent
 | A local function declaration takes no `;` | `set = (r: RegisterId) { .. }` then the next statement |
 | Char literals work as `.match` patterns on `u8` | `c.match({ '(' => .., ':' => .., _ => .. })` |
 | `variant_name()` exists but bypasses the `@` rule | use it until the new compiler has `@meta(v).variant.name` |
+| An alias of a generic instance (`FunctionId = Id<Function>`) is treated as a different type | write `Id<Function>` directly; a non-generic alias (`Code = DiagnosticCode`) works |
+| Record payloads can't be written inline in a variant (`\| Set: { dst: .. }`) | declare the record, then `\| Set: Set` |
+| `bool.then` and `bool.ensure` live in `std.core` | `cond.ensure(reason).try();` is the one-line "fail unless"; `cond.then(() { .. })` is the one-sided action |
+| A line may start with `.` to continue the previous expression | `(long condition)` then `    .ensure(..).try();` on the next line |
 
 ## Design lessons
 
@@ -36,3 +40,11 @@ Short, current facts that save the next person (or agent) an hour. Delete an ent
 - **`.try()` inside a closure leaves the enclosing function.** A `std.test` body is therefore one expression; one check per test fits that anyway.
 - **Mutation checks find weak tests.** Weakening the leading-zero rule went unnoticed until a two-digit case was added.
 - **A function with `Alloc` and no `Env` can't wait or do IO.** The lexer takes `Alloc` on purpose; that's the rule from MEMORY_AND_ACTORS.md, not an oversight.
+
+## From the second review of #111
+
+- **"I don't want to read this" is the top gate.** The validator was 53 copies of a five-line `require` block; as one `ensure` line per rule it reads as a list of rules.
+- **Zen had the guard all along:** `.then` and `ensure`. Before claiming the language lacks something, look in std.
+- **A table stays a table:** every arm of `check_instruction` is one call; logic lives in the named rule it calls.
+- **Questions about a record belong on the record** (`Symbol.is_function`, `must_be_defined`), not repeated inline.
+- **Edit by line number or exact text, never by a loose pattern.** A `sed` meant for one `Ok` line matched seven, one of them making a function call itself.

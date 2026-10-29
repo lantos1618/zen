@@ -256,7 +256,17 @@ Linkage* = {
     | ExternalDefinition
     | ExternalImport
 }
-Symbol* = { id*: Id<Symbol>, kind*: SymbolKind, linkage*: Linkage, external_name*: Res<str> }
+Symbol* = {
+    id*: Id<Symbol>,
+    kind*: SymbolKind,
+    linkage*: Linkage,
+    external_name*: Res<str>,
+
+    is_function* = (self: @Self) bool { self.kind.match({ Function => true, Data => false }) }
+    is_imported* = (self: @Self) bool { self.linkage.match({ ExternalImport => true, _ => false }) }
+    is_external* = (self: @Self) bool { self.linkage.match({ Internal => false, _ => true }) }
+    must_be_defined* = (self: @Self) bool { self.linkage.match({ ExternalDefinition => true, _ => false }) }
+}
 
 AddressPart* = { symbol*: Id<Symbol>, addend*: i64, type*: ScalarType }
 InitializerPart* = {

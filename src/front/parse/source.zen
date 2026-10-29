@@ -1,0 +1,41 @@
+// Source text and the reads every front-end stage needs. Bytes past the end read as 0,
+// so scanning code needs no bounds checks. Line and column are computed from an offset
+// only when a diagnostic needs them.
+
+{ Res, Ok, None, Range, to_usize, truncate_u32 } = std.core
+{ str } = std.text
+
+Position* = { line*: u32, column*: u32 }
+
+Source* = {
+    text*: str,
+
+    byte* = (self: @Self, i: usize) u8 { self.text.get(i).match({ Ok(b) => b, None => 0 }) }
+
+    // The first index at or after `from` whose byte fails `keep`.
+    scan* = (self: @Self, from: usize, keep: (c: u8) bool) usize {
+        i ::= from;
+        Range(from, self.text.len).loop((h, _) {
+            keep(self.byte(i)).match({ true => { i = i + 1; }, false => h.break() });
+        });
+        i
+    }
+
+    // The index of the newline that ends the line holding `from`, or the end of the text.
+    line_end* = (self: @Self, from: usize) usize {
+        self.text.slice(from, self.text.len).find('\n').match({
+            Ok(n) => from + n,
+            None  => self.text.len,
+        })
+    }
+
+    // The 1-based line and column of a byte offset.
+    position* = (self: @Self, offset: u32) Position {
+        before = self.text.slice(0, offset.to_usize());
+        column = before.rfind('\n').match({
+            Ok(newline) => offset - newline.truncate_u32(),
+            None        => offset + 1,
+        });
+        Position(line: before.count("\n").truncate_u32() + 1, column: column)
+    }
+}

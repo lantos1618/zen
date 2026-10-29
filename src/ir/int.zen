@@ -3,7 +3,10 @@
 // code; none traps the host. The interpreter, constant folding and the C route share it.
 
 { Res, Ok, Err, to_usize, to_u64, to_u128, truncate_u64, bit_and, bit_or, bit_xor, shift_left, shift_right } = std.core
-{ ScalarType, IntegerConstant, IntOp, IntPredicate, Overflow, TrapCode } = ir.records
+{
+    ScalarType, IntegerConstant, IntOp, IntPredicate, Overflow, TrapCode,
+    Id
+} = ir.records
 
 FULL: u64 = 18446744073709551615
 ONE: u64 = 1

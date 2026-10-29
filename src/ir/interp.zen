@@ -15,8 +15,9 @@
 { Vec } = std.collections
 { str } = std.text
 {
-    Module, Function, Block, ScalarType, IntegerConstant, Value, Instruction, Exit,
-    Callee, IntOp, Overflow, IntPredicate, TrapCode, FunctionId, RegisterId, BlockId
+    Module, Function, Block, ScalarType, IntegerConstant, Value,
+    Instruction, Exit, Callee, IntOp, Overflow, IntPredicate,
+    TrapCode, Id, Register
 } = ir.records
 { DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
 { Int, int } = ir.int
@@ -28,7 +29,7 @@ RuntimeValue* = {
     | F32: u32
     | F64: u64
     | NullPointer
-    | Function: FunctionId
+    | Function: Id<Function>
     | NullFunction,
 
     // Whether this value is a well-formed value of type t (integers masked to the width).
@@ -70,7 +71,7 @@ Stop = {
 }
 
 Next = {
-    | Go: BlockId
+    | Go: Id<Block>
     | Done: Res<RuntimeValue>
 }
 
@@ -81,7 +82,7 @@ DEPTH_LIMIT: u32 = 1000
 run* = (
     a    : Alloc,
     ir   : Ir,
-    f    : FunctionId,
+    f    : Id<Function>,
     args : Vec<RuntimeValue>
 ) Res<Outcome, Diagnostic> {
     m        = ir.view();
@@ -170,7 +171,7 @@ Machine = {
     steps :: u64,
     depth :: u32,
 
-    call = (self :: @Self, id: FunctionId, args: Vec<RuntimeValue>) Res<Res<RuntimeValue>, Stop> {
+    call = (self :: @Self, id: Id<Function>, args: Vec<RuntimeValue>) Res<Res<RuntimeValue>, Stop> {
         f = self.m.function(id).match({
             Ok(f) => f,
             None  => fail<Function>(
@@ -275,7 +276,7 @@ Machine = {
 
     // Inputs are read before the destination is written, so `r = r + 1` reads the old r.
     execute = (self :: @Self, f: Function, regs :: Vec<RuntimeValue>, i: Instruction) Res<(), Stop> {
-        set = (r: RegisterId, v: RuntimeValue) { regs.set(
+        set = (r: Id<Register>, v: RuntimeValue) { regs.set(
             r.index.to_usize(),
             v
         ); }
@@ -400,12 +401,12 @@ Machine = {
         Ok(values)
     }
 
-    callee = (self: @Self, regs: Vec<RuntimeValue>, c: Callee) Res<FunctionId, Stop> {
+    callee = (self: @Self, regs: Vec<RuntimeValue>, c: Callee) Res<Id<Function>, Stop> {
         c.match({
             Function(id) => Ok(id),
             Register(r)  => self.value(regs, Value.Register(r)).match({
                 Function(id) => Ok(id),
-                _            => halt<FunctionId>(Outcome.Fault(
+                _            => halt<Id<Function>>(Outcome.Fault(
                     InterpreterFault.InvalidPointer
                 )),
             }),

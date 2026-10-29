@@ -2,7 +2,9 @@
 
 { Res, Err } = std.core
 { str } = std.text
-{ FunctionId, BlockId, InstructionId } = ir.records
+{
+    Id, Function, Block, Instruction
+} = ir.records
 
 DiagnosticCode* = {
     | UnknownName
@@ -46,8 +48,8 @@ DiagnosticStage* = {
 Diagnostic* = {
     code*: DiagnosticCode,
     stage*: DiagnosticStage,
-    function*: Res<FunctionId>,
-    block*: Res<BlockId>,
-    instruction*: Res<InstructionId>,
+    function*: Res<Id<Function>>,
+    block*: Res<Id<Block>>,
+    instruction*: Res<Id<Instruction>>,
     message*: str,
 }

@@ -4,18 +4,18 @@
 { Res, Ok } = std.core
 {
     ScalarType, Constant, IntegerConstant, Value, Instruction, InstructionRecord,
-    IntBinary, IntOp, Overflow, RegisterId, InstructionId
+    IntBinary, IntOp, Overflow, Id, Register
 } = ir.records
 
-reg* = (i: u32) RegisterId { RegisterId(index: i) }
+reg* = (i: u32) Id<Register> { Id<Register>(index: i) }
 
 // The value held in a register.
-value_of* = (r: RegisterId) Value { Value.Register(r) }
+value_of* = (r: Id<Register>) Value { Value.Register(r) }
 
 i32_const* = (n: u64) Value { Value.Constant(Constant.Integer(IntegerConstant(type: ScalarType.I32, bits: n))) }
 
-record* = (id: u32, i: Instruction) InstructionRecord { InstructionRecord(id: InstructionId(index: id), instruction: i) }
+record* = (id: u32, i: Instruction) InstructionRecord { InstructionRecord(id: Id<Instruction>(index: id), instruction: i) }
 
-checked_add* = (dst: RegisterId, lhs: Value, rhs: Value) Instruction {
+checked_add* = (dst: Id<Register>, lhs: Value, rhs: Value) Instruction {
     Instruction.IntBinary(IntBinary(dst: dst, op: IntOp.Add(Overflow.Checked), lhs: lhs, rhs: rhs))
 }

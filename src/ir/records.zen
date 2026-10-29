@@ -6,14 +6,12 @@
 { Vec } = std.collections
 { str } = std.text
 
-FunctionId* = { index*: u32 }
-SignatureId* = { index*: u32 }
-RegisterId* = { index*: u32 }
-BlockId* = { index*: u32 }
-InstructionId* = { index*: u32 }
-SymbolId* = { index*: u32 }
-StackObjectId* = { index*: u32 }
-GlobalId* = { index*: u32 }
+// One ID type: K says what it names, so an Id<Block> can't be passed as an Id<Register>.
+Id*<K> = { index*: u32 }
+
+// What a register ID names; registers have no record of their own.
+Register* = {}
+
 
 ScalarType* = {
     | Bool
@@ -28,7 +26,7 @@ ScalarType* = {
     | F32
     | F64
     | Pointer
-    | FunctionPointer: SignatureId,
+    | FunctionPointer: Id<Signature>,
 
     // Equal codes are equal types, except FunctionPointer, which also compares signatures.
     code* = (self: @Self) u8 {
@@ -70,7 +68,7 @@ Constant* = {
     | F32Bits: u32
     | F64Bits: u64
     | NullPointer
-    | NullFunctionPointer: SignatureId,
+    | NullFunctionPointer: Id<Signature>,
 
     type* = (self: @Self) ScalarType {
         self.match({
@@ -85,7 +83,7 @@ Constant* = {
 }
 
 Value* = {
-    | Register: RegisterId
+    | Register: Id<Register>
     | Constant: Constant
 }
 
@@ -146,13 +144,13 @@ ConvertOp* = {
     | Bitcast
 }
 AddressBase* = {
-    | Register: RegisterId
-    | StackObject: StackObjectId
-    | Symbol: SymbolId
+    | Register: Id<Register>
+    | StackObject: Id<StackObject>
+    | Symbol: Id<Symbol>
 }
 Callee* = {
-    | Function: FunctionId
-    | Register: RegisterId
+    | Function: Id<Function>
+    | Register: Id<Register>
 }
 Access* = {
     | Ordinary
@@ -172,19 +170,19 @@ TrapCode* = {
     | Explicit: u32
 }
 
-Set* = { dst*: RegisterId, value*: Value }
-Select* = { dst*: RegisterId, condition*: Value, yes*: Value, no*: Value }
-IntBinary* = { dst*: RegisterId, op*: IntOp, lhs*: Value, rhs*: Value }
-FloatBinary* = { dst*: RegisterId, op*: FloatOp, lhs*: Value, rhs*: Value }
-FloatNegate* = { dst*: RegisterId, value*: Value }
-IntCompare* = { dst*: RegisterId, op*: IntPredicate, lhs*: Value, rhs*: Value }
-PointerCompare* = { dst*: RegisterId, op*: IntPredicate, lhs*: Value, rhs*: Value }
-FloatCompare* = { dst*: RegisterId, op*: FloatPredicate, lhs*: Value, rhs*: Value }
-Convert* = { dst*: RegisterId, op*: ConvertOp, value*: Value }
-Address* = { dst*: RegisterId, base*: AddressBase, byte_offset*: Value }
-Load* = { dst*: RegisterId, address*: Value, memory*: MemoryAccess }
+Set* = { dst*: Id<Register>, value*: Value }
+Select* = { dst*: Id<Register>, condition*: Value, yes*: Value, no*: Value }
+IntBinary* = { dst*: Id<Register>, op*: IntOp, lhs*: Value, rhs*: Value }
+FloatBinary* = { dst*: Id<Register>, op*: FloatOp, lhs*: Value, rhs*: Value }
+FloatNegate* = { dst*: Id<Register>, value*: Value }
+IntCompare* = { dst*: Id<Register>, op*: IntPredicate, lhs*: Value, rhs*: Value }
+PointerCompare* = { dst*: Id<Register>, op*: IntPredicate, lhs*: Value, rhs*: Value }
+FloatCompare* = { dst*: Id<Register>, op*: FloatPredicate, lhs*: Value, rhs*: Value }
+Convert* = { dst*: Id<Register>, op*: ConvertOp, value*: Value }
+Address* = { dst*: Id<Register>, base*: AddressBase, byte_offset*: Value }
+Load* = { dst*: Id<Register>, address*: Value, memory*: MemoryAccess }
 Store* = { address*: Value, value*: Value, memory*: MemoryAccess }
-Call* = { dst*: Res<RegisterId>, callee*: Callee, args*: Vec<Value> }
+Call* = { dst*: Res<Id<Register>>, callee*: Callee, args*: Vec<Value> }
 
 Instruction* = {
     | Set: Set
@@ -202,10 +200,10 @@ Instruction* = {
     | Call: Call
 }
 
-SwitchCase* = { value*: Constant, target*: BlockId }
-Jump* = { target*: BlockId }
-Branch* = { condition*: Value, yes*: BlockId, no*: BlockId }
-Switch* = { value*: Value, cases*: Vec<SwitchCase>, default*: BlockId }
+SwitchCase* = { value*: Constant, target*: Id<Block> }
+Jump* = { target*: Id<Block> }
+Branch* = { condition*: Value, yes*: Id<Block>, no*: Id<Block> }
+Switch* = { value*: Value, cases*: Vec<SwitchCase>, default*: Id<Block> }
 Return* = { value*: Res<Value> }
 CallNever* = { callee*: Callee, args*: Vec<Value> }
 Trap* = { code*: TrapCode }
@@ -254,9 +252,9 @@ Linkage* = {
     | ExternalDefinition
     | ExternalImport
 }
-Symbol* = { id*: SymbolId, kind*: SymbolKind, linkage*: Linkage, external_name*: Res<str> }
+Symbol* = { id*: Id<Symbol>, kind*: SymbolKind, linkage*: Linkage, external_name*: Res<str> }
 
-AddressPart* = { symbol*: SymbolId, addend*: i64, type*: ScalarType }
+AddressPart* = { symbol*: Id<Symbol>, addend*: i64, type*: ScalarType }
 InitializerPart* = {
     | Bytes: Vec<u8>
     | ZeroBytes: u64
@@ -267,41 +265,41 @@ InitializerPart* = {
     }
 }
 Definition* = {
-    | Function: FunctionId
-    | Global: GlobalId
+    | Function: Id<Function>
+    | Global: Id<Global>
 }
-Export* = { symbol*: SymbolId, definition*: Definition }
+Export* = { symbol*: Id<Symbol>, definition*: Definition }
 Global* = {
-    symbol*: SymbolId, size*: u64, alignment*: u32, mutable*: bool,
+    symbol*: Id<Symbol>, size*: u64, alignment*: u32, mutable*: bool,
     initializer*: Vec<InitializerPart>,
 }
-StackObject* = { id*: StackObjectId, size*: u64, alignment*: u32 }
-InstructionRecord* = { id*: InstructionId, instruction*: Instruction }
-Block* = { id*: BlockId, instructions*: Vec<InstructionRecord>, exit*: Exit }
+StackObject* = { id*: Id<StackObject>, size*: u64, alignment*: u32 }
+InstructionRecord* = { id*: Id<Instruction>, instruction*: Instruction }
+Block* = { id*: Id<Block>, instructions*: Vec<InstructionRecord>, exit*: Exit }
 
 Function* = {
-    id*: FunctionId,
-    symbol*: SymbolId,
-    signature*: SignatureId,
-    parameters*: Vec<RegisterId>,
-    register_types*: Vec<ScalarType>,       // RegisterId is the position
-    objects*: Vec<StackObject>,             // StackObjectId is the position
-    entry*: BlockId,
-    blocks*: Vec<Block>,                    // BlockId is the position
+    id*: Id<Function>,
+    symbol*: Id<Symbol>,
+    signature*: Id<Signature>,
+    parameters*: Vec<Id<Register>>,
+    register_types*: Vec<ScalarType>,       // Id<Register> is the position
+    objects*: Vec<StackObject>,             // Id<StackObject> is the position
+    entry*: Id<Block>,
+    blocks*: Vec<Block>,                    // Id<Block> is the position
 
-    register_type* = (self: @Self, r: RegisterId) Res<ScalarType> { self.register_types.get(
+    register_type* = (self: @Self, r: Id<Register>) Res<ScalarType> { self.register_types.get(
         r.index.to_usize()
     ) }
-    block* = (self: @Self, b: BlockId) Res<Block> { self.blocks.get(
+    block* = (self: @Self, b: Id<Block>) Res<Block> { self.blocks.get(
         b.index.to_usize()
     ) }
-    object* = (self: @Self, o: StackObjectId) Res<StackObject> { self.objects.get(
+    object* = (self: @Self, o: Id<StackObject>) Res<StackObject> { self.objects.get(
         o.index.to_usize()
     ) }
 }
 
-// FunctionIds are dense across definitions and imports: definitions first, then imports.
-Import* = { function*: FunctionId, symbol*: SymbolId, signature*: SignatureId }
+// Function ids are dense across definitions and imports: definitions first, then imports.
+Import* = { function*: Id<Function>, symbol*: Id<Symbol>, signature*: Id<Signature> }
 
 Module* = {
     signatures*: Vec<Signature>,
@@ -310,21 +308,21 @@ Module* = {
     imports*: Vec<Import>,
     functions*: Vec<Function>,
     exports*: Vec<Export>,
-    trap_handler*: Res<FunctionId>,     // an Import of type (U32) -> Never
+    trap_handler*: Res<Id<Function>>,     // an Import of type (U32) -> Never
 
-    signature* = (self: @Self, s: SignatureId) Res<Signature> { self.signatures.get(
+    signature* = (self: @Self, s: Id<Signature>) Res<Signature> { self.signatures.get(
         s.index.to_usize()
     ) }
-    symbol* = (self: @Self, s: SymbolId) Res<Symbol> { self.symbols.get(
+    symbol* = (self: @Self, s: Id<Symbol>) Res<Symbol> { self.symbols.get(
         s.index.to_usize()
     ) }
-    global* = (self: @Self, g: GlobalId) Res<Global> { self.globals.get(
+    global* = (self: @Self, g: Id<Global>) Res<Global> { self.globals.get(
         g.index.to_usize()
     ) }
-    function* = (self: @Self, f: FunctionId) Res<Function> { self.functions.get(
+    function* = (self: @Self, f: Id<Function>) Res<Function> { self.functions.get(
         f.index.to_usize()
     ) }
-    import* = (self: @Self, f: FunctionId) Res<Import> {
+    import* = (self: @Self, f: Id<Function>) Res<Import> {
         i = f.index.to_usize();
         (i < self.functions.len).match({
             true  => None,
@@ -333,7 +331,7 @@ Module* = {
     }
 
     // The signature of a defined or imported function.
-    signature_of* = (self: @Self, f: FunctionId) Res<SignatureId> {
+    signature_of* = (self: @Self, f: Id<Function>) Res<Id<Signature>> {
         self.function(f).match({
             Ok(function) => Ok(function.signature),
             None         => Ok(self.import(f).try().signature),

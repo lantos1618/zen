@@ -5,7 +5,10 @@
 { Alloc, AllocError } = std.mem
 { println } = std.io
 { Env } = std.env
-{ Function, Value, Instruction, Exit, IntOp, Overflow, FunctionId } = ir.records
+{
+    Function, Value, Instruction, Exit, IntOp, Overflow,
+    Id
+} = ir.records
 { validate } = ir.validate
 { DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
 { sum_to } = ir.selftest
@@ -84,7 +87,7 @@ walk = (a: Alloc) Res<(), Diagnostic> {
     built = sum_to(a, 0).match({ Ok(m) => Ok(m), Err(_) => Err(oom()) });
     m = built.try();
     ir = validate(a, m).try();
-    found = ir.view().function(FunctionId(index: 0)).match({ Ok(f) => Ok(f), None => Err(oom()) });
+    found = ir.view().function(Id<Function>(index: 0)).match({ Ok(f) => Ok(f), None => Err(oom()) });
     f = found.try();
 
     println("== sum_to, walked as validated IR ==");

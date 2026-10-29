@@ -9,9 +9,9 @@
 { Env } = std.env
 { str } = std.text
 {
-    Module, Function, Block, ScalarType, Constant, IntegerConstant, Value, Instruction,
-    InstructionRecord, Exit, IntBinary, Set, Return, IntOp, Overflow, FunctionId, RegisterId,
-    InstructionId
+    Module, Function, Block, ScalarType, Constant, IntegerConstant,
+    Value, Instruction, InstructionRecord, Exit, IntBinary, Set,
+    Return, IntOp, Overflow, Id, Register
 } = ir.records
 { Diagnostic } = ir.diagnostic
 { validate } = ir.validate
@@ -35,7 +35,7 @@ count_adds = (a: Alloc, m: Module, broken: bool) Res<Module, AllocError> {
     f = first_function.try();
     types ::= a.Vec<ScalarType>();
     f.register_types.loop((t) { types.add(t).try(); });
-    count = RegisterId(index: f.register_types.len.truncate_u32());
+    count = Id<Register>(index: f.register_types.len.truncate_u32());
     types.add(ScalarType.I32).try();
 
     tick = Instruction.IntBinary(IntBinary(
@@ -51,17 +51,17 @@ count_adds = (a: Alloc, m: Module, broken: bool) Res<Module, AllocError> {
         (b.id.index == f.entry.index).match({
             true  => {
                 first = broken.match({ true => tick, false => Instruction.Set(Set(dst: count, value: i32_const(0))) });
-                records.add(InstructionRecord(id: InstructionId(index: next), instruction: first)).try();
+                records.add(InstructionRecord(id: Id<Instruction>(index: next), instruction: first)).try();
                 next = next + 1;
             },
             false => (),
         });
         b.instructions.loop((rec) {
-            records.add(InstructionRecord(id: InstructionId(index: next), instruction: rec.instruction)).try();
+            records.add(InstructionRecord(id: Id<Instruction>(index: next), instruction: rec.instruction)).try();
             next = next + 1;
             is_checked_add(rec.instruction).match({
                 true  => {
-                    records.add(InstructionRecord(id: InstructionId(index: next), instruction: tick)).try();
+                    records.add(InstructionRecord(id: Id<Instruction>(index: next), instruction: tick)).try();
                     next = next + 1;
                 },
                 false => (),
@@ -93,7 +93,7 @@ try_injection = (a: Alloc, name: str, broken: bool) Res<(), AllocError> {
         Ok(ir) => {
             args ::= a.Vec<RuntimeValue>();
             args.add(RuntimeValue.Int(IntegerConstant(type: ScalarType.I32, bits: 10))).try();
-            run(a, ir, FunctionId(index: 0), args).match({
+            run(a, ir, Id<Function>(index: 0), args).match({
                 Ok(outcome) => outcome.match({
                     Returned(v) => v.match({
                         Ok(rv) => rv.match({

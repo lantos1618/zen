@@ -8,11 +8,12 @@
 { Vec } = std.collections
 { Env } = std.env
 {
-    Module, Function, Block, Signature, Symbol, Import, Export, ScalarType, Constant,
-    IntegerConstant, Value, Instruction, InstructionRecord, Exit, Set, IntBinary, IntCompare,
-    IntOp, IntPredicate, Overflow, Jump, Branch, Return, ReturnContract, CallingConvention,
-    SymbolKind, Linkage, Definition, FunctionId, SignatureId, RegisterId, BlockId,
-    InstructionId, SymbolId, StackObject, Global
+    Module, Function, Block, Signature, Symbol, Import,
+    Export, ScalarType, Constant, IntegerConstant, Value, Instruction,
+    InstructionRecord, Exit, Set, IntBinary, IntCompare, IntOp,
+    IntPredicate, Overflow, Jump, Branch, Return, ReturnContract,
+    CallingConvention, SymbolKind, Linkage, Definition, StackObject, Global,
+    Id, Register
 } = ir.records
 { Diagnostic } = ir.diagnostic
 { validate } = ir.validate
@@ -33,7 +34,7 @@ sum_to* = (a: Alloc, variant: u32) Res<Module, AllocError> {
 
     syms ::= a.Vec<Symbol>();
     syms.add(Symbol(
-        id: SymbolId(index: 0),
+        id: Id<Symbol>(index: 0),
         kind: SymbolKind.Function,
         linkage: Linkage.ExternalDefinition,
         external_name: Ok("sum_to")
@@ -44,7 +45,7 @@ sum_to* = (a: Alloc, variant: u32) Res<Module, AllocError> {
     types.add(ScalarType.I32).try();                 // r1: s
     types.add(ScalarType.I32).try();                 // r2: i
     types.add(ScalarType.Bool).try();                // r3: i < n
-    params ::= a.Vec<RegisterId>();
+    params ::= a.Vec<Id<Register>>();
     params.add(reg(0)).try();
 
     b0 ::= a.Vec<InstructionRecord>();
@@ -70,40 +71,40 @@ sum_to* = (a: Alloc, variant: u32) Res<Module, AllocError> {
     condition = (variant == 2).match({ true => value_of(reg(2)), false => value_of(reg(3)) });
     blocks ::= a.Vec<Block>();
     blocks.add(Block(
-        id: BlockId(index: 0),
+        id: Id<Block>(index: 0),
         instructions: b0,
-        exit: Exit.Jump(Jump(target: BlockId(index: 1)))
+        exit: Exit.Jump(Jump(target: Id<Block>(index: 1)))
     )).try();
     blocks.add(Block(
-        id: BlockId(index: 1),
+        id: Id<Block>(index: 1),
         instructions: b1,
         exit: Exit.Branch(Branch(
             condition: condition,
-            yes: BlockId(index: 2),
-            no: BlockId(index: 3)
+            yes: Id<Block>(index: 2),
+            no: Id<Block>(index: 3)
         ))
     )).try();
     blocks.add(Block(
-        id: BlockId(index: 2),
+        id: Id<Block>(index: 2),
         instructions: b2,
-        exit: Exit.Jump(Jump(target: BlockId(index: 1)))
+        exit: Exit.Jump(Jump(target: Id<Block>(index: 1)))
     )).try();
     blocks.add(Block(
-        id: BlockId(index: 3),
+        id: Id<Block>(index: 3),
         instructions: b3,
         exit: Exit.Return(Return(value: Ok(value_of(reg(1)))))
     )).try();
 
     functions ::= a.Vec<Function>();
     functions.add(Function(
-        id: FunctionId(index: 0), symbol: SymbolId(index: 0), signature: SignatureId(index: 0),
+        id: Id<Function>(index: 0), symbol: Id<Symbol>(index: 0), signature: Id<Signature>(index: 0),
         parameters: params, register_types: types, objects: a.Vec<StackObject>(),
-        entry: BlockId(index: 0), blocks: blocks,
+        entry: Id<Block>(index: 0), blocks: blocks,
     )).try();
     exports ::= a.Vec<Export>();
     exports.add(Export(
-        symbol: SymbolId(index: 0),
-        definition: Definition.Function(FunctionId(index: 0))
+        symbol: Id<Symbol>(index: 0),
+        definition: Definition.Function(Id<Function>(index: 0))
     )).try();
 
     Ok(Module(
@@ -125,7 +126,7 @@ ran = (a: Alloc, args: Vec<RuntimeValue>) str {
     built = sum_to(a, 0).match({ Ok(m) => validate(a, m).match({ Ok(ir) => Ok(ir), Err(_) => None }), Err(_) => None });
     built.match({
         None     => "invalid",
-        Ok(ir)   => run(a, ir, FunctionId(index: 0), args).match({
+        Ok(ir)   => run(a, ir, Id<Function>(index: 0), args).match({
             Err(d)      => d.code.name(),
             Ok(outcome) => outcome.match({
                 Returned(v)   => v.match({ Ok(rv) => rv.match({ Int(k) => int_text(k.bits), _ => "not an int" }), None => "unit" }),

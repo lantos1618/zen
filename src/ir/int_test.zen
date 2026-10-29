@@ -4,7 +4,10 @@
 { Res, IoError } = std.core
 { Env } = std.env
 { Suite, Tester, TestError } = std.test
-{ ScalarType, IntegerConstant, IntOp, IntPredicate, Overflow, TrapCode } = ir.records
+{
+    ScalarType, IntegerConstant, IntOp, IntPredicate, Overflow, TrapCode,
+    Id
+} = ir.records
 { Int } = ir.int
 
 I8: Int = Int(width: 8, signed: true)

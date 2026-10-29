@@ -1,0 +1,17 @@
+// Catches: an enum .match accepted with a variant missing and no `_`, which would
+// fall through to whatever block happens to follow.
+{ println } = std.io
+
+Shape = { Circle: f64 | Square: f64 | Point }
+
+area = (s: Shape) f64 {
+    s.match({
+        Circle(r) => r * r,
+        Square(w) => w * w,
+    })
+}
+
+main = () { println("{}", area(Shape.Point)); }
+
+//! error: 8:5
+//! hint: match is not exhaustive: Point

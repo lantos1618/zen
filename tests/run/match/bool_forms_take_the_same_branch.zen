@@ -1,0 +1,14 @@
+// Catches: one of the bool .match spellings lowering its arms the wrong way round,
+// e.g. positional ({ yes }, { no }) bodies swapped. Each form is run for true and false.
+{ println } = std.io
+
+arms = (b: bool) str { b.match({ true => "yes", false => "no" }) }
+positional = (b: bool) str { b.match({ "yes" }, { "no" }) }
+
+main = () {
+    println("{} {}", arms(true), arms(false));
+    println("{} {}", positional(true), positional(false));
+}
+
+//! out: yes no
+//! out: yes no

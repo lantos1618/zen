@@ -1,0 +1,19 @@
+// Catches: h.break() in a nested loop jumping to the outer loop's exit, so later
+// outer iterations never run. Each outer pass must break its own inner loop at 2.
+{ Range } = std.core
+{ println } = std.io
+
+main = () {
+    Range(0, 3).loop((outer) {
+        Range(0, 10).loop((h, inner) {
+            (inner == 2).match({ true => h.break(), false => println("{} {}", outer, inner) });
+        });
+    });
+}
+
+//! out: 0 0
+//! out: 0 1
+//! out: 1 0
+//! out: 1 1
+//! out: 2 0
+//! out: 2 1

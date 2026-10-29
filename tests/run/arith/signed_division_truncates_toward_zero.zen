@@ -1,0 +1,17 @@
+// Catches: signed `/` and `%` rounding toward negative infinity (floor) instead of
+// toward zero, or a remainder that takes the divisor's sign instead of the dividend's.
+{ println } = std.io
+
+show = (a: i32, b: i32) { println("{} {}", a / b, a % b) }
+
+main = () {
+    show(7, 2);
+    show(-7, 2);
+    show(7, -2);
+    show(-7, -2);
+}
+
+//! out: 3 1
+//! out: -3 -1
+//! out: -3 1
+//! out: 3 -1

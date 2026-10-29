@@ -19,6 +19,7 @@
     Callee, IntOp, Overflow, IntPredicate, TrapCode, FunctionId, RegisterId, BlockId
 } = ir.records
 { DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
+{ Int, int } = ir.int
 { Ir } = ir.validate
 
 RuntimeValue* = {
@@ -33,7 +34,7 @@ RuntimeValue* = {
     // Whether this value is a well-formed value of type t (integers masked to the width).
     fits_type* = (self: @Self, t: ScalarType) bool {
         self.match({
-            Int(k)       => k.type.same(t) && k.bits.bit_and(mask(t.width())) == k.bits,
+            Int(k)       => k.type.same(t) && k.bits.bit_and(int(t).mask()) == k.bits,
             Bool(_)      => t.match({ Bool => true, _ => false }),
             F32(_)       => t.match({ F32 => true, _ => false }),
             F64(_)       => t.match({ F64 => true, _ => false }),
@@ -73,8 +74,6 @@ Next = {
     | Done: Res<RuntimeValue>
 }
 
-FULL: u64 = 18446744073709551615
-ONE: u64 = 1
 STEP_LIMIT: u64 = 100000000
 DEPTH_LIMIT: u32 = 1000
 
@@ -153,166 +152,11 @@ halt = <T>(outcome: Outcome) Res<T, Stop> { Err(Stop.Halt(outcome)) }
 
 trapped = <T>(code: TrapCode) Res<T, Stop> { halt<T>(Outcome.Trapped(code)) }
 
-// ---- integer semantics (B.1), on encoded bits
-
-mask = (w: u32) u64 {
-    (w == 64).match({
-        true  => FULL,
-        false => ONE.shift_left(w.to_usize()) -% 1,
-    })
-}
-
-sign_bit = (w: u32) u64 { ONE.shift_left((w - 1).to_usize()) }
-
-negative = (w: u32, x: u64) bool { x.bit_and(sign_bit(w)) != 0 }
-
-// To 64 bits, by sign or by zero.
-extend = (w: u32, signed: bool, x: u64) u64 {
-    (signed && negative(w, x)).match({
-        true  => x.bit_or(FULL.bit_xor(mask(w))),
-        false => x,
-    })
-}
-
-magnitude = (w: u32, x: u64) u64 {
-    negative(w, x).match({
-        true  => (0 -% x).bit_and(mask(w)),
-        false => x,
-    })
-}
-
-Int = { w: u32, signed: bool }
-
-int_of = (t: ScalarType) Int { Int(w: t.width(), signed: t.is_signed()) }
-
-finish = (bits: u64, overflow: bool, mode: Overflow) Res<u64, Stop> {
-    checked = mode.match({ Checked => true, Wrapping => false });
-    (overflow && checked).match({ true => trapped<()>(
-        TrapCode.IntegerOverflow
-    ).try(), false => () });
-    Ok(bits)
-}
-
-add = (t: Int, x: u64, y: u64, mode: Overflow) Res<u64, Stop> {
-    s        = (x +% y).bit_and(mask(t.w));
-    overflow = t.signed.match({
-        true  => negative(t.w, x) == negative(t.w, y) && negative(t.w, s) != negative(t.w, x),
-        false => (t.w == 64).match({
-            true  => s < x,
-            false => x + y > mask(t.w),
-        }),
-    });
-    finish(s, overflow, mode)
-}
-
-subtract = (t: Int, x: u64, y: u64, mode: Overflow) Res<u64, Stop> {
-    s        = (x -% y).bit_and(mask(t.w));
-    overflow = t.signed.match({
-        true  => negative(t.w, x) != negative(t.w, y) && negative(t.w, s) != negative(t.w, x),
-        false => x < y,
-    });
-    finish(s, overflow, mode)
-}
-
-multiply = (t: Int, x: u64, y: u64, mode: Overflow) Res<u64, Stop> {
-    t.signed.match({
-        false => {
-            p = x.to_u128() * y.to_u128();
-            finish(
-                p.truncate_u64().bit_and(mask(t.w)),
-                p > mask(t.w).to_u128(),
-                mode
-            )
-        },
-        true  => {
-            p     = magnitude(t.w, x).to_u128() * magnitude(t.w, y).to_u128();
-            minus = negative(t.w, x) != negative(t.w, y) && p != 0;
-            limit = minus.match({
-                true  => sign_bit(t.w),
-                false => sign_bit(t.w) - 1,
-            });
-            low   = p.truncate_u64();
-            bits  = minus.match({ true => 0 -% low, false => low }).bit_and(mask(
-                t.w
-            ));
-            finish(bits, p > limit.to_u128(), mode)
-        },
-    })
-}
-
-divide = (t: Int, x: u64, y: u64, remainder: bool) Res<u64, Stop> {
-    (y == 0).match({ true => trapped<()>(
-        TrapCode.DivisionByZero
-    ).try(), false => () });
-    t.signed.match({
-        false => Ok(remainder.match({ true => x % y, false => x / y })),
-        true  => signed_divide(t, x, y, remainder),
-    })
-}
-
-// Truncates toward zero. MIN / -1 overflows; MIN % -1 comes out as 0 from the magnitudes.
-signed_divide = (t: Int, x: u64, y: u64, remainder: bool) Res<u64, Stop> {
-    min_by_minus_one = x == sign_bit(t.w) && y == mask(t.w);
-    (min_by_minus_one && !remainder).match({
-        true  => trapped<()>(TrapCode.IntegerOverflow).try(),
-        false => (),
-    });
-    ax   = magnitude(t.w, x);
-    ay   = magnitude(t.w, y);
-    flip = remainder.match({
-        true  => negative(t.w, x),
-        false => negative(t.w, x) != negative(t.w, y),
-    });
-    size = remainder.match({ true => ax % ay, false => ax / ay });
-    Ok(flip.match({ true => (0 -% size).bit_and(mask(t.w)), false => size }))
-}
-
-// A shift count keeps its own type and must lie in [0, width).
-shift = (t: Int, x: u64, count: IntegerConstant, op: IntOp) Res<u64, Stop> {
-    c            = int_of(count.type);
-    out_of_range = (c.signed && negative(
-        c.w,
-        count.bits
-    )) || count.bits >= t.w.to_u64();
-    out_of_range.match({ true => trapped<()>(
-        TrapCode.InvalidShift
-    ).try(), false => () });
-    n = count.bits.bit_and(63).to_usize().match({ Ok(v) => v, None => 0 });
-    Ok(op.match({
-        ShiftLeft         => x.shift_left(n).bit_and(mask(t.w)),
-        ShiftRightLogical => x.shift_right(n),
-        _                 => negative(t.w, x).match({
-            true  => x.shift_right(n).bit_or(mask(t.w).bit_xor(mask(t.w).shift_right(n))),
-            false => x.shift_right(n),
-        }),
-    }))
-}
-
-// Signed order is unsigned order after flipping the sign bit.
-compare = (t: Int, op: IntPredicate, x: u64, y: u64) bool {
-    flip = t.signed.match({ true => sign_bit(t.w), false => 0 });
-    kx   = x.bit_xor(flip);
-    ky   = y.bit_xor(flip);
-    op.match({
-        Equal        => kx == ky,
-        NotEqual     => kx != ky,
-        Less         => kx < ky,
-        LessEqual    => kx <= ky,
-        Greater      => kx > ky,
-        GreaterEqual => kx >= ky,
-    })
-}
-
-// IntegerChecked: the source's mathematical value must fit the destination.
-fits = (from: Int, to: Int, x: u64) bool {
-    minus = from.signed && negative(from.w, x);
-    size  = minus.match({ true => magnitude(from.w, x), false => x });
-    minus.match({
-        true  => to.signed && size <= sign_bit(to.w),
-        false => to.signed.match({
-            true  => size <= sign_bit(to.w) - 1,
-            false => size <= mask(to.w),
-        }),
+// An integer result in the interpreter: the bits, or a Stop carrying the trap.
+arith = (r: Res<u64, TrapCode>) Res<u64, Stop> {
+    r.match({
+        Ok(bits) => Ok(bits),
+        Err(code) => trapped<u64>(code),
     })
 }
 
@@ -451,17 +295,17 @@ Machine = {
             IntBinary(x)  => {
                 l    = self.int(regs, x.lhs);
                 r    = self.int(regs, x.rhs);
-                t    = int_of(l.type);
+                t    = int(l.type);
                 bits = x.op.match({
-                    Add(mode)      => add(t, l.bits, r.bits, mode).try(),
-                    Subtract(mode) => subtract(t, l.bits, r.bits, mode).try(),
-                    Multiply(mode) => multiply(t, l.bits, r.bits, mode).try(),
-                    Divide         => divide(t, l.bits, r.bits, false).try(),
-                    Remainder      => divide(t, l.bits, r.bits, true).try(),
+                    Add(mode)      => arith(t.add(l.bits, r.bits, mode)).try(),
+                    Subtract(mode) => arith(t.subtract(l.bits, r.bits, mode)).try(),
+                    Multiply(mode) => arith(t.multiply(l.bits, r.bits, mode)).try(),
+                    Divide         => arith(t.divide(l.bits, r.bits, false)).try(),
+                    Remainder      => arith(t.divide(l.bits, r.bits, true)).try(),
                     And            => l.bits.bit_and(r.bits),
                     Or             => l.bits.bit_or(r.bits),
                     Xor            => l.bits.bit_xor(r.bits),
-                    _              => shift(t, l.bits, r, x.op).try(),
+                    _              => arith(t.shift(l.bits, r, x.op)).try(),
                 });
                 set(x.dst, integer(l.type, bits));
             },
@@ -470,8 +314,7 @@ Machine = {
                 equal  = x.op.match({ Equal => true, _ => false });
                 r      = self.value(regs, x.rhs);
                 result = self.value(regs, x.lhs).match({
-                    Int(a)       => compare(
-                        int_of(a.type),
+                    Int(a)       => int(a.type).compare(
                         x.op,
                         a.bits,
                         r.match({ Int(b) => b.bits, _ => 0 })
@@ -505,13 +348,13 @@ Machine = {
                             x.dst,
                             integer(
                                 to,
-                                extend(k.type.width(), k.type.is_signed(), k.bits).bit_and(mask(to.width()))
+                                int(k.type).wrap_to(int(to), k.bits)
                             )
                         );
                     },
                     IntegerChecked  => {
                         k = self.int(regs, x.value);
-                        fits(int_of(k.type), int_of(to), k.bits).match({
+                        int(k.type).fits_in(int(to), k.bits).match({
                             true  => (),
                             false => trapped<()>(
                                 TrapCode.InvalidConversion
@@ -521,7 +364,7 @@ Machine = {
                             x.dst,
                             integer(
                                 to,
-                                extend(k.type.width(), k.type.is_signed(), k.bits).bit_and(mask(to.width()))
+                                int(k.type).wrap_to(int(to), k.bits)
                             )
                         );
                     },

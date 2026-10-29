@@ -1,0 +1,145 @@
+// COMPILER.md Appendix B.1: integers of one width and signedness, kept encoded in u64
+// (two's complement, masked to the width). Every operation reports overflow as a trap
+// code; none traps the host. The interpreter, constant folding and the C route share it.
+
+{ Res, Ok, Err, to_usize, to_u64, to_u128, truncate_u64, bit_and, bit_or, bit_xor, shift_left, shift_right } = std.core
+{ ScalarType, IntegerConstant, IntOp, IntPredicate, Overflow, TrapCode } = ir.records
+
+FULL: u64 = 18446744073709551615
+ONE: u64 = 1
+
+// The integer view of a scalar type.
+int* = (t: ScalarType) Int { Int(width: t.width(), signed: t.is_signed()) }
+
+Int* = {
+    width*: u32,
+    signed*: bool,
+
+    mask* = (self: @Self) u64 {
+        (self.width == 64).match({
+            true  => FULL,
+            false => ONE.shift_left(self.width.to_usize()) -% 1,
+        })
+    }
+
+    sign_bit* = (self: @Self) u64 { ONE.shift_left((self.width - 1).to_usize()) }
+
+    negative* = (self: @Self, x: u64) bool { self.signed && x.bit_and(self.sign_bit()) != 0 }
+
+    // The absolute value of a signed x, as bits.
+    magnitude* = (self: @Self, x: u64) u64 {
+        self.negative(x).match({
+            true  => (0 -% x).bit_and(self.mask()),
+            false => x,
+        })
+    }
+
+    // x as 64 bits: sign-extended if signed, else zero-extended.
+    extend* = (self: @Self, x: u64) u64 {
+        self.negative(x).match({
+            true  => x.bit_or(FULL.bit_xor(self.mask())),
+            false => x,
+        })
+    }
+
+    // IntegerWrapping: x in this type, reduced to the target's width.
+    wrap_to* = (self: @Self, to: Int, x: u64) u64 { self.extend(x).bit_and(to.mask()) }
+
+    // IntegerChecked: whether x's mathematical value fits the target type.
+    fits_in* = (self: @Self, to: Int, x: u64) bool {
+        size = self.magnitude(x);
+        self.negative(x).match({
+            true  => to.signed && size <= to.sign_bit(),
+            false => to.signed.match({
+                true  => size <= to.sign_bit() - 1,
+                false => size <= to.mask(),
+            }),
+        })
+    }
+
+    add* = (self: @Self, x: u64, y: u64, mode: Overflow) Res<u64, TrapCode> {
+        s        = (x +% y).bit_and(self.mask());
+        overflow = self.signed.match({
+            true  => self.negative(x) == self.negative(y) && self.negative(s) != self.negative(x),
+            false => (self.width == 64).match({
+                true  => s < x,
+                false => x + y > self.mask(),
+            }),
+        });
+        finish(s, overflow, mode)
+    }
+
+    subtract* = (self: @Self, x: u64, y: u64, mode: Overflow) Res<u64, TrapCode> {
+        s        = (x -% y).bit_and(self.mask());
+        overflow = self.signed.match({
+            true  => self.negative(x) != self.negative(y) && self.negative(s) != self.negative(x),
+            false => x < y,
+        });
+        finish(s, overflow, mode)
+    }
+
+    multiply* = (self: @Self, x: u64, y: u64, mode: Overflow) Res<u64, TrapCode> {
+        p     = self.magnitude(x).to_u128() * self.magnitude(y).to_u128();
+        minus = self.negative(x) != self.negative(y) && p != 0;
+        limit = self.signed.match({
+            false => self.mask(),
+            true  => minus.match({ true => self.sign_bit(), false => self.sign_bit() - 1 }),
+        });
+        low   = p.truncate_u64();
+        bits  = minus.match({ true => 0 -% low, false => low }).bit_and(self.mask());
+        finish(bits, p > limit.to_u128(), mode)
+    }
+
+    // Truncates toward zero. MIN / -1 overflows; MIN % -1 comes out as 0 from the magnitudes.
+    divide* = (self: @Self, x: u64, y: u64, remainder: bool) Res<u64, TrapCode> {
+        (y == 0).match({ true => Err(TrapCode.DivisionByZero).try(), false => () });
+        min_by_minus_one = self.signed && x == self.sign_bit() && y == self.mask();
+        (min_by_minus_one && !remainder).match({ true => Err(TrapCode.IntegerOverflow).try(), false => () });
+        ax   = self.magnitude(x);
+        ay   = self.magnitude(y);
+        flip = remainder.match({
+            true  => self.negative(x),
+            false => self.negative(x) != self.negative(y),
+        });
+        size = remainder.match({ true => ax % ay, false => ax / ay });
+        Ok(flip.match({ true => (0 -% size).bit_and(self.mask()), false => size }))
+    }
+
+    // A shift count keeps its own type and must lie in [0, width).
+    shift* = (self: @Self, x: u64, count: IntegerConstant, op: IntOp) Res<u64, TrapCode> {
+        by = int(count.type);
+        (by.negative(count.bits) || count.bits >= self.width.to_u64()).match({
+            true  => Err(TrapCode.InvalidShift).try(),
+            false => (),
+        });
+        n = count.bits.bit_and(63).to_usize().match({ Ok(v) => v, None => 0 });
+        Ok(op.match({
+            ShiftLeft         => x.shift_left(n).bit_and(self.mask()),
+            ShiftRightLogical => x.shift_right(n),
+            _                 => self.negative(x).match({
+                true  => x.shift_right(n).bit_or(self.mask().bit_xor(self.mask().shift_right(n))),
+                false => x.shift_right(n),
+            }),
+        }))
+    }
+
+    // Signed order is unsigned order after flipping the sign bit.
+    compare* = (self: @Self, op: IntPredicate, x: u64, y: u64) bool {
+        flip = self.signed.match({ true => self.sign_bit(), false => 0 });
+        kx   = x.bit_xor(flip);
+        ky   = y.bit_xor(flip);
+        op.match({
+            Equal        => kx == ky,
+            NotEqual     => kx != ky,
+            Less         => kx < ky,
+            LessEqual    => kx <= ky,
+            Greater      => kx > ky,
+            GreaterEqual => kx >= ky,
+        })
+    }
+}
+
+finish = (bits: u64, overflow: bool, mode: Overflow) Res<u64, TrapCode> {
+    checked = mode.match({ Checked => true, Wrapping => false });
+    (overflow && checked).match({ true => Err(TrapCode.IntegerOverflow), false => Ok(bits) })
+}

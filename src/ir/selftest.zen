@@ -36,6 +36,7 @@ add = (dst: u32, lhs: Value, rhs: Value) Instruction {
 }
 
 // Variant 0: the real sum_to. 1: b0 never sets r1. 2: the branch tests an I32.
+// 3: one instruction id is far past the function's instruction count.
 sum_to = (a: Alloc, variant: u32) Res<Module, AllocError> {
     sig_params ::= a.Vec<ScalarType>();
     sig_params.add(ScalarType.I32).try();
@@ -63,10 +64,8 @@ sum_to = (a: Alloc, variant: u32) Res<Module, AllocError> {
     params.add(r(0)).try();
 
     b0 ::= a.Vec<InstructionRecord>();
-    (variant == 1).match({ true => (), false => { b0.add(at(
-        0,
-        Instruction.Set(Set(dst: r(1), value: i32(0)))
-    )).try(); } });
+    first = (variant == 1).match({ true => r(2), false => r(1) });      // variant 1 never sets r1
+    b0.add(at(0, Instruction.Set(Set(dst: first, value: i32(0))))).try();
     b0.add(at(1, Instruction.Set(Set(dst: r(2), value: i32(0))))).try();
     b1 ::= a.Vec<InstructionRecord>();
     b1.add(at(
@@ -79,7 +78,8 @@ sum_to = (a: Alloc, variant: u32) Res<Module, AllocError> {
         ))
     )).try();
     b2 ::= a.Vec<InstructionRecord>();
-    b2.add(at(3, add(2, reg(2), i32(1)))).try();
+    wild = (variant == 3).match({ true => 1000000, false => 3 });
+    b2.add(at(wild, add(2, reg(2), i32(1)))).try();
     b2.add(at(4, add(1, reg(1), reg(2)))).try();
     b3 ::= a.Vec<InstructionRecord>();
 
@@ -148,24 +148,41 @@ check = (a: Alloc, m: Module) Res<(), Diagnostic> {
     validate(a, m).match({ Ok(_) => Ok, Err(d) => Err(d) })
 }
 
-// sum_to(n) on the interpreter, as one line: the returned i32, or the trap.
-ran = (a: Alloc, n: u64) Res<str, AllocError> {
-    args ::= a.Vec<RuntimeValue>();
-    args.add(RuntimeValue.Int(IntegerConstant(
-        type: ScalarType.I32,
-        bits: n
-    ))).try();
+// sum_to on the interpreter, as one line: "returned", a trap, or a diagnostic code.
+// `expected` is the value a return must carry; `args` are passed as given.
+ran = (a: Alloc, args: Vec<RuntimeValue>, expected: u64) Res<str, AllocError> {
     Ok(validate(a, sum_to(a, 0).try()).match({
         Err(d) => "invalid",
         Ok(ir) => run(a, ir, FunctionId(index: 0), args).match({
             Err(d)      => d.code.name(),
             Ok(outcome) => outcome.match({
-                Returned(v)   => v.match({ Ok(rv) => rv.match({ Int(k) => (k.bits == 55).match({ true => "55", false => "wrong value" }), _ => "not an int" }), None => "unit" }),
+                Returned(v)   => returned(v, expected),
                 Trapped(code) => (code.code() == 1).match({ true => "IntegerOverflow", false => "another trap" }),
+                Fault(_)      => "Fault",
                 ResourceLimit => "ResourceLimit",
             }),
         }),
     }))
+}
+
+returned = (v: Res<RuntimeValue>, expected: u64) str {
+    v.match({
+        Ok(rv) => rv.match({
+            Int(k) => (k.bits == expected).match({ true => "returned", false => "wrong value" }),
+            _      => "not an int",
+        }),
+        None   => "unit",
+    })
+}
+
+// One I32 argument holding n.
+one = (a: Alloc, n: u64) Res<Vec<RuntimeValue>, AllocError> {
+    args ::= a.Vec<RuntimeValue>();
+    args.add(RuntimeValue.Int(IntegerConstant(
+        type: ScalarType.I32,
+        bits: n
+    ))).try();
+    Ok(args)
 }
 
 same = (name: str, got: str, wanted: str) bool {
@@ -182,11 +199,30 @@ same = (name: str, got: str, wanted: str) bool {
 main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();
     passed ::= true;
-    passed = same("run sum_to(10)", ran(a, 10).try(), "55") && passed;
+    passed = same(
+        "run sum_to(10) = 55",
+        ran(a, one(a, 10).try(), 55).try(),
+        "returned"
+    ) && passed;
+    passed = same(
+        "run sum_to(100) = 5050",
+        ran(a, one(a, 100).try(), 5050).try(),
+        "returned"
+    ) && passed;
     passed = same(
         "run sum_to(70000)",
-        ran(a, 70000).try(),
+        ran(a, one(a, 70000).try(), 0).try(),
         "IntegerOverflow"
+    ) && passed;
+    passed = same(
+        "run with no arguments",
+        ran(a, a.Vec<RuntimeValue>(), 0).try(),
+        "ArityMismatch"
+    ) && passed;
+    passed = expect(
+        "instruction id 1000000",
+        check(a, sum_to(a, 3).try()),
+        "InvalidId"
     ) && passed;
     passed = expect("sum_to", check(a, sum_to(a, 0).try()), "valid") && passed;
     passed = expect(

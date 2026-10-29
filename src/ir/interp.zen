@@ -21,12 +21,46 @@
 { DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
 { Ir } = ir.validate
 
-RuntimeValue* = { Int: IntegerConstant
-    | Bool: bool
-    | Function: FunctionId
-    | NullFunction }
+RuntimeValue* = {
+    Int: IntegerConstant
+        | Bool: bool
+        | F32: u32
+        | F64: u64
+        | NullPointer
+        | Function: FunctionId
+        | NullFunction,
 
-Outcome* = { Returned: Res<RuntimeValue> | Trapped: TrapCode | ResourceLimit }
+    // Whether this value is a well-formed value of type t (integers masked to the width).
+    fits_type* = (self: @Self, t: ScalarType) bool {
+        self.match({
+            Int(k)       => k.type.same(t) && k.bits.bit_and(mask(t.width())) == k.bits,
+            Bool(_)      => t.match({ Bool => true, _ => false }),
+            F32(_)       => t.match({ F32 => true, _ => false }),
+            F64(_)       => t.match({ F64 => true, _ => false }),
+            NullPointer  => t.match({ Pointer => true, _ => false }),
+            Function(_)  => t.match({ FunctionPointer(_) => true, _ => false }),
+            NullFunction => t.match({ FunctionPointer(_) => true, _ => false }),
+        })
+    }
+}
+
+// B.2: a program fault that is neither a value nor a trap.
+InterpreterFault* = {
+    DeadAllocation
+        | OutOfBoundsAccess
+        | Misaligned
+        | PermissionDenied
+        | UninitializedMemory
+        | InvalidPointer
+        | ImportContractViolation
+}
+
+Outcome* = {
+    Returned: Res<RuntimeValue>
+        | Trapped: TrapCode
+        | Fault: InterpreterFault
+        | ResourceLimit
+}
 
 // Why execution stopped early: an outcome to report (a trap, a limit), or a diagnostic.
 Stop = { Halt: Outcome | Fail: Diagnostic }
@@ -45,7 +79,43 @@ run* = (
     f    : FunctionId,
     args : Vec<RuntimeValue>
 ) Res<Outcome, Diagnostic> {
-    machine ::= Machine(m: ir.view(), a: a, steps: 0, depth: 0);
+    m        = ir.view();
+    function = m.function(f).match({
+        Ok(function) => function,
+        None         => diagnostic<Function>(
+            DiagnosticCode.UnsupportedFeature,
+            "running an import"
+        ).try(),
+    });
+    (args.len == function.parameters.len).match({
+        true  => (),
+        false => diagnostic<()>(
+            DiagnosticCode.ArityMismatch,
+            "argument count differs from the signature"
+        ).try(),
+    });
+    function.parameters.loop((h, k, r) {
+        t  = function.register_type(
+            r
+        ).match({ Ok(t) => t, None => ScalarType.Bool });
+        ok = args.get(k).match({ Ok(v) => v.fits_type(t), None => false });
+        ok.match({
+            true  => (),
+            false => diagnostic<()>(
+                DiagnosticCode.TypeMismatch,
+                "an argument does not fit its parameter"
+            ).try(),
+        });
+    });
+
+    machine ::= Machine(
+        m: m,
+        a: a,
+        frames: a.Vec<Vec<RuntimeValue>>(),
+        staged: a.Vec<Vec<RuntimeValue>>(),
+        steps: 0,
+        depth: 0
+    );
     machine.call(f, args).match({
         Ok(value) => Ok(Outcome.Returned(value)),
         Err(stop) => stop.match({
@@ -55,15 +125,22 @@ run* = (
     })
 }
 
-fail = <T>(code: DiagnosticCode, what: str) Res<T, Stop> {
-    Err(Stop.Fail(Diagnostic(
+diagnostic = <T>(code: DiagnosticCode, what: str) Res<T, Diagnostic> {
+    Err(Diagnostic(
         code: code,
         stage: DiagnosticStage.IR,
         function: None,
         block: None,
         instruction: None,
         message: what,
-    )))
+    ))
+}
+
+fail = <T>(code: DiagnosticCode, what: str) Res<T, Stop> {
+    diagnostic<T>(code, what).match({
+        Ok(x)  => Ok(x),
+        Err(d) => Err(Stop.Fail(d)),
+    })
 }
 
 halt = <T>(outcome: Outcome) Res<T, Stop> { Err(Stop.Halt(outcome)) }
@@ -238,6 +315,8 @@ fits = (from: Int, to: Int, x: u64) bool {
 Machine = {
     m: Module,
     a: Alloc,
+    frames :: Vec<Vec<RuntimeValue>>,     // registers, one buffer per call depth, reused
+    staged :: Vec<Vec<RuntimeValue>>,     // call arguments, one buffer per call depth, reused
     steps :: u64,
     depth :: u32,
 
@@ -253,10 +332,7 @@ Machine = {
             Outcome.ResourceLimit
         ).try(), false => () });
 
-        regs ::= self.a.Vec<RuntimeValue>();
-        f.register_types.loop(
-            (t) { self.memory(regs.add(RuntimeValue.Bool(false))).try(); }
-        );
+        regs ::= self.buffer(self.frames, f.register_types.len).try();
         f.parameters.loop((h, k, r) {
             regs.set(
                 r.index.to_usize(),
@@ -270,14 +346,25 @@ Machine = {
         Ok(value)
     }
 
+    // Running out of memory is a resource limit, like steps and depth.
     memory = (self: @Self, r: Res<AllocError>) Res<(), Stop> {
         r.match({
             Ok     => Ok,
-            Err(_) => fail<()>(
-                DiagnosticCode.ResourceLimit,
-                "out of memory in the interpreter"
-            ),
+            Err(_) => halt<()>(Outcome.ResourceLimit),
         })
+    }
+
+    // The buffer for the current call depth: cleared, then n values long.
+    // A depth's buffer is free again once the call at that depth has returned.
+    buffer = (self :: @Self, pool :: Vec<Vec<RuntimeValue>>, n: usize) Res<Vec<RuntimeValue>, Stop> {
+        d = self.depth.to_usize();
+        Range(pool.len, d + 1).loop((i) { self.memory(pool.add(self.a.Vec<RuntimeValue>())).try(); });
+        v ::= pool.get(d).match({ Ok(v) => v, None => halt<Vec<RuntimeValue>>(Outcome.ResourceLimit).try() });
+        v.clear();
+        self.memory(v.reserve(n)).try();
+        Range(0, n).loop((i) { self.memory(v.add(RuntimeValue.Bool(false))).try(); });
+        pool.set(d, v);
+        Ok(v)
     }
 
     // Runs blocks until a Return; every other way out is a Stop.
@@ -317,8 +404,10 @@ Machine = {
             Constant(c) => c.match({
                 Bool(b)                => RuntimeValue.Bool(b),
                 Integer(k)             => RuntimeValue.Int(k),
+                F32Bits(b)             => RuntimeValue.F32(b),
+                F64Bits(b)             => RuntimeValue.F64(b),
+                NullPointer            => RuntimeValue.NullPointer,
                 NullFunctionPointer(_) => RuntimeValue.NullFunction,
-                _                      => RuntimeValue.Bool(false),
             }),
         })
     }
@@ -384,6 +473,7 @@ Machine = {
                     Bool(a)      => (a == r.match({ Bool(b) => b, _ => false })) == equal,
                     Function(a)  => r.match({ Function(b) => a.index == b.index, _ => false }) == equal,
                     NullFunction => r.match({ NullFunction => true, _ => false }) == equal,
+                    _            => false,     // validation keeps floats and data pointers out of IntCompare
                 });
                 set(x.dst, RuntimeValue.Bool(result));
             },
@@ -455,9 +545,9 @@ Machine = {
         Ok
     }
 
-    arguments = (self: @Self, regs: Vec<RuntimeValue>, args: Vec<Value>) Res<Vec<RuntimeValue>, Stop> {
-        values ::= self.a.Vec<RuntimeValue>();
-        args.loop((v) { self.memory(values.add(self.value(regs, v))).try(); });
+    arguments = (self :: @Self, regs: Vec<RuntimeValue>, args: Vec<Value>) Res<Vec<RuntimeValue>, Stop> {
+        values ::= self.buffer(self.staged, args.len).try();
+        args.loop((h, k, v) { values.set(k, self.value(regs, v)); });
         Ok(values)
     }
 
@@ -466,10 +556,9 @@ Machine = {
             Function(id) => Ok(id),
             Register(r)  => self.value(regs, Value.Register(r)).match({
                 Function(id) => Ok(id),
-                _            => fail<FunctionId>(
-                    DiagnosticCode.UnsupportedFeature,
-                    "a call through a null function pointer"
-                ),
+                _            => halt<FunctionId>(Outcome.Fault(
+                    InterpreterFault.InvalidPointer
+                )),
             }),
         })
     }

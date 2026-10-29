@@ -9,7 +9,7 @@
     Module, Function, Block, Signature, Symbol, Global, Import, Export,
     ScalarType, Constant, Value, Instruction, Exit, Callee, AddressBase, ConvertOp,
     ReturnContract, SymbolKind, Linkage, TrapCode, MemoryAccess,
-    FunctionId, SignatureId, RegisterId, BlockId, InstructionId, SymbolId, InitializerPart
+    FunctionId, SignatureId, RegisterId, BlockId, InstructionId, SymbolId, GlobalId, InitializerPart
 } = ir.records
 { DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
 { each_use, each_exit_use, each_def, each_successor } = ir.uses
@@ -22,7 +22,14 @@ Ir* = {
 }
 
 validate* = (a: Alloc, m: Module) Res<Ir, Diagnostic> {
-    v ::= Validator(m: m, a: a, function: None, block: None, instruction: None);
+    v ::= Validator(
+        m: m,
+        a: a,
+        owners: a.Vec<Owner>(),
+        function: None,
+        block: None,
+        instruction: None
+    );
     v.check_module().try();
     Ok(Ir(module: m))
 }
@@ -30,9 +37,13 @@ validate* = (a: Alloc, m: Module) Res<Ir, Diagnostic> {
 is_power_of_two = (n: u64) bool { n != 0 && n.bit_and(n - 1) == 0 }
 ONE: u64 = 1
 
+// What defines a symbol. Built once, so every symbol lookup is one index.
+Owner = { Free | Function: FunctionId | Global: GlobalId | Import: FunctionId }
+
 Validator = {
     m: Module,
     a: Alloc,
+    owners :: Vec<Owner>,
     function :: Res<FunctionId>,
     block :: Res<BlockId>,
     instruction :: Res<InstructionId>,
@@ -65,6 +76,7 @@ Validator = {
         m = self.m;
         m.signatures.loop((s) { self.check_signature(s).try(); });
         self.check_symbols().try();
+        self.check_owners().try();
         m.imports.loop((h, i, im) { self.check_import(i, im).try(); });
         m.globals.loop((g) { self.check_global(g).try(); });
         m.exports.loop((e) { self.check_export(e).try(); });
@@ -185,6 +197,51 @@ Validator = {
         Ok
     }
 
+    check_owners = (self :: @Self) Res<(), Diagnostic> {
+        self.m.symbols.loop((s) {
+            added = self.owners.add(Owner.Free);
+            self.memory(added).try();
+        });
+        self.m.functions.loop(
+            (h, i, f) { self.own(f.symbol, Owner.Function(f.id)).try(); }
+        );
+        self.m.globals.loop(
+            (h, i, g) { self.own(
+                g.symbol,
+                Owner.Global(GlobalId(index: i.truncate_u32()))
+            ).try(); }
+        );
+        self.m.imports.loop(
+            (im) { self.own(im.symbol, Owner.Import(im.function)).try(); }
+        );
+        self.m.symbols.loop((h, i, s) {
+            defined             = self.found(self.owners.get(
+                i
+            )).try().match({ Free => false, _ => true });
+            external_definition = s.linkage.match({ ExternalDefinition => true, _ => false });
+            self.require(
+                defined || !external_definition,
+                DiagnosticCode.InvalidSymbol,
+                "an ExternalDefinition symbol needs a function or global defined here"
+            ).try();
+        });
+        Ok
+    }
+
+    own = (self :: @Self, s: SymbolId, owner: Owner) Res<(), Diagnostic> {
+        slot = s.index.to_usize();
+        free = self.found(self.owners.get(
+            slot
+        )).try().match({ Free => true, _ => false });
+        self.require(
+            free,
+            DiagnosticCode.DuplicateName,
+            "a symbol is defined more than once"
+        ).try();
+        self.owners.set(slot, owner);
+        Ok
+    }
+
     check_global = (self: @Self, g: Global) Res<(), Diagnostic> {
         sym = self.symbol(g.symbol).try();
         self.require(
@@ -201,16 +258,30 @@ Validator = {
         g.initializer.loop((part) {
             part.match({
                 Address(p) => {
-                    self.symbol(p.symbol).try();
-                    self.require(
-                        p.type.match({ Pointer => true, FunctionPointer(_) => true, _ => false }),
-                        DiagnosticCode.TypeMismatch,
-                        "an address part is a Pointer or FunctionPointer"
+                    self.check_type(p.type).try();
+                    wanted = self.symbol(p.symbol).try().kind.match({
+                        Data     => ScalarType.Pointer,
+                        Function => ScalarType.FunctionPointer(
+                            self.signature_of(
+                                self.function_of_symbol(p.symbol).try()
+                            ).try()
+                        ),
+                    });
+                    self.same(
+                        p.type,
+                        wanted,
+                        "an address part's type must match its symbol"
                     ).try();
                 },
                 _          => (),
             });
-            total = total + part.size();
+            size = part.size();
+            self.require(
+                size <= g.size && total <= g.size - size,
+                DiagnosticCode.InvalidLayout,
+                "initializer parts must add up to the global's size"
+            ).try();
+            total = total + size;
         });
         self.require(
             total == g.size,
@@ -227,18 +298,16 @@ Validator = {
             DiagnosticCode.InvalidSymbol,
             "an export binds an ExternalDefinition symbol"
         ).try();
-        e.definition.match({
-            Function(f) => self.require(
-                self.m.function(f).match({ Ok(_) => true, None => false }),
-                DiagnosticCode.InvalidId,
-                "export of an unknown function"
-            ).try(),
-            Global(g)   => self.require(
-                self.m.global(g).match({ Ok(_) => true, None => false }),
-                DiagnosticCode.InvalidId,
-                "export of an unknown global"
-            ).try(),
+        bound = self.found(self.owners.get(e.symbol.index.to_usize())).try();
+        same  = e.definition.match({
+            Function(f) => bound.match({ Function(o) => o.index == f.index, _ => false }),
+            Global(g)   => bound.match({ Global(o) => o.index == g.index, _ => false }),
         });
+        self.require(
+            same,
+            DiagnosticCode.InvalidSymbol,
+            "an export's definition must be bound to its symbol"
+        ).try();
         Ok
     }
 
@@ -287,7 +356,9 @@ Validator = {
             DiagnosticCode.InvalidSuccessor,
             "the entry block does not exist"
         ).try();
-        seen ::= self.a.Vec<bool>();
+        count :: usize = 0;
+        f.blocks.loop((b) { count = count + b.instructions.len; });
+        seen ::= self.bits_of(count, false).try();
         f.blocks.loop((h, k, b) {
             self.block = Ok(b.id);
             self.require(
@@ -298,7 +369,11 @@ Validator = {
             b.instructions.loop((rec) {
                 self.instruction = Ok(rec.id);
                 id               = rec.id.index.to_usize();
-                Range(seen.len, id + 1).loop((_) { self.memory(seen.add(false)).try(); });
+                self.require(
+                    id < count,
+                    DiagnosticCode.InvalidId,
+                    "instruction ids are below the function's instruction count"
+                ).try();
                 self.require(
                     !self.found(seen.get(id)).try(),
                     DiagnosticCode.DuplicateId,
@@ -589,18 +664,14 @@ Validator = {
     }
 
     function_of_symbol = (self: @Self, s: SymbolId) Res<FunctionId, Diagnostic> {
-        found :: Res<FunctionId> = None;
-        self.m.functions.loop(
-            (h, f) { (f.symbol.index == s.index).match({ true => { found = Ok(
-                f.id
-            ); h.break(); }, false => () }); }
-        );
-        self.m.imports.loop(
-            (h, im) { (im.symbol.index == s.index).match({ true => { found = Ok(
-                im.function
-            ); h.break(); }, false => () }); }
-        );
-        found.match({ Ok(f) => Ok(f), None => self.fail<FunctionId>(DiagnosticCode.InvalidSymbol, "a function symbol names no function") })
+        self.found(self.owners.get(s.index.to_usize())).try().match({
+            Function(f) => Ok(f),
+            Import(f)   => Ok(f),
+            _           => self.fail<FunctionId>(
+                DiagnosticCode.InvalidSymbol,
+                "a function symbol names no function"
+            ),
+        })
     }
 
     check_access = (self: @Self, m: MemoryAccess) Res<(), Diagnostic> {
@@ -749,6 +820,7 @@ Validator = {
             f.blocks.len * words
         ).try();    // OUT[b]: starts full
         Range(0, outs.len).loop((i) { outs.set(i, FULL); });
+        scratch ::= self.bits(words).try();
         Range(0, f.blocks.len + 2).loop((h, round) {
             compute_ins(f, live, outs, ins, words);
             changed ::= false;
@@ -756,7 +828,7 @@ Validator = {
                 self.found(live.get(k)).try().match({
                     true  => {
                         base = k * words;
-                        before ::= self.bits(words).try();
+                        before ::= scratch;
                         Range(0, words).loop((w) { before.set(w, self.found(outs.get(base + w)).try()); outs.set(base + w, self.found(ins.get(base + w)).try()); });
                         b.instructions.loop(
                             (rec) { each_def(
@@ -806,6 +878,13 @@ Validator = {
         });
         self.block = None;
         Ok
+    }
+
+    bits_of = (self: @Self, n: usize, value: bool) Res<Vec<bool>, Diagnostic> {
+        v ::= self.a.Vec<bool>();
+        self.memory(v.reserve(n)).try();
+        Range(0, n).loop((i) { self.memory(v.add(value)).try(); });
+        Ok(v)
     }
 
     bits = (self: @Self, n: usize) Res<Vec<u64>, Diagnostic> {

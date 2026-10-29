@@ -5,3 +5,4 @@
 /zen-*
 node_modules/
 *.o
+__pycache__/

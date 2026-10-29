@@ -100,7 +100,7 @@ enum Callee         { Function(FunctionId), Register(RegisterId) }
 enum Access         { Ordinary, Volatile }
 struct MemoryAccess { alignment: U32, access: Access }
 enum TrapCode       { IntegerOverflow, DivisionByZero, InvalidShift, InvalidConversion,
-                      InvalidValue, Explicit(U32) }
+                      InvalidValue, StackOverflow, Explicit(U32) }
 
 enum Instruction {
     Set { dst: RegisterId, value: Value },
@@ -185,7 +185,7 @@ An export binds a defined function/global to an ExternalDefinition symbol; priva
 | Stack objects | Size above 0; alignment a power of two |
 | Registers | Definitely initialized before every use (1.4) |
 
-Trap codes, as program results: `IntegerOverflow` 1, `DivisionByZero` 2, `InvalidShift` 3, `InvalidConversion` 4 (also failed checked integer casts), `InvalidValue` 5, `Explicit(n)` is `n`, and validation requires `n >= 65536`.
+Trap codes, as program results: `IntegerOverflow` 1, `DivisionByZero` 2, `InvalidShift` 3, `InvalidConversion` 4 (also failed checked integer casts), `InvalidValue` 5, `StackOverflow` 6 (stack-checked profile only, §4.4), `Explicit(n)` is `n`, and validation requires `n >= 65536`.
 
 ### 1.3 Uses and definitions
 
@@ -681,6 +681,26 @@ prologue:                                  epilogue (expands each Return step):
     sub sp, sp, #size       if size > 0        ldp x29, x30, [sp], #16
     str h, [sp, #save[h]]   for each           ret
 ~~~
+
+**Stack-checked profile.** A program that spawns actors runs functions on fixed-size turn stacks without guard pages (MEMORY_AND_ACTORS.md §4), so every function checks its frame against the current stack's limit before touching it. The driver picks the profile once per program, after cull. Programs without actors are compiled exactly as above, and §6 is unchanged.
+
+~~~text
+MacArm64 / LinuxArm64 (x16, x17: intra-call scratch, free at entry)
+    mrs  x16, tpidr_el0
+    ldr  x16, [x16, #stack_limit]          // runtime keeps the running stack's limit in a TLS slot
+    sub  x17, sp, #(16 + size)             // the lowest address this frame will touch
+    cmp  x17, x16
+    b.lo trap(StackOverflow)               // the function's trap stub, as for every trap code
+    ...normal prologue...
+
+LinuxX64 (r10, r11: free at entry in SysV)
+    mov  r11, fs:[stack_limit]
+    lea  r10, [rsp - (16 + size)]
+    cmp  r10, r11
+    jb   trap(StackOverflow)
+~~~
+
+The runtime updates `stack_limit` at every stack switch, and sets it for `main` from the thread's stack size. Frames above the probing threshold (Appendix F) check the whole frame here, so probing is not needed in this profile. The C route emits the same comparison against a runtime global through `__builtin_frame_address`.
 
 - Entry: after the prologue, each parameter moves into its home. A register location is a Commit from that register. A stack location loads from `[x29, #16 + offset]` with the type's extending load into x9 or d16, then Commits.
 - Return reads its value into x0 or d0 before the epilogue restores the homes. The order matters: the value may live in a home that is about to be restored.
@@ -1404,6 +1424,7 @@ run_cleanups(scopes):                            // innermost scope first
 ~~~
 
 - **Cleanups run on every exit edge:** falling out of a block, `h.next`, `h.break`, `.try()` and `Return`. A trap runs none; it aborts.
+- **`@scope.deadline` and `@scope.cancel_on`** register with the runtime when they run, and their cleanup (an ordinary entry in the scope's list) retires the deadline and cancels any wait still pending from that scope. A cancelled wait returns `Err(Cancelled)` or `Err(Timeout)`, which leaves through the normal `.try()` path (MEMORY_AND_ACTORS.md §4).
 - **The deferred code is duplicated per exit.** That's simple and bounded by the number of exits; a shared cleanup block is an optimization this compiler doesn't do.
 - **Drop flags:** a local that is moved on some paths only gets a `Bool` drop flag. It's set when the local is initialized and cleared at `.consume()`. Flow (I.3) knows which locals need one.
 

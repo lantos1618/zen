@@ -4,8 +4,8 @@
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 entry=$1; shift
-zen=${ZEN0:-$HOME/zen/zen/zen}
-std=${ZEN0_STD:-$HOME/zen/jit-land/src/std}
+zen=${ZEN0:-$HOME/zen/stage0/zen}
+std=${ZEN0_STD:-$HOME/zen/stage0/std}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

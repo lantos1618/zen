@@ -25,7 +25,7 @@ tests/       run/<topic>/  fail/<topic>/  run.py  stage0.sh  baseline-*.txt
 tools/       budget.py
 ```
 
-- **One stage per directory.** The numbers are line budgets; `tools/budget.py` fails past them.
+- **One stage per directory.** The numbers are budgets in dense lines. `tools/budget.py` measures them as tokens (each budget × 10), so formatting and comments never change a part's size, and it fails past them. Test files don't count.
 - **Dependencies point one way:** `main → front → ir ← back, c`. `ir` imports nothing from the compiler, and `back` and `c` never import `front`. `std` imports only `std`.
 - **No `util`, `helpers`, `common`, `misc` or `part2`.** A file has one subject you can name.
 - **A folder exists** only when it has more than one file.

@@ -1,0 +1,221 @@
+// ZEN_LANGUAGE.md §2: bytes to tokens. A token is a kind and a span; line and column
+// are computed only when a diagnostic needs them. A lexical fault is a token too
+// (Kind.Fault), so lexing never fails and the parser reports the first fault it meets.
+
+{ Res, Ok, None, Range, to_u64, to_usize, truncate_u32 } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+
+Kind* = {
+    Name | At | Int | Float | Str | Char
+        | LParen | RParen | LBrace | RBrace | LBracket | RBracket
+        | Comma | Semi | Dot | Colon | ColonColon | Define       // :  ::  ::=
+        | Assign | Arrow | Equal | NotEqual | Lt | Le | Gt | Ge   // =  =>  ==  !=  <  <=  >  >=
+        | Plus | Minus | Star | Slash | Percent                   // + - * / %
+        | PlusWrap | MinusWrap | StarWrap                         // +% -% *%
+        | Amp | Pipe | Caret | Tilde | Shl | Shr                  // & | ^ ~ << >>
+        | Not | And | Or                                          // ! && ||
+        | End
+        | Fault: Fault
+}
+
+Fault* = { LeadingZero
+    | IntegerTooLarge
+    | UnknownEscape
+    | Unterminated
+    | UnexpectedByte }
+
+Token* = { kind*: Kind, start*: u32, end*: u32 }
+
+Position* = { line*: u32, column*: u32 }
+
+lex* = (a: Alloc, src: str) Res<Vec<Token>, AllocError> {
+    tokens ::= a.Vec<Token>();
+    at     ::= skip(src, 0);
+    Range(0, src.len + 1).loop((h, _) {
+        t = token(src, at);
+        tokens.add(t).try();
+        t.kind.match({ End => h.break(), _ => () });
+        at = skip(src, t.end.to_usize());
+    });
+    Ok(tokens)
+}
+
+// 1-based line and column of a byte offset.
+position* = (src: str, offset: u32) Position {
+    line   :: u32 = 1;
+    column :: u32 = 1;
+    Range(0, offset.to_usize()).loop((i) {
+        (byte(src, i) == '\n').match({
+            true  => { line = line + 1; column = 1; },
+            false => { column = column + 1; },
+        });
+    });
+    Position(line: line, column: column)
+}
+
+// Past the end every byte reads as 0, so no scan needs a bounds check.
+byte = (src: str, i: usize) u8 { src.get(i).match({ Ok(b) => b, None => 0 }) }
+
+is_digit = (c: u8) bool { c >= '0' && c <= '9' }
+is_name_start = (
+    c : u8
+) bool { c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' }
+is_name = (c: u8) bool { is_name_start(c) || is_digit(c) }
+
+// Whitespace and `//` comments.
+skip = (src: str, from: usize) usize {
+    i ::= from;
+    Range(from, src.len + 1).loop((h, _) {
+        c = byte(src, i);
+        (c == ' ' || c == '\t' || c == '\n' || c == '\r').match({
+            true  => { i = i + 1; },
+            false => (c == '/' && byte(src, i + 1) == '/').match({
+                true  => { i = line_end(src, i); },
+                false => h.break(),
+            }),
+        });
+    });
+    i
+}
+
+line_end = (src: str, from: usize) usize { src.slice(from, src.len).find('\n').match({ Ok(n) => from + n, None => src.len }) }
+
+// The index of the first byte at or after `from` that fails `keep`.
+scan = (src: str, from: usize, keep: (c: u8) bool) usize {
+    i ::= from;
+    Range(from, src.len).loop((h, _) { keep(byte(src, i)).match({ true => { i = i + 1; }, false => h.break() }); });
+    i
+}
+
+span = (kind: Kind, start: usize, end: usize) Token {
+    Token(kind: kind, start: start.truncate_u32(), end: end.truncate_u32())
+}
+
+token = (src: str, at: usize) Token {
+    (at >= src.len).match({
+        true  => span(Kind.End, at, at),
+        false => after(src, at),
+    })
+}
+
+after = (src: str, at: usize) Token {
+    c = byte(src, at);
+    is_name_start(c).match({
+        true  => span(Kind.Name, at, scan(src, at, (c) { is_name(c) })),
+        false => is_digit(c).match({
+            true  => number(src, at),
+            false => c.match({
+                '"'  => quoted(src, at, '"', Kind.Str),
+                '\'' => quoted(src, at, '\'', Kind.Char),
+                '@'  => span(
+                    Kind.At,
+                    at,
+                    scan(src, at + 1, (c) { is_name(c) })
+                ),
+                _    => symbol(src, at),
+            }),
+        }),
+    })
+}
+
+// Decimal only. A leading zero is refused (`010`), and the value must fit u64.
+number = (src: str, at: usize) Token {
+    end      = scan(src, at, (c) { is_digit(c) });
+    fraction = byte(src, end) == '.' && is_digit(byte(src, end + 1));
+    fraction.match({
+        true  => span(Kind.Float, at, scan(src, end + 1, (c) { is_digit(c) })),
+        false => {
+            leading_zero = byte(src, at) == '0' && end - at > 1;
+            leading_zero.match({
+                true  => span(Kind.Fault(Fault.LeadingZero), at, end),
+                false => fits_u64(src, at, end).match({
+                    true  => span(Kind.Int, at, end),
+                    false => span(Kind.Fault(Fault.IntegerTooLarge), at, end),
+                }),
+            })
+        },
+    })
+}
+
+MAX_TENTH: u64 = 1844674407370955161     // u64 MAX / 10
+MAX_LAST: u64 = 5                         // u64 MAX % 10
+
+fits_u64 = (src: str, from: usize, to: usize) bool {
+    value :: u64 = 0;
+    fits  ::= true;
+    Range(from, to).loop((h, i) {
+        d = (byte(src, i) - '0').to_u64();
+        (value > MAX_TENTH || value == MAX_TENTH && d > MAX_LAST).match({
+            true  => { fits = false; h.break(); },
+            false => { value = value * 10 + d; },
+        });
+    });
+    fits
+}
+
+// A string or char literal on one line. Escapes: \n \t \r \0 \\ \" \'.
+// An unknown escape faults at the escape but ends with the literal, so lexing
+// resumes after it instead of opening a new string at the closing quote.
+quoted = (src: str, at: usize, close: u8, kind: Kind) Token {
+    i      ::= at + 1;
+    bad    :: Res<usize> = None;
+    closed ::= false;
+    Range(at + 1, src.len + 1).loop((h, _) {
+        c = byte(src, i);
+        (c == close || c == '\n' || i >= src.len).match({
+            true  => { closed = c == close; h.break(); },
+            false => (),
+        });
+        (c == '\\').match({
+            true  => {
+                is_escape(byte(src, i + 1)).match({ true => (), false => bad.match({ Ok(_) => (), None => { bad = Ok(i); } }) });
+                i = i + 2;
+            },
+            false => { i = i + 1; },
+        });
+    });
+    closed.match({
+        false => span(Kind.Fault(Fault.Unterminated), at, i),
+        true  => bad.match({
+            Ok(b) => span(Kind.Fault(Fault.UnknownEscape), b, i + 1),
+            None  => span(kind, at, i + 1),
+        }),
+    })
+}
+
+is_escape = (c: u8) bool {
+    c.match({ 'n' => true, 't' => true, 'r' => true, '0' => true, '\\' => true, '"' => true, '\'' => true, _ => false })
+}
+
+// Operators and punctuation, longest match first.
+symbol = (src: str, at: usize) Token {
+    c = byte(src, at);
+    n = byte(src, at + 1);
+    one = (k: Kind) Token { span(k, at, at + 1) }
+    two = (k: Kind) Token { span(k, at, at + 2) }
+    c.match({
+        '(' => one(Kind.LParen),   ')' => one(Kind.RParen),
+        '{' => one(Kind.LBrace),   '}' => one(Kind.RBrace),
+        '[' => one(Kind.LBracket), ']' => one(Kind.RBracket),
+        ',' => one(Kind.Comma),    ';' => one(Kind.Semi),
+        '.' => one(Kind.Dot),      '~' => one(Kind.Tilde),
+        '^' => one(Kind.Caret),    '/' => one(Kind.Slash),
+        ':' => (n == ':').match({
+            true  => (byte(src, at + 2) == '=').match({ true => span(Kind.Define, at, at + 3), false => two(Kind.ColonColon) }),
+            false => one(Kind.Colon),
+        }),
+        '=' => n.match({ '=' => two(Kind.Equal), '>' => two(Kind.Arrow), _ => one(Kind.Assign) }),
+        '!' => n.match({ '=' => two(Kind.NotEqual), _ => one(Kind.Not) }),
+        '<' => n.match({ '=' => two(Kind.Le), '<' => two(Kind.Shl), _ => one(Kind.Lt) }),
+        '>' => n.match({ '=' => two(Kind.Ge), '>' => two(Kind.Shr), _ => one(Kind.Gt) }),
+        '+' => n.match({ '%' => two(Kind.PlusWrap), _ => one(Kind.Plus) }),
+        '-' => n.match({ '%' => two(Kind.MinusWrap), _ => one(Kind.Minus) }),
+        '*' => n.match({ '%' => two(Kind.StarWrap), _ => one(Kind.Star) }),
+        '%' => one(Kind.Percent),
+        '&' => n.match({ '&' => two(Kind.And), _ => one(Kind.Amp) }),
+        '|' => n.match({ '|' => two(Kind.Or), _ => one(Kind.Pipe) }),
+        _   => one(Kind.Fault(Fault.UnexpectedByte)),
+    })
+}

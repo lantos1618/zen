@@ -1,0 +1,43 @@
+// COMPILER.md E.1. A diagnostic stops compilation; a trap is a program result.
+
+{ Res, Err } = std.core
+{ str } = std.text
+{ FunctionId, BlockId, InstructionId } = ir.records
+
+DiagnosticCode* = {
+    UnknownName | DuplicateName | PrivateImport | InvalidRecursiveType
+        | InvalidId | DuplicateId | TypeMismatch | ArityMismatch
+        | MissingExit | InvalidSuccessor | DuplicateSwitchCase | UninitializedRegister
+        | InvalidConstant | InvalidAlignment | InvalidLayout | InvalidSymbol
+        | InvalidInstructionForm | InvalidReturnContract
+        | UnsupportedTarget | UnsupportedFeature | MissingLowering
+        | ResourceLimit | ExternalToolFailure,
+
+    name* = (self: @Self) str {
+        self.match({
+            UnknownName => "UnknownName", DuplicateName => "DuplicateName",
+            PrivateImport => "PrivateImport", InvalidRecursiveType => "InvalidRecursiveType",
+            InvalidId => "InvalidId", DuplicateId => "DuplicateId",
+            TypeMismatch => "TypeMismatch", ArityMismatch => "ArityMismatch",
+            MissingExit => "MissingExit", InvalidSuccessor => "InvalidSuccessor",
+            DuplicateSwitchCase => "DuplicateSwitchCase", UninitializedRegister => "UninitializedRegister",
+            InvalidConstant => "InvalidConstant", InvalidAlignment => "InvalidAlignment",
+            InvalidLayout => "InvalidLayout", InvalidSymbol => "InvalidSymbol",
+            InvalidInstructionForm => "InvalidInstructionForm", InvalidReturnContract => "InvalidReturnContract",
+            UnsupportedTarget => "UnsupportedTarget", UnsupportedFeature => "UnsupportedFeature",
+            MissingLowering => "MissingLowering", ResourceLimit => "ResourceLimit",
+            ExternalToolFailure => "ExternalToolFailure",
+        })
+    }
+}
+
+DiagnosticStage* = { Source | IR | Target | Selection | Allocation | Assembly | Toolchain }
+
+Diagnostic* = {
+    code*: DiagnosticCode,
+    stage*: DiagnosticStage,
+    function*: Res<FunctionId>,
+    block*: Res<BlockId>,
+    instruction*: Res<InstructionId>,
+    message*: str,
+}

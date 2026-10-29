@@ -1,0 +1,98 @@
+// §6.2's sum_to built by hand: validation accepts it, and refuses two broken variants.
+
+{ Res, Ok, Err, None } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ println } = std.io
+{ Env } = std.env
+{
+    Module, Function, Block, Signature, Symbol, Import, Export, ScalarType, Constant,
+    IntegerConstant, Value, Instruction, InstructionRecord, Exit, Set, IntBinary, IntCompare,
+    IntOp, IntPredicate, Overflow, Jump, Branch, Return, ReturnContract, CallingConvention,
+    SymbolKind, Linkage, Definition, FunctionId, SignatureId, RegisterId, BlockId,
+    InstructionId, SymbolId, StackObject, Global
+} = ir.records
+{ Diagnostic } = ir.diagnostic
+{ validate } = ir.validate
+
+r = (i: u32) RegisterId { RegisterId(index: i) }
+reg = (i: u32) Value { Value.Register(RegisterId(index: i)) }
+i32 = (n: u64) Value { Value.Constant(Constant.Integer(IntegerConstant(type: ScalarType.I32, bits: n))) }
+at = (i: u32, x: Instruction) InstructionRecord { InstructionRecord(id: InstructionId(index: i), instruction: x) }
+add = (dst: u32, lhs: Value, rhs: Value) Instruction {
+    Instruction.IntBinary(IntBinary(dst: r(dst), op: IntOp.Add(Overflow.Checked), lhs: lhs, rhs: rhs))
+}
+
+// Variant 0: the real sum_to. 1: b0 never sets r1. 2: the branch tests an I32.
+sum_to = (a: Alloc, variant: u32) Res<Module, AllocError> {
+    sig_params ::= a.Vec<ScalarType>();
+    sig_params.add(ScalarType.I32).try();
+    sigs ::= a.Vec<Signature>();
+    sigs.add(Signature(parameters: sig_params, result: ReturnContract.Returns(Ok(ScalarType.I32)), calling_convention: CallingConvention.PlatformDefault)).try();
+
+    syms ::= a.Vec<Symbol>();
+    syms.add(Symbol(id: SymbolId(index: 0), kind: SymbolKind.Function, linkage: Linkage.ExternalDefinition, external_name: Ok("sum_to"))).try();
+
+    types ::= a.Vec<ScalarType>();
+    types.add(ScalarType.I32).try();                 // r0: n
+    types.add(ScalarType.I32).try();                 // r1: s
+    types.add(ScalarType.I32).try();                 // r2: i
+    types.add(ScalarType.Bool).try();                // r3: i < n
+    params ::= a.Vec<RegisterId>();
+    params.add(r(0)).try();
+
+    b0 ::= a.Vec<InstructionRecord>();
+    (variant == 1).match({ true => (), false => { b0.add(at(0, Instruction.Set(Set(dst: r(1), value: i32(0))))).try(); } });
+    b0.add(at(1, Instruction.Set(Set(dst: r(2), value: i32(0))))).try();
+    b1 ::= a.Vec<InstructionRecord>();
+    b1.add(at(2, Instruction.IntCompare(IntCompare(dst: r(3), op: IntPredicate.Less, lhs: reg(2), rhs: reg(0))))).try();
+    b2 ::= a.Vec<InstructionRecord>();
+    b2.add(at(3, add(2, reg(2), i32(1)))).try();
+    b2.add(at(4, add(1, reg(1), reg(2)))).try();
+    b3 ::= a.Vec<InstructionRecord>();
+
+    condition = (variant == 2).match({ true => reg(2), false => reg(3) });
+    blocks ::= a.Vec<Block>();
+    blocks.add(Block(id: BlockId(index: 0), instructions: b0, exit: Exit.Jump(Jump(target: BlockId(index: 1))))).try();
+    blocks.add(Block(id: BlockId(index: 1), instructions: b1, exit: Exit.Branch(Branch(condition: condition, yes: BlockId(index: 2), no: BlockId(index: 3))))).try();
+    blocks.add(Block(id: BlockId(index: 2), instructions: b2, exit: Exit.Jump(Jump(target: BlockId(index: 1))))).try();
+    blocks.add(Block(id: BlockId(index: 3), instructions: b3, exit: Exit.Return(Return(value: Ok(reg(1)))))).try();
+
+    functions ::= a.Vec<Function>();
+    functions.add(Function(
+        id: FunctionId(index: 0), symbol: SymbolId(index: 0), signature: SignatureId(index: 0),
+        parameters: params, register_types: types, objects: a.Vec<StackObject>(),
+        entry: BlockId(index: 0), blocks: blocks,
+    )).try();
+    exports ::= a.Vec<Export>();
+    exports.add(Export(symbol: SymbolId(index: 0), definition: Definition.Function(FunctionId(index: 0)))).try();
+
+    Ok(Module(
+        signatures: sigs, symbols: syms, globals: a.Vec<Global>(), imports: a.Vec<Import>(),
+        functions: functions, exports: exports, trap_handler: None,
+    ))
+}
+
+// The outcome as one line, "valid" or "<code> b<block>", and whether it is the wanted one.
+expect = (name: str, result: Res<(), Diagnostic>, wanted: str) bool {
+    got = result.match({
+        Ok => "valid",
+        Err(d) => d.code.name(),
+    });
+    ok = got.eq(wanted);
+    println("{} {}: {}", ok.match({ true => "ok  ", false => "FAIL" }), name, got);
+    ok
+}
+
+check = (a: Alloc, m: Module) Res<(), Diagnostic> {
+    validate(a, m).match({ Ok(_) => Ok, Err(d) => Err(d) })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    passed ::= true;
+    passed = expect("sum_to", check(a, sum_to(a, 0).try()), "valid") && passed;
+    passed = expect("no initial s", check(a, sum_to(a, 1).try()), "UninitializedRegister") && passed;
+    passed = expect("i32 condition", check(a, sum_to(a, 2).try()), "TypeMismatch") && passed;
+    passed.match({ true => Ok(0), false => Ok(1) })
+}

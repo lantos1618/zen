@@ -1,0 +1,34 @@
+{ println } = std.io
+
+// Members overload by arity, so the receiver and `::` argument rules read
+// the overload the call selected, whatever order the overloads are
+// declared in. The read-only `f()` and `put(a)` accept `:` bindings.
+B = { n :: i32 }
+S = {
+    x :: i32,
+    f = (self :: @Self, v: i32) i32 {
+        self.x = v;
+        v
+    },
+    f = (self: @Self) i32 { self.x },
+    put = (self: @Self, a: i32, b :: B) i32 {
+        b.n = a;
+        a
+    },
+    put = (self: @Self, a: i32) i32 { self.x + a },
+}
+
+main = () {
+    s = S(x: 1);
+    println("{}", s.f());
+    println("{}", s.put(7));
+    t ::= S(x: 1);
+    c ::= B(n: 0);
+    t.f(5);
+    t.put(3, c);
+    println("{} {}", t.x, c.n);
+}
+
+//! out: 1
+//! out: 8
+//! out: 5 3

@@ -1,0 +1,59 @@
+{ project, Action } = zen.zen_project
+{ host_target } = zen.zen_build
+{ ProjectArgs } = std.build
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+run = (env: Env, alloc: Alloc, target: str) Res<AllocError> {
+    job = ProjectArgs(
+        root: "src/app",
+        target: target,
+        std_root: "src",
+        argv: alloc.Vec<str>()
+    );
+    println("{} {}", target, project(env, alloc, job, Action.Run).try());
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    target = host_target().ok_or(AllocError.OutOfMemory).try();
+    script = alloc.String(
+        "src/app/build/{}-{}/script.js",
+        target.os.stable_name(),
+        target.arch.stable_name()
+    ).try();
+    run(env, alloc, "script").try();
+    run(env, alloc, "named_script").try();
+    run(env, alloc, "native").try();
+    println(
+        "script file {}",
+        env.fs.read(
+            alloc,
+            script.view()
+        ).match({ Ok(_) => true, Err(_) => false })
+    );
+    println(
+        "named file {}",
+        env.fs.read(
+            alloc,
+            "src/app/dist/chosen.js"
+        ).match({ Ok(_) => true, Err(_) => false })
+    );
+    println(
+        "assembly file {}",
+        env.fs.read(
+            alloc,
+            "src/app/build/.zen/native/program.s"
+        ).match({ Ok(_) => true, Err(_) => false })
+    );
+    Ok(0)
+}
+
+//! out: script 7
+//! out: named_script 7
+//! out: native 7
+//! out: script file true
+//! out: named file true
+//! out: assembly file true

@@ -1,0 +1,26 @@
+{ println } = std.io
+
+// A `:` callee observes its argument's value at the call. Two distinct `::`
+// parameters may name the same storage without changing that value.
+Big = { a :: u64, b :: u64, c :: u64 }
+sum = (x: Big) u64 { x.a * 100 + x.b * 10 + x.c }
+write_then_read = (x: Big, y :: Big) u64 { y.a = 7; y.c = 9; sum(x) }
+via = (x :: Big) u64 { write_then_read(x, x) + sum(x) }
+via_two = (x :: Big, y :: Big) u64 { write_then_read(x, y) + sum(x) }
+read_twice = (x :: Big) u64 { sum(x) + sum(x) }
+main = () {
+    b ::= Big(a: 1, b: 2, c: 3);
+    println("{}", via(b));
+    println("{}", sum(b));
+    println("{}", read_twice(b));
+    // Distinct `::` parameters can still name the same caller storage.
+    c ::= Big(a: 1, b: 2, c: 3);
+    println("{}", via_two(c, c));
+    println("{}", sum(c));
+}
+
+//! out: 852
+//! out: 729
+//! out: 1458
+//! out: 852
+//! out: 729

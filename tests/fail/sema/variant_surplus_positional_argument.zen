@@ -1,0 +1,24 @@
+// A variant holds one payload seat or none. The struct face of this rule
+// lives in `construction_surplus_positional_argument`; the variant door
+// never counted at all, so the second argument was evaluated and then
+// dropped, and `Sh.A(7, 9)` printed 7 with exit 0.
+// position: the first argument with no seat.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Sh = { | A: i32 | B }
+
+main = (env: Env) Res<i32, AllocError> {
+    v = Sh.A(7, 9);
+    v.match({
+        A(n) => println("{}", n),
+        B    => println("b"),
+    });
+    Ok(0);
+}
+
+//! error: 15:17
+//! hint: construction has a surplus positional argument

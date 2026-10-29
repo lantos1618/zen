@@ -1,0 +1,25 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Box = { text :: str }
+Input = { text :: str, scratch: str }
+choose = (input: Input, static: bool) Input {
+    result ::= input;
+    static.then(() { result.text = "static"; });
+    result
+}
+put = (box :: Box, input: Input) { result = choose(
+    input,
+    false
+); box.text = result.text; }
+bad = (env: Env, box :: Box) Res<AllocError> {
+    a    = env.mem.alloc();
+    text = a.String("temporary").try();
+    put(box, Input(text: text.view(), scratch: "static"));
+}
+main = (env: Env) Res<AllocError> { box ::= Box(text: ""); bad(env, box).try(); println(box.text); }
+
+//! error: conditional_field_write_keeps_input_origin.zen:20:9
+//! hint: may not be stored through a borrowed parameter

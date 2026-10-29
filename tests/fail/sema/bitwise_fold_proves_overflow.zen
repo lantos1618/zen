@@ -1,0 +1,8 @@
+{ println } = std.io
+
+main = () {
+    println("{}", (u8.MAX ^ 15) + 16);
+}
+
+//! error: 4:33
+//! hint: integer overflow

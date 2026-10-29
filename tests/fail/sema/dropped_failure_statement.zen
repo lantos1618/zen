@@ -1,0 +1,27 @@
+// A `Res<T, E>` carries a reason, so a statement that computes one and
+// reads nothing of it drops a failure nobody handled. Calls are run for
+// their effects, but a call's failure is part of what it did.
+//
+// The fix is named in the diagnostic: `.try()`, `.match`, or `.ignore()`
+// when dropping it is the decision (corpus/sema/failure_handled_or_ignored).
+//
+// position: the dropped expression.
+
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Full* = { | Full }
+Full.impl(Error, {})
+
+push = (n: i32) Res<Full> {
+    (n > 2).match({ true => Err(Full.Full), false => Ok })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    push(1);
+    Ok(0)
+}
+
+//! error: 22:5
+//! hint: unhandled failure: this `Res<(), Full>` is dropped: handle it with `.try()` or `.match`, or discard it with `.ignore()`

@@ -1,0 +1,13 @@
+// Both sides of arithmetic must be numbers of one settled type; C must not
+// become the checker for a string passed to the i32 addition helper.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+add = (n: i32, text: str) i32 { n + text }
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }
+
+//! error: 8:35
+//! hint: operator is not defined for these operands: arithmetic and ordering require numbers; remainder and wrapping require integers — `i32` and `str`

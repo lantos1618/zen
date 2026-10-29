@@ -1,0 +1,12 @@
+{ Res, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+// EOF arrives immediately after the digits of a number literal.
+Error = AllocError | IoError
+
+main = (env: Env) Res<i32, Error> {
+    n: i32 = 42
+
+//! error: 9:16
+//! hint: unexpected end of file

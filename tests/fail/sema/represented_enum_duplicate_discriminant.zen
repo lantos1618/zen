@@ -1,0 +1,8 @@
+{ Env } = std.env
+
+Code = { | First = 1 | Second = 1 }
+
+main = (env: Env) i32 { 0 }
+
+//! error: 3:24
+//! hint: duplicate enum discriminant

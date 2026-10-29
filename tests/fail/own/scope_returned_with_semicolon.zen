@@ -1,0 +1,20 @@
+// The same escape as `scope_returned`, one semicolon apart: a body's
+// last expression is its value whether or not the closing `;` is
+// written, and reading `Block.value` alone saw only the second form.
+
+{ Res, Ok, Scope, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+here = () Scope {
+    @scope;
+}
+
+main = (env: Env) Res<i32, IoError> {
+    s = here();
+    s.defer(() { println("goodbye") });
+    Ok(0);
+}
+
+//! error: 10:5
+//! hint: @scope may not escape

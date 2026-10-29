@@ -1,0 +1,21 @@
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// str is BYTES. a non-ascii string literal must reach stdout as the
+// exact utf-8 bytes that were in the source file, unmodified.
+Error = AllocError | IoError
+
+main = (env: Env) Res<i32, Error> {
+    println("héllo");
+    println("日本語");
+    println("✓ µ €");
+    println("🎉");
+    Ok(0);
+}
+
+//! out: héllo
+//! out: 日本語
+//! out: ✓ µ €
+//! out: 🎉

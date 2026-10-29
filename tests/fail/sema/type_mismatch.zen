@@ -1,0 +1,17 @@
+// the floor: a declared type is checked against what is bound to it.
+//
+// position: the offending expression.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, AllocError> {
+    n: i32 = "hello";
+    println("{}", n);
+    Ok(0);
+}
+
+//! error: 11:14
+//! hint: expected i32

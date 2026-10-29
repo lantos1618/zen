@@ -1,0 +1,17 @@
+// A nullary generic variant used only by match needs no annotation because no
+// position demands type arguments for the value. Prints 0.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Box<T> = { Full: T | Empty }
+
+main = (env: Env) Res<i32, AllocError> {
+    x = Box.Empty;
+    println("{}", x.match({ Full(v) => 1, Empty => 0 }));
+    Ok(0);
+}
+
+//! out: 0

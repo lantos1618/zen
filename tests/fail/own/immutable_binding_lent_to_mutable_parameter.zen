@@ -1,0 +1,18 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// DESIGN.md, Ownership: a receiver is only the first parameter, so the
+// receiver rule holds for every `::` parameter. `bump` writes the
+// caller's counter; `counter` is a `:` binding.
+Counter = { n :: i32 }
+bump = (counter :: Counter) { counter.n = counter.n + 1; }
+main = (env: Env) Res<AllocError> {
+    counter = Counter(n: 1);
+    bump(counter);
+    println("{}", counter.n);
+}
+
+//! error: 13:10
+//! hint: an immutable place cannot be lent to a `::` parameter or field

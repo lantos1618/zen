@@ -1,0 +1,14 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, IoError> {
+    byte: u8  = 0xff;
+    word: u16 = 0xBEEF;
+    println("{} {} {} {}", 0x0, 0x2a, 0XFF, 0xffffffffffffffff == u64.MAX);
+    println("{} {}", byte, word);
+    Ok(0)
+}
+
+//! out: 0 42 255 true
+//! out: 255 48879

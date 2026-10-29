@@ -1,0 +1,3 @@
+pick* = (x: i32) bool { x == 1 }
+
+other* = (x: i32) i32 { x + 100 }

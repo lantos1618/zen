@@ -1,0 +1,19 @@
+// A format hole naming nothing, inside a multi-line string, is reported at
+// the hole's own line and column in the source: the value's byte offset is
+// mapped back through the stripped indentation and the escaped quotes.
+
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, IoError> {
+    subtotal = 7;
+    println("""
+        "subtotal": {subtotal}
+        "total": {total}
+        """);
+    Ok(0);
+}
+
+//! error: 11:5
+//! hint: a named hole without a local

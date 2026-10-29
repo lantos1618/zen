@@ -1,0 +1,29 @@
+// A member's own explicit arguments obey the same exact arity and settled
+// signature rules as a free function's arguments.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Tool = {
+    first = <T, U>(self: @Self, a: T, b: U) T { a }
+    plain = (self: @Self, value: i32) i32 { value }
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    tool        = Tool();
+    number: i32 = 1;
+    text: str   = "one";
+    println("{}", tool.first<str, i32>(number, number));
+    println("{}", tool.first<i32>(number, text));
+    println("{}", tool.first<i32, str, bool>(number, text));
+    println("{}", tool.plain<str>(number));
+    Ok(0);
+}
+
+//! error: 18:19
+//! error: 19:19
+//! error: 20:19
+//! error: 21:19
+//! hint: invalid generic instantiation

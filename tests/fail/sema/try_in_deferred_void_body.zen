@@ -1,0 +1,13 @@
+{ Res, Ok, Err, Error } = std.core
+{ Env } = std.env
+
+Fault = { | Failed }
+Fault.impl(Error, {})
+fail = () Res<Fault> { Err(Fault.Failed) }
+main = (env: Env) Res<i32, Fault> {
+    @scope.defer(() { fail().try(); });
+    Ok(0)
+}
+
+//! error: 8:30
+//! hint: `.try()` in a function that does not return Res

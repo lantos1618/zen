@@ -1,0 +1,25 @@
+// `.then` hands its closure's value back inside a `Res<T>`, so a failure
+// in the closure's tail travels out with the call's result — and is
+// dropped when that result is. The diagnostic points inside the closure,
+// where `.try()` or `.ignore()` goes.
+//
+// position: the closure's tail.
+
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Full* = { | Full }
+Full.impl(Error, {})
+
+push = (n: i32) Res<Full> {
+    (n > 2).match({ true => Err(Full.Full), false => Ok })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    (1 > 0).then(() { push(5) });
+    Ok(0)
+}
+
+//! error: 20:23
+//! hint: unhandled failure: this `Res<(), Full>` is dropped

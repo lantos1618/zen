@@ -1,0 +1,21 @@
+// Positional seat numbers are absolute argument positions, matching codegen.
+// position: the construction with x still unwritten.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Point = {
+    x: i32,
+    y: i32,
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    p = Point(y: 60, 50);
+    println("{} {}", p.x, p.y);
+    Ok(0);
+}
+
+//! error: 15:9
+//! hint: construction is missing a required field `x`

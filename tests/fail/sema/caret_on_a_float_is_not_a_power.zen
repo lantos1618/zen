@@ -1,0 +1,16 @@
+// `^` is exclusive-or on unsigned integers. Written over a float it is
+// almost always meant as a power, so the diagnostic names `pow`.
+//
+// position: the expression the operator applies to.
+
+{ println } = std.io
+
+main = () i32 {
+    r: f32 = 2.0;
+    area   = (r ^ 2) * 3.14;
+    println("{}", area);
+    0
+}
+
+//! error: 10:15
+//! hint: `^` is exclusive-or, not a power

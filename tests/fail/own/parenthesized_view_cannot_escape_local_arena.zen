@@ -1,0 +1,18 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+word = (env: Env) Res<str, AllocError> {
+    arena = env.mem.alloc();
+    text ::= arena.String().try();
+    text.add("hello").try();
+    Ok((text.view)())
+}
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", word(env).try());
+    Ok(0)
+}
+
+//! error: 10:5
+//! hint: may not be returned

@@ -1,0 +1,8 @@
+{ splat_u32x4 } = std.simd
+main = () {
+    a = splat_u32x4(1);
+    b = a + a;
+}
+
+//! error: 4:11
+//! hint: operator is not defined for these operands

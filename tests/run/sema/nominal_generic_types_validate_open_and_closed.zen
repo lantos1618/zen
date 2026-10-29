@@ -1,0 +1,35 @@
+// Declaration-internal type variables remain open until instantiation, while
+// a concrete argument equal to its bound is immediately provable.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Shape = { width: i32 }
+Box<T: Shape> = { value: T }
+Maybe<T: Shape> = { Some: T | None }
+
+open = <T: Shape>(box: Box<T>, maybe: Maybe<T>) Box<T> { box }
+closed = (box: Box<Shape>) Box<Shape> { box }
+
+main = (env: Env) Res<i32, AllocError> {
+    box                = Box<Shape>(value: Shape(width: 17));
+    some: Maybe<Shape> = Maybe.Some(Shape(width: 29));
+    none: Maybe<Shape> = Maybe.None;
+    println("open some {}", open(box, some).value.width);
+    println(
+        "open none {}",
+        open(Box<Shape>(value: Shape(width: 43)), none).value.width
+    );
+    println("closed {}", closed(box).value.width);
+    some.match({ Some(value) => println("payload {}", value.width), None => println("missing payload") });
+    none.match({ Some(_) => println("unexpected payload"), None => println("none") });
+    Ok(0)
+}
+
+//! out: open some 17
+//! out: open none 43
+//! out: closed 17
+//! out: payload 29
+//! out: none

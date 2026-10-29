@@ -1,0 +1,8 @@
+main = () {
+    narrow: u32 = 6;
+    wide: u64   = 2;
+    both        = narrow | wide;
+}
+
+//! error: 4:26
+//! hint: `u32` and `u64` beside `|`

@@ -1,0 +1,12 @@
+{ println } = std.io
+
+// A negative number held by an untyped binding does not fit an unsigned use.
+main = () i32 {
+    neg = -1;
+    u: u32 = neg;
+    println("{}", u);
+    0
+}
+
+//! error: 6:14
+//! hint: -1 does not fit in `u32`

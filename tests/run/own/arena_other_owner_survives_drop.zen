@@ -1,0 +1,15 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ dup } = std.text
+
+main = (env: Env) Res<i32, AllocError> {
+    first  = env.mem.alloc();
+    second = env.mem.alloc();
+    text   = "hello".dup(second).try();
+    (consume first).drop();
+    env.out.println("{}", text).ignore();
+    Ok(0)
+}
+
+//! out: hello

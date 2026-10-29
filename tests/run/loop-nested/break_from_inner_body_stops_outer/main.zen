@@ -1,0 +1,138 @@
+// tests/corpus/loop-nested/break_from_inner_body_stops_outer.zen
+// the handle names its OWN loop, so a break fired from inside the
+// inner body with the OUTER handle must leave BOTH loops at once.
+//
+// This is the other half of the depth rule. loop-map_body_can_break_
+// early.zen's mutation bound a nested body's handle one level too deep;
+// the opposite mistake — rebinding every handle to the nearest loop —
+// is just as silent, and only a program that breaks the OUTER handle
+// from two closures down can tell. If `h_outer` got re-bound to the
+// inner loop here, the inner loop would stop, `done {}` would never
+// print, and the remaining outer passes would run anyway: plausible
+// output, wrong count, wrong last line.
+//
+// The println sits AFTER the inner loop on purpose: it is the proof
+// the exit jumped past both frames and not merely out of one.
+
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, AllocError> {
+    Range(0, 5).loop((h_outer, outer) {
+        println("outer {}", outer);
+        Range(0, 100).loop((h_inner, value) {
+            (outer == 1).then(() { h_outer.break() });
+            println("  inner {}", value);
+        });
+        println("  survived outer {}", outer);
+    });
+    println("done");
+    Ok(0);
+}
+
+//! out: outer 0
+//! out:   inner 0
+//! out:   inner 1
+//! out:   inner 2
+//! out:   inner 3
+//! out:   inner 4
+//! out:   inner 5
+//! out:   inner 6
+//! out:   inner 7
+//! out:   inner 8
+//! out:   inner 9
+//! out:   inner 10
+//! out:   inner 11
+//! out:   inner 12
+//! out:   inner 13
+//! out:   inner 14
+//! out:   inner 15
+//! out:   inner 16
+//! out:   inner 17
+//! out:   inner 18
+//! out:   inner 19
+//! out:   inner 20
+//! out:   inner 21
+//! out:   inner 22
+//! out:   inner 23
+//! out:   inner 24
+//! out:   inner 25
+//! out:   inner 26
+//! out:   inner 27
+//! out:   inner 28
+//! out:   inner 29
+//! out:   inner 30
+//! out:   inner 31
+//! out:   inner 32
+//! out:   inner 33
+//! out:   inner 34
+//! out:   inner 35
+//! out:   inner 36
+//! out:   inner 37
+//! out:   inner 38
+//! out:   inner 39
+//! out:   inner 40
+//! out:   inner 41
+//! out:   inner 42
+//! out:   inner 43
+//! out:   inner 44
+//! out:   inner 45
+//! out:   inner 46
+//! out:   inner 47
+//! out:   inner 48
+//! out:   inner 49
+//! out:   inner 50
+//! out:   inner 51
+//! out:   inner 52
+//! out:   inner 53
+//! out:   inner 54
+//! out:   inner 55
+//! out:   inner 56
+//! out:   inner 57
+//! out:   inner 58
+//! out:   inner 59
+//! out:   inner 60
+//! out:   inner 61
+//! out:   inner 62
+//! out:   inner 63
+//! out:   inner 64
+//! out:   inner 65
+//! out:   inner 66
+//! out:   inner 67
+//! out:   inner 68
+//! out:   inner 69
+//! out:   inner 70
+//! out:   inner 71
+//! out:   inner 72
+//! out:   inner 73
+//! out:   inner 74
+//! out:   inner 75
+//! out:   inner 76
+//! out:   inner 77
+//! out:   inner 78
+//! out:   inner 79
+//! out:   inner 80
+//! out:   inner 81
+//! out:   inner 82
+//! out:   inner 83
+//! out:   inner 84
+//! out:   inner 85
+//! out:   inner 86
+//! out:   inner 87
+//! out:   inner 88
+//! out:   inner 89
+//! out:   inner 90
+//! out:   inner 91
+//! out:   inner 92
+//! out:   inner 93
+//! out:   inner 94
+//! out:   inner 95
+//! out:   inner 96
+//! out:   inner 97
+//! out:   inner 98
+//! out:   inner 99
+//! out:   survived outer 0
+//! out: outer 1
+//! out: done

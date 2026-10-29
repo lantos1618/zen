@@ -1,0 +1,20 @@
+// resolution is on declared parameter types and arity. no candidate has
+// arity three, so there is nothing to pick and nothing to guess.
+//
+// position: the call.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+show = (env: Env, n: i32) { println("int {}", n) }
+show = (env: Env, s: str) { println("str {}", s) }
+
+main = (env: Env) Res<i32, AllocError> {
+    show(env, 1, 2);
+    Ok(0);
+}
+
+//! error: 15:5
+//! hint: no overload matches

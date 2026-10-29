@@ -1,0 +1,14 @@
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+
+// variants are `|`-separated, so the trailing-separator mistake is a
+// trailing BAR. The body's `}` ends the variants, so the bar promises a
+// variant that never comes and the diagnostic says so at the bar.
+main = (env: Env) Res<i32, ArgError> {
+    Ok(0);
+}
+
+Shape = { Circle | Square | }
+
+//! error: 11:27
+//! hint: expected variant

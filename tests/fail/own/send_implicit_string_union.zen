@@ -1,0 +1,24 @@
+{ Res, Ok, bool } = std.core
+{ AllocError } = std.mem
+{ str } = std.text
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Bytes = str | bool
+Worker = {}
+Worker.impl(Actor, {
+    read = (self :: @Self, ctx: Context, data: Bytes) { println("received"); }
+})
+main = (env: Env) Res<i32, AllocError | ActorStartError | ActorError> {
+    arena ::= env.mem.alloc();
+    buf   ::= arena.Vec<u8>();
+    buf.add(7).try();
+    worker = env.spawn(Worker()).try();
+    worker.read("hello").try();
+    worker.stop(); worker.join();
+    Ok(0)
+}
+
+//! error: 18:5
+//! hint: unsupported by this backend: an actor payload without a concrete mailbox transfer

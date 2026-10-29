@@ -1,0 +1,31 @@
+// A str argument is a view into its message block, which the next send
+// reuses: storing it on the actor would show that message's bytes.
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+
+Error = AllocError | IoError | ActorStartError | ActorError
+Keeper = { last :: str = "" }
+
+Keeper.impl(Actor, {
+    keep = (self :: @Self, ctx: Context, s: str) {
+        self.last = s;
+        ctx.me.fill("YYYYYYYYYYY").ignore();
+    },
+    fill = (self :: @Self, ctx: Context, s: str) {
+        ctx.me.show("ZZZZZZZZZZZ").ignore();
+    },
+    show = (self :: @Self, ctx: Context, s: str) {
+        ctx.env.out.println("last {}", self.last).ignore();
+    },
+})
+
+main = (env: Env) Res<i32, Error> {
+    k = env.spawn(Keeper()).try();
+    k.keep("hello world").try();
+    Ok(0)
+}
+
+//! error: 13:9
+//! hint: may not be stored through `self`

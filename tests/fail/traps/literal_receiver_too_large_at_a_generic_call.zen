@@ -1,0 +1,6 @@
+take = <T>(value: T) {}
+
+main = () { (300).take<u8>(); }
+
+//! error: literal_receiver_too_large_at_a_generic_call.zen:3:13
+//! hint: literal 300 does not fit u8

@@ -1,0 +1,45 @@
+// Vec iteration preserves insertion order and separates indexes from values
+// for both borrowed strings and integers wider than i32.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+
+    names ::= alloc.Vec<str>();
+    names.add("ada").try();
+    names.add("grace").try();
+    names.add("alan").try();
+    n ::= 0;
+    names.loop((h, name) {
+        println("{}", name);
+        n = n + 1;
+    });
+    println("count {}", n);
+    names.loop((h, index, name) { println("{} {}", index, name); });
+
+    nums ::= alloc.Vec<i64>();
+    nums.add(9000000000).try();
+    nums.add(-7).try();
+    m :: usize = 0;
+    nums.loop((h, index, value) {
+        println("{} {}", index, value);
+        m = m + index + 1;
+    });
+    println("passes {}", m);
+    Ok(0);
+}
+
+//! out: ada
+//! out: grace
+//! out: alan
+//! out: count 3
+//! out: 0 ada
+//! out: 1 grace
+//! out: 2 alan
+//! out: 0 9000000000
+//! out: 1 -7
+//! out: passes 3

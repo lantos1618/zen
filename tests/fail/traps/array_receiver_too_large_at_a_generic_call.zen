@@ -1,0 +1,8 @@
+{ println } = std.io
+
+take = <T>(value: [T, 1]) T { value[0] }
+
+main = () { println("{}", [300].take<u8>()); }
+
+//! error: array_receiver_too_large_at_a_generic_call.zen:5:28
+//! hint: literal 300 does not fit u8

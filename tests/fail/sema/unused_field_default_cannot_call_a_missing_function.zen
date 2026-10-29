@@ -1,0 +1,5 @@
+Unused = { value :: i32 = missing_default() }
+main = () {}
+
+//! error: 1:27
+//! hint: undefined name

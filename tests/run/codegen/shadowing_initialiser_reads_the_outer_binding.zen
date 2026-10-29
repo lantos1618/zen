@@ -1,0 +1,24 @@
+// A shadowing declaration enters scope after its initializer, so the
+// initializer reads the outer binding, including through a closure.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, AllocError> {
+    k: i32 = 5;
+    k.match({ _ => { k :: i32 = k + 1; println("{}", k); } });
+
+    xs         = [1, 2, 3];
+    total: i32 = 100;
+    xs.loop((h, v) { total: i32 = total + v; println("{}", total); });
+    println("{}", total);
+    Ok(0);
+}
+
+//! out: 6
+//! out: 101
+//! out: 102
+//! out: 103
+//! out: 100

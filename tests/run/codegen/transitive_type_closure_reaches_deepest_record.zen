@@ -1,0 +1,27 @@
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+S9 = { value: i32 }
+S8 = { next: S9 }
+S7 = { next: S8 }
+S6 = { next: S7 }
+S5 = { next: S6 }
+S4 = { next: S5 }
+S3 = { next: S4 }
+S2 = { next: S3 }
+S1 = { next: S2 }
+S0 = { next: S1 }
+
+touch = (
+    value : S0
+) i32 { value.next.next.next.next.next.next.next.next.next.value }
+
+main = (env: Env) Res<i32> {
+    first  = S0(S1(S2(S3(S4(S5(S6(S7(S8(S9(17))))))))));
+    second = S0(S1(S2(S3(S4(S5(S6(S7(S8(S9(91))))))))));
+    println("deep {} {}", touch(first), touch(second));
+    Ok(0)
+}
+
+//! out: deep 17 91

@@ -1,0 +1,22 @@
+// `None` named twice on an optional: the second arm never runs.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+read = (r: Res<i32>) i32 {
+    r.match({
+        None  => 0,
+        Ok(v) => v,
+        None  => -1,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", read(Ok(4)));
+    Ok(0);
+}
+
+//! error: 12:9
+//! hint: unreachable match arm

@@ -1,0 +1,7 @@
+main = () {
+    ready = true;
+    both  = ready & false;
+}
+
+//! error: 3:13
+//! hint: use `&&`, `||` or `!=` for bool

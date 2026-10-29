@@ -1,0 +1,8 @@
+// `>>` is the logical shift only; the arithmetic shift is `shift_right`.
+main = () {
+    word: i32 = -8;
+    half      = word >> 1;
+}
+
+//! error: 4:17
+//! hint: call `shift_right` for the arithmetic shift

@@ -1,0 +1,15 @@
+// A local declared without a value may not be read until it is assigned.
+//
+// position: the read.
+
+{ println } = std.io
+
+main = () i32 {
+    total :: i32;
+    println("{}", total);
+    total = 4;
+    0
+}
+
+//! error: 9:19
+//! hint: `total` is read before it is assigned: no path to here assigns it

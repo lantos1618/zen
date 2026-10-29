@@ -1,0 +1,8 @@
+main = () {
+    word: u32  = 1;
+    count: i32 = 3;
+    moved      = word << count;
+}
+
+//! error: 4:26
+//! hint: a shift count is an unsigned integer

@@ -1,0 +1,21 @@
+// A generic enum payload is typed at the instance: `Box<i32>.Full` carries an
+// i32, not the template `T`, so the match binds a concrete value.
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Box<T> = { Full: T | Empty }
+
+some = <T>(value: T) Box<T> { Box.Full(value) }
+
+pick_i32 = (value: Box<i32>) i32 {
+    value.match({ Full(n) => n, Empty => 0 })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", pick_i32(some(4)));
+    Ok(0)
+}
+
+//! out: 4

@@ -1,0 +1,20 @@
+{ println } = std.io
+
+// A `::` field and its containing `::` record can alias. The `:` argument
+// keeps its value at the call even when the other argument writes that field.
+Big = { a :: u64, b :: u64, c :: u64 }
+Pair = { big :: Big, n :: u64 }
+nudge = (x: Big, p :: Pair) u64 {
+    p.big.a = 7;
+    x.a * 100 + x.b * 10 + x.c
+}
+via_parent = (x :: Big, p :: Pair) u64 { nudge(x, p) }
+
+main = () {
+    q ::= Pair(big: Big(a: 1, b: 2, c: 3), n: 0);
+    println("{}", via_parent(q.big, q));
+    println("{}", q.big.a);
+}
+
+//! out: 123
+//! out: 7

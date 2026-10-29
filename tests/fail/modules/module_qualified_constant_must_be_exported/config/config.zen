@@ -1,0 +1,3 @@
+// module `config`: SECRET has no `*`, so no other module may read it.
+PUBLIC*: i64 = 1
+SECRET: i64 = 2

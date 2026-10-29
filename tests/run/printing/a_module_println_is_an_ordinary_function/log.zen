@@ -1,0 +1,2 @@
+// A logger that only measures what it would write.
+println* = (line: str) usize { line.len }

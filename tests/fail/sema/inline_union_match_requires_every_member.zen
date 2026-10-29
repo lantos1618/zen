@@ -1,0 +1,15 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Left = { | Number: i32 }
+Right = { | Text: str }
+
+incomplete = (error: Left | Right) {
+    error.match({ Left(_) => () });
+}
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }
+
+//! error: 9:5
+//! hint: match is not exhaustive

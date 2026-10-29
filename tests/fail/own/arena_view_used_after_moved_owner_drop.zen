@@ -1,0 +1,16 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ dup } = std.text
+
+main = (env: Env) Res<i32, AllocError> {
+    arena ::= env.mem.alloc();
+    text = "hello".dup(arena).try();
+    moved = consume arena;
+    (consume moved).drop();
+    env.out.println("{}", text).ignore();
+    Ok(0)
+}
+
+//! error: 11:27
+//! hint: use after arena destruction

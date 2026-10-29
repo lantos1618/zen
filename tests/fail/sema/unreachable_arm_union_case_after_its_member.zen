@@ -1,0 +1,31 @@
+// On `Kind | Fail`, `Err(Kind)` takes every case of `Kind`, so the
+// `Err(Protocol)` below it never runs. Code generation once gave the
+// bare case no test at all, which made the FIRST such arm take every
+// error; the checker must read the case as inside its member.
+
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Kind = { Io | Protocol | Authentication }
+Kind.impl(Error, {})
+Fail = { Mismatch | Accepted }
+Fail.impl(Error, {})
+
+name = (r: Res<i32, Kind | Fail>) str {
+    r.match({
+        Err(Kind)     => "kind",
+        Err(Protocol) => "protocol",
+        Err(_)        => "fail",
+        Ok(_)         => "ok",
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", name(Err(Kind.Protocol)));
+    Ok(0);
+}
+
+//! error: 19:9
+//! hint: unreachable match arm

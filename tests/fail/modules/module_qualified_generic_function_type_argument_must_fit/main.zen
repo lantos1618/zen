@@ -1,0 +1,18 @@
+// A module-qualified free function keeps ordinary generic-call semantics; it
+// is neither a constructor nor an associated member of the module alias.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+mod = lib
+
+main = (env: Env) Res<i32, AllocError> {
+    value: str = "wrong";
+    println("{}", mod.id<i32>(value));
+    Ok(0);
+}
+
+//! error: main.zen:13:19
+//! hint: invalid generic instantiation

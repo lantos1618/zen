@@ -1,0 +1,8 @@
+// `narrow_` is a compiler-provided spelling, like `to_`: a bodyless local
+// declaration must not acquire rounding behaviour from its name.
+narrow_f32 = (value: f64) f32
+
+main = () {}
+
+//! error: 3:1
+//! hint: bodyless numeric conversion requires a supported std.core.num signature

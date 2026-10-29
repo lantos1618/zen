@@ -1,0 +1,8 @@
+main = () {
+    flags: u32 = 6;
+    mask: u32  = 2;
+    set = flags & mask != 0;
+}
+
+//! error: 4:17
+//! hint: a bitwise operator needs parentheses beside `!=`: write `(flags & mask) != 0`

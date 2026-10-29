@@ -1,0 +1,14 @@
+{ run } = mine.mine
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Optional = { value: Res<i32> }
+
+main = (env: Env) Res<i32, AllocError> {
+    item ::= Optional();
+    run();
+    Ok(0)
+}
+
+//! out: 22 5

@@ -1,0 +1,28 @@
+// A value wrapper must not hide allocator-backed storage from the actor
+// transfer check.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ Actor, Ref, ActorError, Context } = std.actor
+
+VecBox = { bytes: Vec<u8> }
+Envelope = { box: VecBox }
+
+Worker = {}
+
+Worker.impl(Actor, {
+    process = (self :: @Self, ctx: Context, payload: Envelope) {
+        ctx.env.out.println("received").ignore()
+    }
+})
+
+forward = (worker: Ref<Worker>, payload: Envelope) Res<ActorError> {
+    worker.process(payload).try();
+}
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }
+
+//! error: 22:20
+//! hint: actor message payload is not transferable: owned allocator-backed graphs need receiver-arena transfer `Envelope`

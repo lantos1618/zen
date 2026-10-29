@@ -1,0 +1,13 @@
+{ depth, label } = top.top
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, IoError> {
+    println("{}", depth());
+    println(label());
+    Ok(0);
+}
+
+//! out: 1
+//! out: leaf

@@ -1,0 +1,49 @@
+// Character-literal patterns compare scalar values and fall through to `_`
+// on near misses. Escaped newline, tab, quote, and backslash cases also pin
+// decoded string length by printing each input byte beside its classification.
+
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+classify = (b: u8) str {
+    b.match({
+        'a'  => "letter-a",
+        'z'  => "letter-z",
+        '0'  => "digit-zero",
+        '\n' => "newline",
+        '\t' => "tab",
+        '\\' => "backslash",
+        '\'' => "quote",
+        '"'  => "double-quote",
+        ' '  => "space",
+        _    => "other",
+    })
+}
+
+show = (s: str) {
+    Range(0, s.len).loop((h, i) {
+        println("{} {}", s[i], classify(s[i]));
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    show("az0");
+    show("\n\t\\'\" ");
+    show("b\r1");
+    Ok(0);
+}
+
+//! out: 97 letter-a
+//! out: 122 letter-z
+//! out: 48 digit-zero
+//! out: 10 newline
+//! out: 9 tab
+//! out: 92 backslash
+//! out: 39 quote
+//! out: 34 double-quote
+//! out: 32 space
+//! out: 98 other
+//! out: 13 other
+//! out: 49 other

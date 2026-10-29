@@ -1,0 +1,21 @@
+// A nominal type parameter's bound applies at construction, not only to
+// generic function calls.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Boxy = { width: i32 }
+Dot = {}
+
+Box<T: Boxy> = { value: T }
+
+main = (env: Env) Res<i32, AllocError> {
+    box = Box<Dot>(value: Dot());
+    println("{}", box);
+    Ok(0);
+}
+
+//! error: 15:11
+//! hint: bound not satisfied

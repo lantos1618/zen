@@ -1,0 +1,13 @@
+// Unary minus has the same numeric domain as ordinary arithmetic. It cannot
+// hand a string through to C's unary operator.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+negate = (text: str) str { -text }
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }
+
+//! error: 8:28
+//! hint: operator is not defined for these operands: arithmetic and ordering require numbers; remainder and wrapping require integers — `str`

@@ -1,0 +1,15 @@
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+
+// the struct body is never closed. the diagnostic points at the `{`
+// that opened it -- pointing at EOF names no useful location.
+Point = {
+    x: i32,
+    y: i32,
+
+main = (env: Env) Res<i32, ArgError> {
+    Ok(0);
+}
+
+//! error: 6:9
+//! hint: unclosed `{`

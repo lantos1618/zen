@@ -1,0 +1,25 @@
+// Locals and parameters shadow a same-named module constant. Leaving the
+// nested block restores the constant; calling twice must use its parameter.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+shadowed: i64 = 1111
+
+twice = (shadowed: i64) i64 { shadowed * 2 }
+
+main = (env: Env) Res<i32, AllocError> {
+    {
+        shadowed :: i64 = 7;
+        println("local {}", shadowed);
+    }
+    println("param {}", twice(40));
+    println("after {}", shadowed);
+    Ok(0);
+}
+
+//! out: local 7
+//! out: param 80
+//! out: after 1111

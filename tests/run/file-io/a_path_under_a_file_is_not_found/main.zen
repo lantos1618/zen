@@ -1,0 +1,29 @@
+// A path whose parent is a regular file (ENOTDIR) names nothing, the same
+// as a missing path (ENOENT); both C backends must agree.
+
+{ Env, FsError } = std.env
+{ Res, Ok } = std.core
+{ println } = std.io
+
+name = (e: FsError) str {
+    e.match({
+        NotFound    => "not found",
+        Denied      => "denied",
+        IsDir       => "dir",
+        Exists      => "already locked",
+        Failed      => "failed",
+        OutOfMemory => "oom",
+    })
+}
+
+main = (env: Env) Res<i32, FsError> {
+    alloc ::= env.mem.alloc();
+    env.fs.write("plain.txt", "x").try();
+    env.fs.read(alloc, "plain.txt/inner").match({
+        Ok(text) => println("read {} bytes", text.len()),
+        Err(e)   => println("read: {}", name(e)),
+    });
+    Ok(0);
+}
+
+//! out: read: not found

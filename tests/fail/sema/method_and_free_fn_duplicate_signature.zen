@@ -1,0 +1,20 @@
+// A method and a free UFCS function on the same receiver participate in one
+// overload set. Identical parameter types make the free declaration
+// unreachable through either spelling, so the pair is rejected at declaration.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+W = {
+    v: i32,
+    scale = (self: @Self, k: i32) i32 { self.v + k }
+}
+
+scale = (w: W, k: i32) i32 { w.v * k }
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }
+
+//! error: 11:5
+//! error: 14:1
+//! hint: duplicate signature

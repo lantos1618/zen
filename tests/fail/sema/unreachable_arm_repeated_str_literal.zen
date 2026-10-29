@@ -1,0 +1,23 @@
+// A string literal named twice: the second arm never runs.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+greet = (s: str) i32 {
+    s.match({
+        "hello" => 1,
+        "bye"   => 2,
+        "hello" => 3,
+        _       => 0,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", greet("bye"));
+    Ok(0);
+}
+
+//! error: 12:9
+//! hint: unreachable match arm

@@ -1,0 +1,17 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// Every link on the path must permit the write: `inner` is a `:` field.
+Counter = { n :: i32 }
+Pair = { inner: Counter }
+bump = (counter :: Counter) { counter.n = counter.n + 1; }
+main = (env: Env) Res<AllocError> {
+    pair ::= Pair(inner: Counter(n: 1));
+    bump(pair.inner);
+    println("{}", pair.inner.n);
+}
+
+//! error: 12:10
+//! hint: an immutable place cannot be lent to a `::` parameter or field

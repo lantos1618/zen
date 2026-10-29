@@ -1,0 +1,12 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+main = (env: Env) Res<i32, AllocError> {
+    arena ::= env.mem.alloc();
+    (arena.drop)();
+    Ok(0)
+}
+
+//! error: 7:6
+//! hint: explicit destruction requires an owned value

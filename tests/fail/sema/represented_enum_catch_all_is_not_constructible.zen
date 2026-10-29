@@ -1,0 +1,11 @@
+{ Env } = std.env
+
+Code = { | First = 1 | Unknown: u8 }
+
+main = (env: Env) i32 {
+    value = Code.Unknown(7);
+    0
+}
+
+//! error: 6:25
+//! hint: catch-all is constructed only by `from_discriminant`

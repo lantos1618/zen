@@ -1,0 +1,8 @@
+{ Env } = std.env
+
+Code = { | First = 1 | Unknown: str }
+
+main = (env: Env) i32 { 0 }
+
+//! error: 3:1
+//! hint: a represented enum's final payload catch-all must use a fixed-width integer type

@@ -1,0 +1,26 @@
+{ Res, Ok, Err, Error } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
+
+// The other half of try_unconstrained_ok_carries_nothing: an operand
+// that raises a REAL error set may not propagate into a `Res<T>` that
+// declares no error. Allowing an open `_` through must not widen into
+// allowing a named set through -- there is no From, and this is the
+// test that says the relaxation did not become a hole.
+Boom = { | Bad }
+Boom.impl(Error, {})
+
+raises = (n: usize) Res<usize, Boom> { Err(Boom.Bad) }
+
+pick = (n: usize) Res<usize> {
+    v = raises(n).try();
+    Ok(v);
+}
+
+main = (env: Env) Res<i32, ArgError> {
+    pick(3).match({ Ok(v) => println("{}", v), None => println("none") });
+    Ok(0);
+}
+
+//! error: 16:19
+//! hint: cannot propagate into

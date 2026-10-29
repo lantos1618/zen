@@ -1,0 +1,454 @@
+{ println } = std.io
+
+// Every named bit operation of std.core.num and every bit operator, on
+// every unsigned width (the rotations exist for u32 and u64), at counts 0,
+// 1, width - 1, width, width + 1, 2 * width, 2 * width + 3, 2^32 + 1 and
+// usize.MAX. The operands have the high bit set so a sign-extending or
+// promoting backend shows up, and each name prints next to its own result
+// so a backend that lowers one operation as another (bit_or as a right
+// shift, say) fails on the line that names it. The asm and JS backends
+// must print exactly what the C backend prints.
+row_u8 = (a: u8, b: u8, n: usize) {
+    println("u8 n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).shift_left(n).bit_xor(~b));
+}
+
+row_u16 = (a: u16, b: u16, n: usize) {
+    println("u16 n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).shift_left(n).bit_xor(~b));
+}
+
+row_u32 = (a: u32, b: u32, n: usize) {
+    println("u32 n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println(
+        "  rotate_left {} rotate_right {}",
+        a.rotate_left(n),
+        a.rotate_right(n)
+    );
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).rotate_left(n).bit_xor(~b));
+}
+
+row_u64 = (a: u64, b: u64, n: usize) {
+    println("u64 n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println(
+        "  rotate_left {} rotate_right {}",
+        a.rotate_left(n),
+        a.rotate_right(n)
+    );
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).rotate_left(n).bit_xor(~b));
+}
+
+row_usize = (a: usize, b: usize, n: usize) {
+    println("usize n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).shift_left(n).bit_xor(~b));
+}
+
+main = () {
+    a_u8: u8 = 0xB5;
+    b_u8: u8 = 0x3C;
+    row_u8(a_u8, b_u8, 0);
+    row_u8(a_u8, b_u8, 1);
+    row_u8(a_u8, b_u8, 7);
+    row_u8(a_u8, b_u8, 8);
+    row_u8(a_u8, b_u8, 9);
+    row_u8(a_u8, b_u8, 16);
+    row_u8(a_u8, b_u8, 19);
+    row_u8(a_u8, b_u8, 4294967297);
+    row_u8(a_u8, b_u8, usize.MAX);
+    a_u16: u16 = 0xB5A3;
+    b_u16: u16 = 0x3CC3;
+    row_u16(a_u16, b_u16, 0);
+    row_u16(a_u16, b_u16, 1);
+    row_u16(a_u16, b_u16, 15);
+    row_u16(a_u16, b_u16, 16);
+    row_u16(a_u16, b_u16, 17);
+    row_u16(a_u16, b_u16, 32);
+    row_u16(a_u16, b_u16, 35);
+    row_u16(a_u16, b_u16, 4294967297);
+    row_u16(a_u16, b_u16, usize.MAX);
+    a_u32: u32 = 0xB5A3C381;
+    b_u32: u32 = 0x3CC3F00F;
+    row_u32(a_u32, b_u32, 0);
+    row_u32(a_u32, b_u32, 1);
+    row_u32(a_u32, b_u32, 31);
+    row_u32(a_u32, b_u32, 32);
+    row_u32(a_u32, b_u32, 33);
+    row_u32(a_u32, b_u32, 64);
+    row_u32(a_u32, b_u32, 67);
+    row_u32(a_u32, b_u32, 4294967297);
+    row_u32(a_u32, b_u32, usize.MAX);
+    a_u64: u64 = 0xB5A3C3811F2E4D69;
+    b_u64: u64 = 0x3CC3F00F0FF0C33C;
+    row_u64(a_u64, b_u64, 0);
+    row_u64(a_u64, b_u64, 1);
+    row_u64(a_u64, b_u64, 63);
+    row_u64(a_u64, b_u64, 64);
+    row_u64(a_u64, b_u64, 65);
+    row_u64(a_u64, b_u64, 128);
+    row_u64(a_u64, b_u64, 131);
+    row_u64(a_u64, b_u64, 4294967297);
+    row_u64(a_u64, b_u64, usize.MAX);
+    a_usize: usize = 0xB5A3C3811F2E4D69;
+    b_usize: usize = 0x3CC3F00F0FF0C33C;
+    row_usize(a_usize, b_usize, 0);
+    row_usize(a_usize, b_usize, 1);
+    row_usize(a_usize, b_usize, 63);
+    row_usize(a_usize, b_usize, 64);
+    row_usize(a_usize, b_usize, 65);
+    row_usize(a_usize, b_usize, 128);
+    row_usize(a_usize, b_usize, 131);
+    row_usize(a_usize, b_usize, 4294967297);
+    row_usize(a_usize, b_usize, usize.MAX);
+
+    // An operator's shift count keeps its own unsigned type.
+    k8: u8   = 9;
+    k16: u16 = 17;
+    k32: u32 = 33;
+    k64: u64 = 65;
+    w: u32   = 0x80000001;
+    println("counts {} {} {} {}", w << k8, w >> k16, w << k32, w >> k64);
+    // Literal counts are usize.
+    println(
+        "literals {} {} {} {}",
+        w.shift_left(3),
+        w.rotate_left(1),
+        w.rotate_right(31),
+        w << 4
+    );
+}
+
+//! out: u8 n=0
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 181 shift_right 181
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 181 >> 181
+//! out:   chain 126
+//! out: u8 n=1
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 106 shift_right 90
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 106 >> 90
+//! out:   chain 185
+//! out: u8 n=7
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 128 shift_right 1
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 128 >> 1
+//! out:   chain 67
+//! out: u8 n=8
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 0 shift_right 0
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 0 >> 0
+//! out:   chain 195
+//! out: u8 n=9
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 0 shift_right 0
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 0 >> 0
+//! out:   chain 195
+//! out: u8 n=16
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 0 shift_right 0
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 0 >> 0
+//! out:   chain 195
+//! out: u8 n=19
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 0 shift_right 0
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 0 >> 0
+//! out:   chain 195
+//! out: u8 n=4294967297
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 0 shift_right 0
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 0 >> 0
+//! out:   chain 195
+//! out: u8 n=18446744073709551615
+//! out:   bit_and 52 bit_or 189 bit_xor 137
+//! out:   shift_left 0 shift_right 0
+//! out:   & 52 | 189 ^ 137 ~ 74 ~b 195
+//! out:   << 0 >> 0
+//! out:   chain 195
+//! out: u16 n=0
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 46499 shift_right 46499
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 46499 >> 46499
+//! out:   chain 32479
+//! out: u16 n=1
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 27462 shift_right 23249
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 27462 >> 23249
+//! out:   chain 47354
+//! out: u16 n=15
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 32768 shift_right 1
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 32768 >> 1
+//! out:   chain 17212
+//! out: u16 n=16
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 0 shift_right 0
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 0 >> 0
+//! out:   chain 49980
+//! out: u16 n=17
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 0 shift_right 0
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 0 >> 0
+//! out:   chain 49980
+//! out: u16 n=32
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 0 shift_right 0
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 0 >> 0
+//! out:   chain 49980
+//! out: u16 n=35
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 0 shift_right 0
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 0 >> 0
+//! out:   chain 49980
+//! out: u16 n=4294967297
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 0 shift_right 0
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 0 >> 0
+//! out:   chain 49980
+//! out: u16 n=18446744073709551615
+//! out:   bit_and 13443 bit_or 48611 bit_xor 35168
+//! out:   shift_left 0 shift_right 0
+//! out:   & 13443 | 48611 ^ 35168 ~ 19036 ~b 49980
+//! out:   << 0 >> 0
+//! out:   chain 49980
+//! out: u32 n=0
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 3047408513 shift_right 3047408513
+//! out:   rotate_left 3047408513 rotate_right 3047408513
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 3047408513 >> 3047408513
+//! out:   chain 2128608383
+//! out: u32 n=1
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 1799849730 shift_right 1523704256
+//! out:   rotate_left 1799849731 rotate_right 3671187904
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 1799849730 >> 1523704256
+//! out:   chain 3103516911
+//! out: u32 n=31
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 2147483648 shift_right 1
+//! out:   rotate_left 3671187904 rotate_right 1799849731
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 2147483648 >> 1
+//! out:   chain 500037175
+//! out: u32 n=32
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 3047408513 rotate_right 3047408513
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 0 >> 0
+//! out:   chain 2128608383
+//! out: u32 n=33
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 1799849731 rotate_right 3671187904
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 0 >> 0
+//! out:   chain 3103516911
+//! out: u32 n=64
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 3047408513 rotate_right 3047408513
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 0 >> 0
+//! out:   chain 2128608383
+//! out: u32 n=67
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 2904431629 rotate_right 917796976
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 0 >> 0
+//! out:   chain 740529037
+//! out: u32 n=4294967297
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 1799849731 rotate_right 3671187904
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 0 >> 0
+//! out:   chain 3103516911
+//! out: u32 n=18446744073709551615
+//! out:   bit_and 881049601 bit_or 3185832847 bit_xor 2304783246
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 3671187904 rotate_right 1799849731
+//! out:   & 881049601 | 3185832847 ^ 2304783246 ~ 1247558782 ~b 3275493360
+//! out:   << 0 >> 0
+//! out:   chain 500037175
+//! out: u64 n=0
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 13088519901410119017 shift_right 13088519901410119017
+//! out:   rotate_left 13088519901410119017 rotate_right 13088519901410119017
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 13088519901410119017 >> 13088519901410119017
+//! out:   chain 9142303395002053566
+//! out: u64 n=1
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 7730295729110686418 shift_right 6544259950705059508
+//! out:   rotate_left 7730295729110686419 rotate_right 15767631987559835316
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 7730295729110686418 >> 6544259950705059508
+//! out:   chain 13329503634521760312
+//! out: u64 n=63
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 9223372036854775808 shift_right 1
+//! out:   rotate_left 15767631987559835316 rotate_right 7730295729110686419
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 9223372036854775808 >> 1
+//! out:   chain 2147643315555687293
+//! out: u64 n=64
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 13088519901410119017 rotate_right 13088519901410119017
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 9142303395002053566
+//! out: u64 n=65
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 7730295729110686419 rotate_right 15767631987559835316
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 13329503634521760312
+//! out: u64 n=128
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 13088519901410119017 rotate_right 13088519901410119017
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 9142303395002053566
+//! out: u64 n=131
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 12474438842733194061 rotate_right 3941907996889958829
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 3180547974446532398
+//! out: u64 n=4294967297
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 7730295729110686419 rotate_right 15767631987559835316
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 13329503634521760312
+//! out: u64 n=18446744073709551615
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   rotate_left 15767631987559835316 rotate_right 7730295729110686419
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 2147643315555687293
+//! out: usize n=0
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 13088519901410119017 shift_right 13088519901410119017
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 13088519901410119017 >> 13088519901410119017
+//! out:   chain 9142303395002053566
+//! out: usize n=1
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 7730295729110686418 shift_right 6544259950705059508
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 7730295729110686418 >> 6544259950705059508
+//! out:   chain 13329503634521760313
+//! out: usize n=63
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 9223372036854775808 shift_right 1
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 9223372036854775808 >> 1
+//! out:   chain 4844764826637909187
+//! out: usize n=64
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 14068136863492684995
+//! out: usize n=65
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 14068136863492684995
+//! out: usize n=128
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 14068136863492684995
+//! out: usize n=131
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 14068136863492684995
+//! out: usize n=4294967297
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 14068136863492684995
+//! out: usize n=18446744073709551615
+//! out:   bit_and 3784079222702620968 bit_or 13683047888924364669 bit_xor 9898968666221743701
+//! out:   shift_left 0 shift_right 0
+//! out:   & 3784079222702620968 | 13683047888924364669 ^ 9898968666221743701 ~ 5358224172299432598 ~b 14068136863492684995
+//! out:   << 0 >> 0
+//! out:   chain 14068136863492684995
+//! out: counts 512 16384 0 0
+//! out: literals 8 3 3 16

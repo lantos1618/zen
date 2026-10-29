@@ -61,6 +61,19 @@ A function declared inside a body is a **local closure**: inlined where it is ca
 
 Construction is by name: `Point(x: 1, y: 2)`. Omitted fields take their default. Omitted `Res<T>` fields are `None`.
 
+**A closed set of named values is an enum, never a group of constants.** Because `.match` is exhaustive, adding a variant makes the compiler name every place that must handle it; a new constant is silently missed.
+
+```zen
+// no
+TRAP_OVERFLOW: u32 = 1
+TRAP_DIV_ZERO: u32 = 2
+// yes
+Trap = { Overflow | DivisionByZero | Bounds }
+code = (t: Trap) u32 { t.match({ Overflow => 1, DivisionByZero => 2, Bounds => 3 }) }
+```
+
+A constant on a type (`Limits.WIDTH`) is for one quantity, not for a member of a set.
+
 ## 5. Control flow: `.match` is the only conditional — *fit + lower, T0*
 
 ```zen
@@ -71,6 +84,8 @@ b.match({ true => a, false => c })    // arms
 b.match({ a }, { c })                 // positional (T, F) bodies
 b.match({ a })                        // F omitted == b.then({ a })
 b.then({ a })                         // one-sided: Ok(a) / None
+n.match({ 0 => z, 1..10 => s, _ => b })   // ranges are half-open, like Range
+r.match({ Ok(Circle(x)) => x, Ok(_) => 0.0, Err(e) => .. })   // nested patterns
 // `() { a }` closures are accepted anywhere `{ a }` is
 ```
 
@@ -216,6 +231,6 @@ SIMD (`u8x16`…), wide multiply / carry ops, explicit truncation, volatile acce
 |---|---|---|
 | **T0** | §2–§12 | lex/parse, collect, fit (+ qualifiers), resolve, cull, lower (App. C), Ir §1 + validate, flow, C route + one native target |
 | **T1** | §13–§15 | `c.bind`/`c.record`/callback, `@meta`, CLI derive |
-| **T2** | §16–§17 | actors and threads runtime, Secret/ct, SIMD, extra targets, JIT |
+| **T2** | §16–§17 | actors and threads runtime, Secret/ct, SIMD, extra targets, JIT, type-returning comptime functions |
 
-Acceptance: `tests/corpus` (1141) and `tests/must-fail` (617), scored with `v07/score/score.py` and `v07/flow/mustfail.py`.
+Acceptance: `tests/run` and `tests/fail`, scored by `tests/run.py` (COMPILER.md E.2).

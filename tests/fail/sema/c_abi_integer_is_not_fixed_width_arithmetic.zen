@@ -1,0 +1,11 @@
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+main = (env: Env) Res<i32, AllocError> {
+    n: c_int = 1;
+    Ok(0)
+}
+
+//! error: 6:16
+//! hint: type mismatch: expected c_int, found int

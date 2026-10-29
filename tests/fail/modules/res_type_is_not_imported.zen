@@ -1,0 +1,12 @@
+// `Res` is recognised by its declaration in std.core, and a module that
+// writes it still imports it.
+//
+// position: the `Res` of the return type.
+{ Ok } = std.core
+
+one = () Res<i32> { Ok(1) }
+
+main = () i32 { 0 }
+
+//! error: 7:10
+//! hint: `Res` is not imported; add `{ Res } = std.core`

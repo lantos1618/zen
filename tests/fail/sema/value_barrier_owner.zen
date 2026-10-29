@@ -1,0 +1,5 @@
+value_barrier* = (value: u64) u64
+main = () {}
+
+//! error: 1:1
+//! hint: bodyless machine primitive requires

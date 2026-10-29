@@ -1,0 +1,8 @@
+{ splat_u32x4 } = std.simd
+main = () {
+    a    = splat_u32x4(1);
+    same = a == a;
+}
+
+//! error: 4:12
+//! hint: `==` needs an `Eq`

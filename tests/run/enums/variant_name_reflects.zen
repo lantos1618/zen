@@ -1,0 +1,35 @@
+// Enum variant names are compile-time-known borrowed text. Lowercase wire
+// variants demonstrate that the declaration itself can own protocol spelling.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Role = { system | user | assistant | tool }
+Shape = { Circle: i32 | Rect }
+Box<T> = { Full: T | Empty }
+
+made_role = () Role {
+    println("made once");
+    assistant
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    role: Role     = user;
+    shape          = Shape.Circle(7);
+    some: Box<i32> = Box.Full(4);
+    none: Box<i32> = Box.Empty;
+
+    println("{} {}", system.variant_name(), role.variant_name());
+    println("{} {}", shape.variant_name(), Shape.Rect.variant_name());
+    println("{} {}", some.variant_name(), none.variant_name());
+    println("{}", made_role().variant_name());
+    Ok(0)
+}
+
+//! out: system user
+//! out: Circle Rect
+//! out: Full Empty
+//! out: made once
+//! out: assistant

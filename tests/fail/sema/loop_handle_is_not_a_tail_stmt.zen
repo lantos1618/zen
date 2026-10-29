@@ -1,0 +1,20 @@
+// THE `;`-TERMINATED TAIL IS THE SAME VALUE, so it meets the same
+// refusal as `loop_handle_is_not_a_return`: a block falls out through
+// its last statement when nothing is written as the tail, and gen_c
+// lowers both spellings to the same `(void)(zu_l1h);`. One mistake
+// stays one diagnostic either way.
+//
+// position: `h`, the statement the block falls out through.
+
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<i32> {
+    Range(0, 1).loop((h, x) {
+        h;
+    });
+    Ok(0);
+}
+
+//! error: loop_handle_is_not_a_tail_stmt.zen:14:9
+//! hint: a loop handle is not a value

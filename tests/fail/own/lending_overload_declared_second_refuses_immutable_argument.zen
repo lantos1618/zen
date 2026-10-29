@@ -1,0 +1,23 @@
+{ println } = std.io
+
+// Members overload by arity, so the `::` argument rule reads the overload
+// the call selected: `put(a, b)` writes `b`, which is a `:` binding.
+B = { n :: i32 }
+S = {
+    x : i32,
+    put = (self: @Self, a: i32) i32 { self.x + a },
+    put = (self: @Self, a: i32, b :: B) i32 {
+        b.n = a;
+        a
+    },
+}
+
+main = () {
+    s = S(x: 1);
+    b = B(n: 0);
+    s.put(7, b);
+    println("{}", b.n);
+}
+
+//! error: 18:14
+//! hint: an immutable place cannot be lent to a `::` parameter or field

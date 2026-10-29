@@ -1,0 +1,37 @@
+// An impl-supplied computed field must fit the bound's declared field type.
+
+
+
+
+
+
+
+
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Boxy = {
+    width: i32,
+    height: i32,
+}
+
+Square = {
+    side :: i32,
+}
+
+Square.impl(Boxy, {
+    width: self.side.match({ 0 => 0, _ => true }),
+    height: self.side,
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    s = Square(side: 2);
+    println("{}", s.width);
+    Ok(0);
+}
+
+//! error: 26:43
+//! hint: type mismatch: expected i32, found bool

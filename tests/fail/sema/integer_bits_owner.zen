@@ -1,0 +1,5 @@
+bit_xor = (self: u64, other: u64) u64
+main = () {}
+
+//! error: 1:1
+//! hint: bodyless numeric conversion requires a supported std.core.num signature

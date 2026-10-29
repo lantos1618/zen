@@ -1,0 +1,9 @@
+{ println } = std.io
+
+take = <T>(value: T) T { value }
+main = () {
+    println("{}", (true.match({ true => 300, false => 1 })).take<u8>());
+}
+
+//! error: parentheses_preserve_generic_match_range_checks.zen:5:41
+//! hint: does not fit u8

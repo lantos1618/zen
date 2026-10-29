@@ -1,0 +1,14 @@
+{ println } = std.io
+
+// A held number stored in a field is checked against the field's type.
+P = { f: u16 }
+
+main = () i32 {
+    k = 70000;
+    p = P(f: k);
+    println("{}", p.f);
+    0
+}
+
+//! error: 8:14
+//! hint: 70000 does not fit in `u16`

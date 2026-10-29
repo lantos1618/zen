@@ -1,0 +1,17 @@
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// a negative literal is not representable in u8: unsigned types have no
+// negative side.
+Error = AllocError | IoError
+
+main = (env: Env) Res<i32, Error> {
+    b: u8 = -1;
+    println("{}", b);
+    Ok(0);
+}
+
+//! error: 11:13
+//! hint: out of range: a literal's type comes from its context

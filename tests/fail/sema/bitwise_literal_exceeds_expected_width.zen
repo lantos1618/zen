@@ -1,0 +1,6 @@
+main = () {
+    mask: u8 = 256 | 1;
+}
+
+//! error: 2:16
+//! hint: literal 256 does not fit u8

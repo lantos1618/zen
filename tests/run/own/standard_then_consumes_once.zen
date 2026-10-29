@@ -1,0 +1,14 @@
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })
+main = (env: Env) Res<i32, IoError> {
+    f = Buf(id: 1);
+    true.then(() { g = consume f; println("{}", g.id); });
+    Ok(0)
+}
+
+//! out: 1
+//! out: drop 1

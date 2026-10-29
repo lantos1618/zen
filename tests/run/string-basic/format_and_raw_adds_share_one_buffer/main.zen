@@ -1,0 +1,43 @@
+// Formatted text, raw strings, and raw bytes append to one buffer in order.
+// Formatting after raw writes must preserve the prefix and count every byte.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    sb    ::= alloc.String().try();
+
+    println("empty {} {}", sb.len(), sb.is_empty());
+
+    // the format door with an integer hole
+    sb.fmt("one={} ", 1).try();
+    println("after-add {} [{}]", sb.len(), sb.view());
+
+    // the same format door with str holes
+    sb.fmt("two={} three={}", "2", "3").try();
+    println("after-fmt {} [{}]", sb.len(), sb.view());
+
+    // the two raw add overloads: bytes verbatim, no format meaning
+    sb.add("+4").try();
+    sb.add('!').try();
+    println("after-raw {} [{}]", sb.len(), sb.view());
+
+    // an empty append is legal and changes nothing but proves the
+    // loop-over-zero-bytes path runs
+    sb.add("").try();
+    println("still {} {}", sb.len(), sb.is_empty());
+
+    sb.fmt(" {} is {}", "ada", 36).try();
+    println("after-mixed {} [{}]", sb.len(), sb.view());
+    Ok(0);
+}
+
+//! out: empty 0 true
+//! out: after-add 6 [one=1 ]
+//! out: after-fmt 19 [one=1 two=2 three=3]
+//! out: after-raw 22 [one=1 two=2 three=3+4!]
+//! out: still 22 false
+//! out: after-mixed 32 [one=1 two=2 three=3+4! ada is 36]

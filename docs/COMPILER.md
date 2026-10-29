@@ -1319,7 +1319,19 @@ lower_enum_match(scrutinee, arms, result_type):
     continue_or_terminate(join)
 ~~~
 
-Integer matches use the same `Switch` with the integer as the selector. Ranges and nested patterns lower to a chain of `IntCompare` and `Branch` inside the arm's test; the design keeps patterns to literals, variants, payload bindings and `_`.
+Integer matches use the same `Switch` with the integer as the selector.
+
+**Patterns:** literals, variants, payload bindings, `_`, and where they fit, **ranges** and **nesting**:
+
+~~~text
+n.match({ 0 => "zero", 1..10 => "small", _ => "big" })          // a range is half-open, like Range
+r.match({ Ok(Circle(rad)) => rad, Ok(_) => 0.0, Err(e) => .. })  // nested: test the outer tag, then the inner
+~~~
+
+- **Lowering:** an arm with a range becomes two `IntCompare`s and a `Branch` ahead of the `Switch`'s default. A nested pattern becomes a `Switch` on the outer tag whose arm holds a `Switch` on the inner tag. This is a decision tree, built arm by arm in source order, with no pattern-matrix compiler.
+- **Exhaustiveness, per level:** every variant at each level is covered, or that level has a `_`. Integer ranges are exhaustive only with `_`.
+- **Unreachable arms are an error:** an arm whose pattern is already covered by an earlier arm is refused.
+- *Proposed syntax:* `a..b` in a pattern means `Range(a, b)`. The exact spelling is still open.
 
 ### C.2 Closures and non-local exit
 
@@ -1477,7 +1489,12 @@ The test suite is four things, no registry:
 3. **Differential fuzzing**: random valid IR through the interpreter, C at -O0/-O2 and each native target; failures are shrunk and kept as regression cases.
 4. **Mutation checks**: remove an overflow check, invert a condition, corrupt a frame offset, swap two arguments, widen a store — each must fail some test.
 
-Source-level acceptance is the language corpus (`tests/corpus`, 1141 programs) and the must-fail corpus (`tests/must-fail`, 617 programs).
+Source-level acceptance is `tests/run` (programs) and `tests/fail` (must-fail), run by `tests/run.py` against any compiler.
+
+- **One file per test** (or one directory for a multi-module test). The expectations sit in `//!` lines at the end, so line numbers in the program never shift.
+- **The first comment names the bug the test catches.** A test that catches nothing new is not added.
+- **Must-fail checks the position**, not the wording: `//! error: L:C`. The expected message is kept as `//! hint:` for people.
+- **The baseline** (`tests/baseline-*.txt`) lists the passing tests. A change may add passes, and may not lose one.
 
 ### E.3 Recorded evidence
 
@@ -1572,6 +1589,12 @@ write(i)            uses descriptor   // §5
 ~~~
 
 One descriptor table feeds selection checks, physical checks and writing, so an instruction form is described once. Budget: the whole native backend (both ISAs) ≤ 3,000 lines.
+
+**Compiler source style** (every part, not only the backend):
+
+- **Closed sets are enums:** opcodes, diagnostic codes, targets, trap codes, token kinds. A table is indexed by an enum and matched exhaustively, so adding a variant makes the compiler name every place that must change.
+- **No integer constants for kinds.** A number appears only where the format needs it: an encoding, an exit code, an ABI value.
+- **The pseudocode in this document is the code.** Records here are written as Zen records with the same names. If the code and this document disagree, one of them changes in the same commit.
 
 ## Appendix I. Frontend: passes and budgets
 
@@ -1749,6 +1772,18 @@ entry(argc, argv):  build Env (pages, out, fs, args) -> call zen main -> map its
 trap(code):         print "file:line:col: trap: <what>" -> exit 134
 ~~~
 
-**How a trap knows its location.** Checks the frontend inserts (bounds, `.unwrap`-style, unreachable) use `Explicit(65536 + site)` trap codes. The runtime looks `site` up in a global table `(file, line, col, what)` that lowering emits. Arithmetic traps from templates (§3.3) carry only the code and the function. *Open decision:* accept `trap: overflow in <function>` for those, or have lowering emit an explicit site check per arithmetic operation (exact locations, larger code).
+**How a trap knows its location.** Decided for v1:
+
+- **Checks the frontend inserts** (bounds, `.unwrap`-style, unreachable) use `Explicit(65536 + site)` trap codes. The runtime looks `site` up in a global table `(file, line, col, what)` that lowering emits, so the message is exact: `file:line:col: trap: <what>`.
+- **Arithmetic traps from templates** (§3.3) keep the shared per-function stubs, so §6 stays byte-identical. Their message is `trap: integer overflow in <function>`.
+
+Exact arithmetic locations can come later as an option (one stub per site, two instructions each) without changing the IR.
+
+**Std rules**, so it stays small:
+
+- **One way to do each job.** No aliases, no convenience wrappers, and no second API that differs only in naming.
+- **Memory has one model.** `Alloc` is the only allocation interface and `Arena` (pages from `env.mem`) is the only T0 implementation. There is no global heap, no reference counting and no GC. Collections take an `Alloc` and free with their arena.
+- **Closed sets are enums.** Error kinds, modes and flags are enum variants, never groups of integer constants (ZEN_LANGUAGE.md §4).
+- **Each module is under 400 lines.** A module that grows past that splits by job, not by helper.
 
 Budget: std for T0 ≤ 4,000 lines of Zen, runtime ≤ 200 lines of C.

@@ -1,0 +1,7 @@
+// controller/controller.zen
+// Constants read from main as `Controller.NAME`. RETRIES is built from
+// another constant here, so it folds in this module, not the reader's.
+ATTACH_PATH*: str = "/attach"
+LIMIT*: i64 = 42
+BASE: i64 = 3
+RETRIES*: i64 = BASE * 2

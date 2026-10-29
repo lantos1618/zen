@@ -1,0 +1,31 @@
+{ Res, Ok, None } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+State = {
+    number :: Res<i32>,
+    text   :: Res<str>,
+
+    clear = (self :: @Self) {
+        self.number = None;
+        self.text   = None;
+    }
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    state ::= State(number: Ok(7), text: Ok("kept"));
+    state.clear();
+    state.number.match({
+        None  => println("number none"),
+        Ok(_) => println("number present"),
+    });
+    state.text.match({
+        None  => println("text none"),
+        Ok(_) => println("text present"),
+    });
+    Ok(0)
+}
+
+//! out: number none
+//! out: text none

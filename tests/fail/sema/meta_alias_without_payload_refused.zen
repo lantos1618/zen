@@ -1,0 +1,29 @@
+// @meta(...).name rejects an alias whose target has no declaration payload.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+Count = i64
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", @meta(x: Count).name);
+    Ok(0);
+}
+
+//! error: 24:19
+//! hint: `@meta` is not implemented yet

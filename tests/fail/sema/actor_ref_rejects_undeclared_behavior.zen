@@ -1,0 +1,17 @@
+{ Actor, Ref, Context } = std.actor
+{ Env } = std.env
+
+Worker = {}
+
+Worker.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, message: i32) ()
+})
+
+bad = (receiver: Ref<Worker>) {
+    receiver.missing(1);
+}
+
+main = (env: Env) i32 { 0 }
+
+//! error: 11:14
+//! hint: `missing` on `Ref<Worker>`

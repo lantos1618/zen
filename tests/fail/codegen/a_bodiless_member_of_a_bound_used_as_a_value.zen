@@ -1,0 +1,17 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Loud* = {
+    shout* = (self: @Self, n: u64) ()
+}
+
+main = (env: Env) Res<i32, IoError> {
+    l = Loud();
+    l.shout(3);
+    println("called");
+    Ok(0);
+}
+
+//! error: 11:5
+//! hint: a bodiless member of a bound used as a value

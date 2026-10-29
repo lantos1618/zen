@@ -1,0 +1,8 @@
+{ bit_xor, rotate_right } = std.core.num
+main = () {
+    small: i16 = 1;
+    value      = bit_xor(1, small);
+}
+
+//! error: 4:18
+//! hint: no overload matches

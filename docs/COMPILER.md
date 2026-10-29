@@ -6,7 +6,7 @@ This is the v0.7 reference (in git history, commit 4955d5932) trimmed to a core 
 
 - **Removed from the core:** atomics (`AtomicLoad/Store/Rmw`, `CompareExchange`, `Fence`, `MemoryOrder`), `NativeAddress` and `IntegerToPointer`, the browser/Wasm route, and the coverage registry. Each can return later as a separate, gated feature.
 - **Routes:** the C route and MacArm64 / LinuxArm64. LinuxX64 (Appendix A.2) is the optional second ISA.
-- **Added:** H. backend organisation (templates as data, one descriptor table), I. frontend passes and budgets, J. security, K. bootstrap.
+- **Added:** C.1–C.4 lowering for `.match`, closures and non-local exit, trait values, cleanups (replacing C-style if/while); H. backend organisation (templates as data, one descriptor table); I. frontend stages, generics, flow, comptime, diagnostics; J. security and limits; K. bootstrap from the old compiler; L. runtime and T0 std.
 
 Everything kept is word for word v0.7 unless noted.
 
@@ -30,13 +30,14 @@ Everything kept is word for word v0.7 unless noted.
 - I. Frontend: passes and budgets
 - J. Security
 - K. Bootstrap
+- L. Runtime and the T0 standard library
 
 ## 0. The pipeline
 
 ~~~text
 source.lex()            -> Tokens       frontend
       .parse()          -> Ast          frontend
-      .sema()           -> Ir           checked and frozen
+      .sema()           -> Ir           checked and frozen; stages in Appendix I.1
 
 Ir.lower(target)        -> Mir          selection and template verification
 Mir.alloc()             -> Asm          homes, frames, physical verification
@@ -50,7 +51,7 @@ Rules of the chain:
 
 - lower and alloc return new stage types; only their checked constructors can create them. write writes to a sink and returns success or an output error. No stage mutates its predecessor.
 - Transformations return output or diagnostics. The writer returns output errors. No operation silently repairs its input.
-- `IrBuilder.finish()` is the other way to get an `Ir`. It runs the same validation as `.sema()`.
+- `IrBuilder.finish()` is the other way to get an `Ir`. It runs the same validation as the frontend's `.lower()`.
 - Other routes leave from Ir: run (reference interpreter), write_c (C), and dump. Their direction is preserved in the appendices.
 
 The whole design is four rules:
@@ -1202,7 +1203,7 @@ sema(project):
     resolve_named_imports_and_lexical_names()
     resolve_types_and_signatures()
     for function:
-        body = check_source_types_calls_returns_and_initialization(function)
+        body = check_source_types_calls_and_returns(function)   // init, moves, must-use: flow (I.3)
         decide_address_taken_storage(body)
         lower_to_scalar_ir(body)
     return IrBuilder.finish()  // independently validates all emitted IR
@@ -1267,37 +1268,132 @@ lower_call(callee_expression, argument_expressions):
 
 For left-to-right source evaluation, capture a binary expression's left value before evaluating the right. Source calls must similarly retain x in f(x, expression_that_changes_x()). NoValue and Terminated are frontend outcomes, not scalar values.
 
-~~~text
-lower_if(condition, yes_body, no_body):
-    value = lower_and_snapshot(condition)
-    if path_terminated: return
-    yes = new_block(); no = new_block(); join = reserve_block_id()
-    end_block(Branch(value, yes, no))
-    lower_at(yes, yes_body)
-    if path_open: end_block(Jump(join))
-    lower_at(no, no_body)
-    if path_open: end_block(Jump(join))
-    if join_has_predecessors: create_and_continue_at(join)
-    else: mark_path_terminated()
-
-lower_while(condition, body):
-    header = new_block()
-    end_block(Jump(header))
-    continue_at(header)
-    value = lower_and_snapshot(condition)
-    if path_terminated: return
-    body_block = new_block(); done = new_block()
-    end_block(Branch(value, body_block, done))
-    push_loop_targets(continue=header, break=done)
-    lower_at(body_block, body)
-    if path_open: end_block(Jump(header))
-    pop_loop_targets()
-    continue_at(done)
-~~~
-
 An addressed local is loaded on every read; pointer writes and calls can change it. A spill is never addressable source storage. Returning a local address does not extend its lifetime. Heap allocation is an explicit runtime/import operation.
 
 Scalar layout is little-endian: Bool 1 byte, integer width/8, F32 4, F64 8, pointers pointer_bytes(target). Natural alignment equals size. Lay out record fields in declaration order with checked align/add and tail padding; arrays use checked size multiplication. Reject zero-sized addressable objects in this baseline.
+
+### C.1 Branching: every `.match` is a `Branch` or a `Switch`
+
+Zen has no `if` and no `while`. The four bool forms and `.then` lower through one function; enum and integer matches lower through `Switch`.
+
+~~~text
+lower_bool_match(condition, yes_body, no_body, result_type):
+    // .match({ true => a, false => c })   .match({ a }, { c })   .match({ a })   .then({ a })
+    value = lower_and_snapshot(condition)
+    if path_terminated: return
+    result = result_type is unit ? none : new_result(result_type)    // register, or object if aggregate
+    yes = new_block(); no = new_block(); join = reserve_block_id()
+    end_block(Branch(value, yes, no))
+    lower_arm(yes, yes_body, result, join)
+    lower_arm(no,  no_body,  result, join)      // .then: no_body writes None; yes_body writes Ok(a)
+    if join_has_predecessors: create_and_continue_at(join)
+    else: mark_path_terminated()
+    return result
+
+lower_arm(block, body, result, join):
+    continue_at(block)
+    value = lower_body(body)
+    if path_open:
+        if result: store_result(result, value)
+        run_cleanups(scopes_left_by(join))       // C.4
+        end_block(Jump(join))
+~~~
+
+Enum layout is fixed at declaration: `tag: U32` at offset 0, tags numbered in declaration order from 0; the payload starts at `round_up(4, max_payload_align)`; size is rounded up to the largest alignment. An enum whose variants are all unit is just the `U32` tag and lives in a register unless its address is taken.
+
+~~~text
+lower_enum_match(scrutinee, arms, result_type):
+    // exhaustiveness was checked by fit: every variant has an arm, or there is a `_`
+    object = address_of(scrutinee)               // enums with payloads are objects
+    tag = snapshot(Load(U32, Address(object, 0)))
+    result = new_result(result_type); join = reserve_block_id()
+    cases = []
+    for arm in arms where arm.pattern is a variant:
+        block = new_block(); cases.push(SwitchCase(Integer(U32, tag_of(arm.variant)), block))
+    default = wildcard_arm ? new_block() : cases.pop().target      // exhaustive: last arm is default
+    end_block(Switch(tag, cases, default))
+    for arm, block:
+        continue_at(block)
+        bind_payload(arm.pattern, Address(object, payload_offset))   // a view into the scrutinee
+        lower_arm_body(arm, result, join)
+    continue_or_terminate(join)
+~~~
+
+Integer matches use the same `Switch` with the integer as the selector. Ranges and nested patterns lower to a chain of `IntCompare` and `Branch` inside the arm's test; the design keeps patterns to literals, variants, payload bindings and `_`.
+
+### C.2 Closures and non-local exit
+
+A closure literal (or a local function) passed to a function-typed parameter is never a value: the call is **inlined**. The callee is instantiated with the closure substituted for that parameter, and its body is lowered into the caller's frame. Captures are the frame's own bindings, read live. There is no closure record and no allocation.
+
+Every inlined call has three exit targets, and the language's three exits are jumps to them:
+
+~~~text
+inline_call(callee, closure_args, other_args):
+    after_call = reserve_block_id()                  // the inlined callee returns here
+    push_exits(callee_return = after_call)
+    lower callee body with each closure parameter p bound to its literal
+        a call p(args) inside it:
+            after_closure = reserve_block_id()
+            push_exits(closure_return = after_closure)
+            lower closure body with its parameters bound to args
+            pop_exits(); continue_at(after_closure)
+    pop_exits(); continue_at(after_call)
+
+exits, each preceded by run_cleanups(scopes being left):
+    tail value / h.next()   -> Jump(closure_return)              // this invocation of the closure ends
+    h.break(v)              -> store v as the callee's result; Jump(callee_return)
+    .try() on Err / None    -> write Err/None into the function's result; Return
+    callee's own Return(v)  -> store v; Jump(callee_return)
+~~~
+
+`loop`, `find`, `map` and `filter` are ordinary std functions; nothing in the compiler knows their names. `Range` and fixed arrays are walked directly (as DESIGN.md requires) by `walk`, which the std `loop` calls:
+
+~~~text
+lower_walk(seq, body):                          // seq: Range<T> or [T, N]; body: the closure call above
+    i = fresh_register(index_type); Set(i, seq.start)
+    header = new_block(); end_block(Jump(header)); continue_at(header)
+    c = IntCompare(Less, i, seq.end); body_block = new_block(); done = new_block()
+    end_block(Branch(c, body_block, done))
+    continue_at(body_block)
+    v = seq is Range ? i : checked_element(seq, i)     // the bound was just checked; no second test
+    call body(i, v)                               // inlined: closure_return lands on `step`
+    step: Set(i, IntBinary(Add(Wrapping), i, 1)); Jump(header)   // cannot wrap: i < end
+    continue_at(done)
+~~~
+
+Inlining depth is limited (Appendix J). A closure that reaches itself through inlining is a `ResourceLimit`, not an infinite expansion.
+
+### C.3 Trait values: `.as(I)`
+
+Bounded generics (`<T: Rect>`) are monomorphized and need nothing at runtime. A trait **value** is a fat value:
+
+~~~text
+TraitValue = { data: Pointer, table: Pointer }      // 16 bytes, alignment 8
+table(Type, I) = one Global, one FunctionPointer per member of I in declaration order;
+                 a computed field (Circle.impl(Rect, { width: .. })) becomes a getter function
+d.m(args)      = fp = Load(Pointer, table + 8 * index_of(m)); Call(Register(fp), [data] + args)
+~~~
+
+`data` points at the concrete value's storage, so the trait value carries the SCOPED qualifier: fit refuses to return it or store it past that storage's lifetime.
+
+### C.4 Cleanups: `Drop` and `@scope.defer`
+
+Every lexical scope keeps one cleanup list, in the order things were registered: a `Drop` local when it is initialized, a deferred closure when `@scope.defer` runs.
+
+~~~text
+run_cleanups(scopes):                            // innermost scope first
+    for scope in scopes:
+        for c in reverse(scope.cleanups):
+            Defer(closure): lower closure body inline (its captures are still alive)
+            Drop(local):
+                if moved_on_every_path(local): skip                       // known statically
+                else if maybe_moved(local): Branch(drop_flag(local), drop_block, skip_block)
+                else: emit Call(drop_of(type(local)), [Address(local)])
+~~~
+
+- **Cleanups run on every exit edge:** falling out of a block, `h.next`, `h.break`, `.try()` and `Return`. A trap runs none; it aborts.
+- **The deferred code is duplicated per exit.** That's simple and bounded by the number of exits; a shared cleanup block is an optimization this compiler doesn't do.
+- **Drop flags:** a local that is moved on some paths only gets a `Bool` drop flag. It's set when the local is initialized and cleared at `.consume()`. Flow (I.3) knows which locals need one.
 
 ## Appendix D. C route
 
@@ -1400,6 +1496,7 @@ The v07 implementation of this design (branch `v07` of the Zen repository) recor
 
 | Step | Build | Done when |
 | --- | --- | --- |
+| 0 | Bring `tests/corpus`, `tests/must-fail` and the scorer from the old branch; the scorer runs any compiler binary | The old compiler's score is recorded as the baseline |
 | 1 | Records, builder, validation, dump, reference semantics | Invalid IR fails predictably; independent expected results pass |
 | 2 | MacArm64 / LinuxArm64 integer/Bool/memory/control | Both worked examples match §6 byte for byte; LinuxArm64 runs them |
 | 3 | Calls/traps/globals/imports/indirect/Never | C works in both directions; stack args and sentinels pass |
@@ -1508,6 +1605,79 @@ Rules that took the most code in v07 and must stay simple here:
 | lower | 5,000 |
 | flow | 800 |
 
+### I.1 Pipeline as stages
+
+`.sema()` in §0 is these stages. Each returns a new value and never changes its input.
+
+~~~text
+source.lex().parse()     -> Ast          syntax only; limits from Appendix J
+Ast.collect()            -> Decls        every signature by canonical path; imports; layouts
+Decls.check()            -> Checked      resolve + fit + cull; every owned body checked
+Checked.lower()          -> Ir + Origins every reached body; IrBuilder.finish() validates
+Ir.flow(Origins)         -> Ir           init, moves, must-use; errors carry source spans
+~~~
+
+`Origins` is a side table `(FunctionId, InstructionId | exit of BlockId) -> SourceSpan`, kept beside the Ir and never inside it. The backend never sees it. A frontend diagnostic uses it to point at source.
+
+### I.2 Generics: instance by key
+
+Generic functions, generic types and type-returning comptime calls share one identity rule: **an instance is its (definition, arguments) key.**
+
+~~~text
+intern(Box<i32>)          = types[(DefId(Box), [i32])]            // a TypeId, made once
+instance(f, [i32, str])   = functions[(DefId(f), [i32, str])]     // a FunctionId, lowered once
+
+check_generic(f):         // once, with each type variable standing for its bound
+    check f.body treating T as an opaque type that has exactly T's bound's members
+lower_instance(f, args):  // once per key that cull reaches
+    lower f.body with T := args                                   // substitution, no re-check
+~~~
+
+- **Checking once with variables** finds errors in generics no one has instantiated yet. A body error found only after substitution is a compiler bug, not a user error.
+- **Inference** reads type arguments from argument types through `fits()`. Literals follow DESIGN.md: they take the context's type, else `i32` when they fit, else `i64`.
+- **Polymorphic recursion** (an instance that needs a bigger instance of itself) stops at the instance-depth limit with `ResourceLimit`.
+
+### I.3 Flow: one solver, three facts
+
+Flow runs on the validated Ir's control-flow graph. Lowering attaches **events** to instructions, in a side table like `Origins`:
+
+| Event | Meaning |
+|---|---|
+| `Def(local)` | `local` is initialized |
+| `Use(local)` | `local` is read |
+| `Move(local)` | `.consume()`: `local` is dead afterwards |
+| `Result(local)` | `local` holds a failing `Res` that must be used |
+| `Exit(scope)` | `scope` ends: every pending `Result` in it must have been used |
+
+One forward dataflow solver (the §1.4 loop, made generic over the join) computes all three facts:
+
+| Fact | Join at a merge | Error |
+|---|---|---|
+| definitely initialized | intersection | `Use` of a local that is not in the set |
+| maybe moved | union | `Use` or `Move` of a local that is in the set (`use after move`) |
+| pending must-use | union | `Exit(scope)` while one of its locals is still pending |
+
+§1.4's register check stays in `Ir.validate` as the backend's safety net; I.3 is the user-facing check with spans. A failing `Res` that is never bound (an expression statement) is refused in fit already; flow handles the path-dependent cases only.
+
+### I.4 Comptime
+
+Comptime has three jobs, and only one needs an evaluator.
+
+| Job | How |
+|---|---|
+| `@meta(n: T).fields().loop(..)`, `@meta(v).kind` typecase | **unrolled during check**: the field list and the kind are known, so the loop body is checked and lowered once per field. No evaluator. |
+| Constants: globals, `Limits.WIDTH`, array counts, `build.zen` | **lower to Ir, validate, run on the Appendix B interpreter.** The result is read back as bytes by its layout: a constant, a global initializer, or the `Package`/`Graph` data. |
+| Type-returning functions (`AddFoo(Circle)`) | T2. When added, they use I.2's instance key. |
+
+The evaluator gets **no `Env`**. A comptime program that calls an import fails with `UnsupportedFeature`. It is step-limited and memory-limited (Appendix J), and the same inputs always give the same bytes. There is one interpreter: the reference oracle from Appendix B is also the comptime engine.
+
+### I.5 Diagnostics policy
+
+- **Within a body: stop at the first error.** Recovering inside an expression doubles a checker's size for cascades no one reads.
+- **Across bodies: keep going.** Each body is checked independently, and an error in one doesn't stop the others.
+- **Cap: 100 diagnostics.** Collect errors (duplicate or unknown declarations) stop before check.
+- **Every diagnostic** has a code (E.1), a span and one sentence. If there's a fix, it's named (for example, the missing import).
+
 ## Appendix J. Security
 
 The compiler's attack surface is every input it reads: source, the build manifest, dependency sources, native headers.
@@ -1518,7 +1688,17 @@ The compiler's attack surface is every input it reads: source, the build manifes
 - **Build files run without `Env`**: no file, network, clock or process access at build-evaluation time. Dependencies' build code never runs (BUILD_AND_PACKAGES.md §6).
 - **Generated code**: checked arithmetic and bounds by default; traps abort; `Ptr<T>` and `c.bind` are the only unchecked doors, and both are visible in source.
 - **JIT is out of the core profile.** Mapping executable memory is the riskiest feature; if added, W^X only, never writable and executable at once.
-- **Resource limits** on every phase: comptime steps, frame size, function size, memory.
+- **Resource limits** on every phase. Hitting one is a `ResourceLimit` diagnostic, never a crash or a hang:
+
+| Limit | Default |
+|---|---|
+| Source file size | 16 MiB |
+| Token or string literal length | 1 MiB |
+| Parser nesting depth (an explicit counter, not the host stack) | 256 |
+| Inlining depth (C.2) and generic instance depth (I.2) | 64 |
+| Generic instances per program | 100,000 |
+| Comptime steps / memory per evaluation | 10^8 steps / 256 MiB |
+| IR function size, frame size | §F: 1 MiB, 4080 bytes before probing |
 - **Fuzzing** covers every input stage: the parser (mutated sources), the checker (must-fail corpus plus mutations), and the backend (Appendix E.2 differential fuzzing).
 - **Runtime C** (entry, trap handler, Env glue) stays under 200 lines.
 
@@ -1536,3 +1716,39 @@ seed (generated C of the compiler, one file per module)
 - Reproducible: the same sources give byte-identical seed and stage outputs.
 - **Diverse double-compiling**: build the compiler with two independent compilers (for example the old Zen compiler and this one); their stage-2 outputs must be identical.
 - Seed size tracks compiler size; a smaller compiler is a smaller seed.
+
+**Stage 0 is the existing compiler.** The old Zen compiler (branch `codex/jit-land-20261021`, Zen to C) builds the first one:
+
+~~~text
+old zen   builds new  -> new0      the new compiler is written in the T0 subset both accept
+new0      builds new  -> new1
+new1      builds new  -> new2      require C(new1) == C(new2); commit new2's C as the seed
+seed --cc (clang, gcc, tcc) -> new  the old compiler is no longer needed
+~~~
+
+The rule while the old compiler is stage 0: every commit of the new compiler must still build with it, so the T0 subset is enforced by a test, not by memory.
+
+## Appendix L. Runtime and the T0 standard library
+
+The compiler is useless without the std it compiles itself with. T0 needs only this:
+
+| Module | Contents |
+|---|---|
+| `std.core` | `Res`, `Ok`, `Err`, `None`, `Error`, `Eq`, `Drop`, `value_or`, `ok_or`, `ignore` |
+| `std.mem` | `Alloc` (interface), `Arena` over `env.mem` pages, `Ptr<T>` read/write/copy |
+| `std.seq` | `Seq<T>`, `Range<T>`, `loop`, `find`, `map`, `filter` (C.2) |
+| `std.text` | `str`, `String`, `Sink`, formatting of integers and `str` (`{}`, `{name}`) |
+| `std.collections` | `Vec<T>`, `Map<K, V>` (open addressing) |
+| `std.io` | `println`, `Env.out`, `Env.fs.read`/`write`, `Env.args` |
+
+The runtime is C, at most 200 lines (Appendix J):
+
+~~~text
+entry(argc, argv):  build Env (pages, out, fs, args) -> call zen main -> map its result to an exit code
+                    Ok(n) -> n;  Err -> print it, 1;  () main -> 0
+trap(code):         print "file:line:col: trap: <what>" -> exit 134
+~~~
+
+**How a trap knows its location.** Checks the frontend inserts (bounds, `.unwrap`-style, unreachable) use `Explicit(65536 + site)` trap codes. The runtime looks `site` up in a global table `(file, line, col, what)` that lowering emits. Arithmetic traps from templates (§3.3) carry only the code and the function. *Open decision:* accept `trap: overflow in <function>` for those, or have lowering emit an explicit site check per arithmetic operation (exact locations, larger code).
+
+Budget: std for T0 ≤ 4,000 lines of Zen, runtime ≤ 200 lines of C.

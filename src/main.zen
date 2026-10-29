@@ -1,6 +1,7 @@
 // zen <file.zen>: compile the file with this compiler and run its `main` on the IR
 // interpreter. The process exits with main's result; an error prints file:line:col and
 // exits 1; a trap exits 134 (ZEN_LANGUAGE.md §8).
+// zen --dump <file.zen>: print the syntax tree and the IR instead of running.
 
 { Res, Ok, Err, None, IoError } = std.core
 { Alloc } = std.mem
@@ -9,12 +10,15 @@
 { Env, Console } = std.env
 { Id, Function, TrapCode } = ir.records
 { Diagnostic } = ir.diagnostic
-{ validate } = ir.validate
+{ Ir, validate } = ir.validate
+{ dump } = ir.dump
 { RuntimeValue, Outcome, run } = ir.interp
 { Int } = ir.int
 { Source } = front.parse.source
 { SyntaxError, ParseError, parse } = front.parse.parse
-{ CheckError, check } = front.check.check
+{ Tree } = front.parse.ast
+{ CheckError, Program, check } = front.check.check
+{ println } = std.io
 { lower } = front.lower.lower
 
 // Why compiling or running stopped.
@@ -31,12 +35,20 @@ I32: Int = Int(width: 32, signed: true)
 
 main = (env: Env) Res<i32, IoError> {
     a = env.mem.alloc();
-    path = env.argv.get(1).match({ Ok(p) => p, None => "" });
+    first = env.argv.get(1).match({ Ok(p) => p, None => "" });
+    dumping = first.eq("--dump");
+    path = dumping.match({ true => env.argv.get(2).match({ Ok(p) => p, None => "" }), false => first });
     (path.len == 0).match({
-        true  => { env.out.errorln("usage: zen <file.zen>").try(); Ok(2) },
+        true  => { env.out.errorln("usage: zen [--dump] <file.zen>").try(); Ok(2) },
         false => env.fs.read(a, path).match({
             Err(_)   => { env.out.errorln("{}: can't read this file", path).try(); Ok(1) },
-            Ok(text) => Ok(finish(env.out, path, text.view(), compile_and_run(a, text.view()))),
+            Ok(text) => {
+                result = dumping.match({
+                    true  => compile_and_dump(a, text.view()),
+                    false => compile_and_run(a, text.view()),
+                });
+                Ok(finish(env.out, path, text.view(), result))
+            },
         }),
     })
 }
@@ -71,8 +83,11 @@ report = (out: Console, path: str, s: Source, fail: Failure) Res<IoError> {
     })
 }
 
-// source -> tree -> program -> IR -> validated IR -> run main.
-compile_and_run = (a: Alloc, text: str) Res<i32, Failure> {
+// What compiling a file produces: its tree, the checked program, and validated IR.
+Compiled = { tree: Tree, program: Program, ir: Ir }
+
+// source -> tree -> program -> IR -> validated IR.
+compile = (a: Alloc, text: str) Res<Compiled, Failure> {
     tree = parse(a, text).match({
         Ok(t)  => Ok(t),
         Err(e) => Err(e.match({ Syntax(s) => Failure.Syntax(s), OutOfMemory => Failure.OutOfMemory })),
@@ -80,8 +95,14 @@ compile_and_run = (a: Alloc, text: str) Res<i32, Failure> {
     program = check(a, tree).match({ Ok(p) => Ok(p), Err(e) => Err(Failure.Check(e)) }).try();
     module = lower(a, program).match({ Ok(m) => Ok(m), Err(_) => Err(Failure.OutOfMemory) }).try();
     ir = validate(a, module).match({ Ok(ir) => Ok(ir), Err(d) => Err(Failure.Invalid(d)) }).try();
-    entry = program.find("main").match({ Ok(k) => k, None => 0 });
-    outcome = run(a, ir, Id<Function>(index: entry), a.Vec<RuntimeValue>()).match({
+    Ok(Compiled(tree: tree, program: program, ir: ir))
+}
+
+// Compile, then run main on the interpreter.
+compile_and_run = (a: Alloc, text: str) Res<i32, Failure> {
+    c = compile(a, text).try();
+    entry = c.program.find("main").match({ Ok(k) => k, None => 0 });
+    outcome = run(a, c.ir, Id<Function>(index: entry), a.Vec<RuntimeValue>()).match({
         Ok(o)  => Ok(o),
         Err(d) => Err(Failure.Invalid(d)),
     }).try();
@@ -91,6 +112,17 @@ compile_and_run = (a: Alloc, text: str) Res<i32, Failure> {
         Fault(f)      => Err(Failure.Fault(f.variant_name())),
         ResourceLimit => Err(Failure.Fault("a resource limit was reached")),
     })
+}
+
+// Compile, then print the tree and the IR instead of running.
+compile_and_dump = (a: Alloc, text: str) Res<i32, Failure> {
+    c = compile(a, text).try();
+    println("== syntax tree");
+    c.tree.dump();
+    println("");
+    println("== IR");
+    dump(c.ir.view());
+    Ok(0)
 }
 
 // main's i32 result as a process exit code.

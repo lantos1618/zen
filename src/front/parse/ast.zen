@@ -1,7 +1,8 @@
 // The syntax tree: what parse produces and check reads. Nodes live in one list and
 // refer to their children by position, so the tree is plain data with no pointers.
 
-{ Res, Ok, None, to_usize } = std.core
+{ Res, Ok, None, Range, to_usize } = std.core
+{ print, println } = std.io
 { Vec } = std.collections
 { str } = std.text
 { Source } = front.parse.source
@@ -56,4 +57,23 @@ Tree* = {
     }
 
     text* = (self: @Self, n: Node) str { self.source.text.slice(n.start.to_usize(), n.end.to_usize()) }
+
+    // The whole tree, one node per line with its children indented under it.
+    dump* = (self: @Self) {
+        self.roots.loop((r) { self.node(r).match({ Ok(n) => self.dump_node(n, 0), None => () }); });
+    }
+
+    dump_node = (self: @Self, n: Node, depth: u32) {
+        Range(0, depth).loop((i) { print("  "); });
+        n.kind.match({
+            Name      => println("Name {}", self.text(n)),
+            Param     => println("Param {}", self.text(n)),
+            Int       => println("Int {}", self.text(n)),
+            Binary(o) => println("Binary {}", o.variant_name()),
+            _         => println("{}", n.kind.variant_name()),
+        });
+        Range(0, n.count).loop((k) {
+            self.child(n, k).match({ Ok(c) => self.dump_node(c, depth + 1), None => () });
+        });
+    }
 }

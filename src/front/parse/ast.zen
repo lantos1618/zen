@@ -18,6 +18,9 @@ NodeKind* = {
     | Binary: BinaryOp
     | Name
     | Int
+    | True
+    | False
+    | Wildcard      // the pattern _
 }
 
 BinaryOp* = {

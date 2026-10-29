@@ -3,35 +3,29 @@
 // exits 1; a trap exits 134 (ZEN_LANGUAGE.md §8).
 // zen --dump <file.zen>: print the syntax tree and the IR instead of running.
 
-{ Res, Ok, Err, None, IoError } = std.core
-{ Alloc } = std.mem
+{ Res, Ok, Err, None, IoError, ignore } = std.core
+{ Alloc, AllocError } = std.mem
 { Vec } = std.collections
 { str } = std.text
+{ println } = std.io
 { Env, Console } = std.env
-{ Id, Function, TrapCode } = ir.records
+{ Id, Function, ScalarType } = ir.records
 { Diagnostic } = ir.diagnostic
 { Ir, validate } = ir.validate
 { dump } = ir.dump
 { RuntimeValue, Outcome, run } = ir.interp
-{ Int } = ir.int
+{ int } = ir.int
 { Source } = front.parse.source
-{ SyntaxError, ParseError, parse } = front.parse.parse
+{ ParseError, parse } = front.parse.parse
 { Tree } = front.parse.ast
 { CheckError, Program, check } = front.check.check
-{ println } = std.io
 { lower } = front.lower.lower
 
-// Why compiling or running stopped.
-Failure = {
-    | Syntax: SyntaxError
-    | Check: CheckError
-    | Invalid: Diagnostic       // the lowered IR failed validation: a bug in this compiler
-    | Trap: TrapCode
-    | Fault: str
-    | OutOfMemory
-}
+// Everything that can stop compiling. Each stage's `.try()` widens into it.
+CompileError = ParseError | CheckError | AllocError | Diagnostic
 
-I32: Int = Int(width: 32, signed: true)
+// What compiling a file produces: its tree, the checked program, and validated IR.
+Compiled = { tree: Tree, program: Program, ir: Ir }
 
 main = (env: Env) Res<i32, IoError> {
     a = env.mem.alloc();
@@ -43,91 +37,81 @@ main = (env: Env) Res<i32, IoError> {
         false => env.fs.read(a, path).match({
             Err(_)   => { env.out.errorln("{}: can't read this file", path).try(); Ok(1) },
             Ok(text) => {
-                result = dumping.match({
-                    true  => compile_and_dump(a, text.view()),
-                    false => compile_and_run(a, text.view()),
+                s = Source(text: text.view());
+                code = dumping.match({
+                    true  => compile(a, s.text).match({ Ok(c) => show(c), Err(e) => report(env.out, path, s, e) }),
+                    false => run_main(a, s.text).match({
+                        Ok(o)  => finish(env.out, path, o),
+                        Err(e) => report(env.out, path, s, e),
+                    }),
                 });
-                Ok(finish(env.out, path, text.view(), result))
+                Ok(code)
             },
         }),
     })
 }
 
-// The exit code: main's result, or 1 after a compile error, or 134 after a trap.
-finish = (out: Console, path: str, text: str, result: Res<i32, Failure>) i32 {
-    result.match({
-        Ok(code)  => code,
-        Err(fail) => {
-            report(out, path, Source(text: text), fail).match({ Ok => (), Err(_) => () });
-            fail.match({ Trap(_) => 134, _ => 1 })
-        },
-    })
-}
-
-// The failure on stderr, as file:line:col: message where there is a position.
-report = (out: Console, path: str, s: Source, fail: Failure) Res<IoError> {
-    fail.match({
-        Syntax(e)   => {
-            p = s.position(e.at);
-            found = e.found.variant_name();
-            out.errorln("{}:{}:{}: expected {}, found {}", path, p.line, p.column, e.wanted, found)
-        },
-        Check(e)    => {
-            p = s.position(e.at);
-            out.errorln("{}:{}:{}: {}", path, p.line, p.column, e.message)
-        },
-        Invalid(d)  => out.errorln("{}: internal error: invalid IR: {} ({})", path, d.message, d.code.name()),
-        Trap(code)  => out.errorln("{}: trap: {}", path, code.variant_name()),
-        Fault(what) => out.errorln("{}: fault: {}", path, what),
-        OutOfMemory => out.errorln("{}: out of memory", path),
-    })
-}
-
-// What compiling a file produces: its tree, the checked program, and validated IR.
-Compiled = { tree: Tree, program: Program, ir: Ir }
-
 // source -> tree -> program -> IR -> validated IR.
-compile = (a: Alloc, text: str) Res<Compiled, Failure> {
-    tree = parse(a, text).match({
-        Ok(t)  => Ok(t),
-        Err(e) => Err(e.match({ Syntax(s) => Failure.Syntax(s), OutOfMemory => Failure.OutOfMemory })),
-    }).try();
-    program = check(a, tree).match({ Ok(p) => Ok(p), Err(e) => Err(Failure.Check(e)) }).try();
-    module = lower(a, program).match({ Ok(m) => Ok(m), Err(_) => Err(Failure.OutOfMemory) }).try();
-    ir = validate(a, module).match({ Ok(ir) => Ok(ir), Err(d) => Err(Failure.Invalid(d)) }).try();
+compile = (a: Alloc, text: str) Res<Compiled, CompileError> {
+    tree = parse(a, text).try();
+    program = check(a, tree).try();
+    ir = validate(a, lower(a, program).try()).try();
     Ok(Compiled(tree: tree, program: program, ir: ir))
 }
 
 // Compile, then run main on the interpreter.
-compile_and_run = (a: Alloc, text: str) Res<i32, Failure> {
+run_main = (a: Alloc, text: str) Res<Outcome, CompileError> {
     c = compile(a, text).try();
     entry = c.program.find("main").match({ Ok(k) => k, None => 0 });
-    outcome = run(a, c.ir, Id<Function>(index: entry), a.Vec<RuntimeValue>()).match({
-        Ok(o)  => Ok(o),
-        Err(d) => Err(Failure.Invalid(d)),
-    }).try();
-    outcome.match({
-        Returned(v)   => Ok(exit_code(v)),
-        Trapped(code) => Err(Failure.Trap(code)),
-        Fault(f)      => Err(Failure.Fault(f.variant_name())),
-        ResourceLimit => Err(Failure.Fault("a resource limit was reached")),
-    })
+    Ok(run(a, c.ir, Id<Function>(index: entry), a.Vec<RuntimeValue>()).try())
 }
 
-// Compile, then print the tree and the IR instead of running.
-compile_and_dump = (a: Alloc, text: str) Res<i32, Failure> {
-    c = compile(a, text).try();
+// The tree and the IR, instead of running.
+show = (c: Compiled) i32 {
     println("== syntax tree");
     c.tree.dump();
     println("");
     println("== IR");
     dump(c.ir.view());
-    Ok(0)
+    0
+}
+
+// The exit code for how main ended: its i32 result, or 134 after a trap or fault.
+finish = (out: Console, path: str, o: Outcome) i32 {
+    o.match({
+        Returned(v)   => exit_code(v),
+        Trapped(code) => { out.errorln("{}: trap: {}", path, code.variant_name()).ignore(); 134 },
+        Fault(f)      => { out.errorln("{}: fault: {}", path, f.variant_name()).ignore(); 134 },
+        ResourceLimit => { out.errorln("{}: a resource limit was reached", path).ignore(); 1 },
+    })
+}
+
+// A compile error on stderr, as file:line:col: message where there is a position. Exits 1.
+report = (out: Console, path: str, s: Source, e: CompileError) i32 {
+    printed = e.match({
+        ParseError(p)  => p.match({
+            Syntax(x)   => {
+                at = s.position(x.at);
+                found = x.found.variant_name();
+                out.errorln("{}:{}:{}: expected {}, found {}", path, at.line, at.column, x.wanted, found)
+            },
+            OutOfMemory => out.errorln("{}: out of memory", path),
+        }),
+        CheckError(c)  => {
+            at = s.position(c.at);
+            out.errorln("{}:{}:{}: {}", path, at.line, at.column, c.message)
+        },
+        AllocError(_)  => out.errorln("{}: out of memory", path),
+        Diagnostic(d)  => out.errorln("{}: internal error: invalid IR: {} ({})", path, d.message, d.code.name()),
+    });
+    printed.ignore();
+    1
 }
 
 // main's i32 result as a process exit code.
 exit_code = (v: Res<RuntimeValue>) i32 {
+    i32_type = int(ScalarType.I32);
     bits = v.match({ Ok(rv) => rv.match({ Int(k) => k.bits, _ => 0 }), None => 0 });
-    size = I32.magnitude(bits).to_i32().match({ Ok(n) => n, None => 0 });
-    I32.negative(bits).match({ true => 0 - size, false => size })
+    size = i32_type.magnitude(bits).to_i32().match({ Ok(n) => n, None => 0 });
+    i32_type.negative(bits).match({ true => 0 - size, false => size })
 }

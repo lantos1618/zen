@@ -2,7 +2,7 @@
 // are i32 or bool; calls match their function; a bool match covers true and false and its
 // arms agree; `main` exists. The result, a Program, is what lowering reads.
 
-{ Res, Ok, Err, None, Range, ensure, ok_or, to_usize, truncate_u32 } = std.core
+{ Res, Ok, Err, None, Range, Eq, ensure, ok_or, to_usize, to_u64, to_i32, truncate_u32 } = std.core
 { Alloc, AllocError } = std.mem
 { Vec, Map } = std.collections
 { str } = std.text
@@ -12,11 +12,11 @@
 CheckError* = { at*: u32, message*: str }
 
 Type* = {
-    | I32
-    | Bool,
-
-    same* = (self: @Self, other: Type) bool { self.variant_name().eq(other.variant_name()) }
+    | I32 = 1
+    | Bool = 2
 }
+
+Type.impl(Eq, { eq = (self: @Self, other: @Self) bool { self.discriminant() == other.discriminant() } })
 
 // What each name means at one point in a function: parameters first, then bindings.
 // A later binding shadows an earlier one, so lookups go newest first.
@@ -55,8 +55,6 @@ Program* = {
     find* = (self: @Self, name: str) Res<u32> { self.index.get(name) }
     decl* = (self: @Self, k: u32) Res<Decl> { self.decls.get(k.to_usize()) }
 }
-
-I32_MAX: u64 = 2147483647
 
 check* = (a: Alloc, tree: Tree) Res<Program, CheckError> {
     c = Checker(a: a, tree: tree);
@@ -122,7 +120,7 @@ Checker = {
         });
         body = self.child(d.node, d.node.count - 1).try();
         t = self.block(p, names, body).try();
-        t.same(d.result).ensure(self.at(body, "the body's type is not the declared result type"))
+        (t == d.result).ensure(self.at(body, "the body's type is not the declared result type"))
     }
 
     // Each binding adds a name; the block's type is its tail's.
@@ -139,6 +137,8 @@ Checker = {
         n.kind.match({
             Int       => self.int_literal(n),
             Name      => self.name(names, n),
+            True      => Ok(Type.Bool),
+            False     => Ok(Type.Bool),
             Binary(o) => self.binary(p, names, o, n),
             Call      => self.call(p, names, n),
             Match     => self.bool_match(p, names, n),
@@ -147,18 +147,17 @@ Checker = {
     }
 
     int_literal = (self: @Self, n: Node) Res<Type, CheckError> {
-        fits = self.tree.text(n).parse_usize().match({ Ok(v) => v.to_u64() <= I32_MAX, None => false });
+        fits = self.tree.text(n).parse_usize().match({
+            Ok(v) => v.to_u64().to_i32().match({ Ok(_) => true, None => false }),
+            None  => false,
+        });
         fits.ensure(self.at(n, "this integer doesn't fit i32")).try();
         Ok(Type.I32)
     }
 
-    // `true` and `false` are built in; any other name is a parameter or a binding.
+    // A name is a parameter or a binding.
     name = (self: @Self, names: Scope<Type>, n: Node) Res<Type, CheckError> {
-        text = self.tree.text(n);
-        (text.eq("true") || text.eq("false")).match({
-            true  => Ok(Type.Bool),
-            false => names.lookup(text).ok_or(self.at(n, "unknown name")),
-        })
+        names.lookup(self.tree.text(n)).ok_or(self.at(n, "unknown name"))
     }
 
     // Arithmetic and ordering need i32; == and != need two values of one type.
@@ -166,9 +165,9 @@ Checker = {
         left = self.expression(p, names, self.child(n, 0).try()).try();
         second = self.child(n, 1).try();
         right = self.expression(p, names, second).try();
-        left.same(right).ensure(self.at(second, "both sides need the same type")).try();
+        (left == right).ensure(self.at(second, "both sides need the same type")).try();
         equality = o.match({ Equal => true, NotEqual => true, _ => false });
-        (equality || left.same(Type.I32)).ensure(self.at(n, "this operator needs i32")).try();
+        (equality || left == Type.I32).ensure(self.at(n, "this operator needs i32")).try();
         Ok(o.is_comparison().match({ true => Type.Bool, false => Type.I32 }))
     }
 
@@ -181,7 +180,8 @@ Checker = {
         Range(1, n.count).loop((i) {
             arg = self.child(n, i).try();
             want = target.types.get((i - 1).to_usize()).match({ Ok(t) => t, None => Type.I32 });
-            self.expression(p, names, arg).try().same(want).ensure(self.at(arg, "wrong argument type")).try();
+            given = self.expression(p, names, arg).try();
+            (given == want).ensure(self.at(arg, "wrong argument type")).try();
         });
         Ok(target.result)
     }
@@ -190,7 +190,7 @@ Checker = {
     // Every arm's value has one type, the match's type.
     bool_match = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
         subject = self.expression(p, names, self.child(n, 0).try()).try();
-        subject.same(Type.Bool).ensure(self.at(n, "only bool can be matched so far")).try();
+        (subject == Type.Bool).ensure(self.at(n, "only bool can be matched so far")).try();
         first = self.child(n, 1).try();
         (first.count == 1).match({
             true  => (n.count == 3).ensure(self.at(n, "a bool match has a true body and a false body")).try(),
@@ -202,7 +202,7 @@ Checker = {
             (arm.count == first.count).ensure(self.at(arm, "don't mix arms and positional bodies")).try();
             value = self.child(arm, arm.count - 1).try();
             t = self.expression(p, names, value).try();
-            t.same(want).ensure(self.at(value, "every arm needs the same type")).try();
+            (t == want).ensure(self.at(value, "every arm needs the same type")).try();
         });
         Ok(want)
     }
@@ -218,14 +218,13 @@ Checker = {
         Range(1, n.count).loop((k) {
             arm = self.child(n, k).try();
             pattern = self.child(arm, 0).try();
-            text = self.tree.text(pattern);
-            any = text.eq("_");
-            known = any || text.eq("true") || text.eq("false");
-            known.ensure(self.at(pattern, "a bool pattern is true, false or _")).try();
-            new = (text.eq("true") || any) && !seen_true || (text.eq("false") || any) && !seen_false;
-            new.ensure(self.at(arm, "this arm can never be reached")).try();
-            seen_true = seen_true || text.eq("true") || any;
-            seen_false = seen_false || text.eq("false") || any;
+            on_true = pattern.kind.match({ True => true, Wildcard => true, _ => false });
+            on_false = pattern.kind.match({ False => true, Wildcard => true, _ => false });
+            (on_true || on_false).ensure(self.at(pattern, "a bool pattern is true, false or _")).try();
+            reachable = on_true && !seen_true || on_false && !seen_false;
+            reachable.ensure(self.at(arm, "this arm can never be reached")).try();
+            seen_true = seen_true || on_true;
+            seen_false = seen_false || on_false;
         });
         (seen_true && seen_false).ensure(self.at(n, "this match doesn't cover both true and false"))
     }

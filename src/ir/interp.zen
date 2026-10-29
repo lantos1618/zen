@@ -22,6 +22,7 @@
 { DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
 { Int, int } = ir.int
 { Ir } = ir.validate
+{ Limits } = limits
 
 RuntimeValue* = {
     | Int: IntegerConstant
@@ -75,8 +76,6 @@ Next = {
     | Done: Res<RuntimeValue>
 }
 
-STEP_LIMIT: u64 = 100000000
-DEPTH_LIMIT: u32 = 1000
 
 // Run one function of a validated module.
 run* = (
@@ -179,7 +178,7 @@ Machine = {
                 "calls to imports"
             ).try(),
         });
-        (self.depth >= DEPTH_LIMIT).match({ true => halt<()>(
+        (self.depth >= Limits.RUN_DEPTH).match({ true => halt<()>(
             Outcome.ResourceLimit
         ).try(), false => () });
 
@@ -223,7 +222,7 @@ Machine = {
         at       ::= f.entry;
         returned :: Res<RuntimeValue> = None;
         done     ::= false;
-        Range(0, STEP_LIMIT).loop((h, _) {
+        Range(0, Limits.RUN_STEPS).loop((h, _) {
             b = f.block(at).match({
                 Ok(b) => b,
                 None  => fail<Block>(
@@ -233,7 +232,7 @@ Machine = {
             });
             b.instructions.loop((rec) {
                 self.steps = self.steps + 1;
-                (self.steps > STEP_LIMIT).match({ true => halt<()>(
+                (self.steps > Limits.RUN_STEPS).match({ true => halt<()>(
                     Outcome.ResourceLimit
                 ).try(), false => () });
                 self.execute(f, regs, rec.instruction).try();

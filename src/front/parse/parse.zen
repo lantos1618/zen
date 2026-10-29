@@ -9,6 +9,7 @@
 { Token, Kind, lex } = front.parse.lex
 { Source } = front.parse.source
 { Tree, Node, NodeKind, BinaryOp } = front.parse.ast
+{ Limits } = limits
 
 // What went wrong, and where: "expected `)`, found Comma".
 SyntaxError* = { at*: u32, wanted*: str, found*: Kind }
@@ -18,8 +19,6 @@ ParseError* = {
     | OutOfMemory
 }
 
-MAX_DEPTH: u32 = 256
-MAX_ITEMS: usize = 1000000
 END: Token = Token(kind: Kind.End, start: 0, end: 0)
 NO_NODE: Node = Node(kind: NodeKind.Name, start: 0, end: 0, first: 0, count: 0)
 
@@ -40,10 +39,10 @@ parse* = (a: Alloc, text: str) Res<Tree, ParseError> {
         children: a.Vec<u32>(),
     );
     roots ::= a.Vec<u32>();
-    Range(0, MAX_ITEMS).loop((h, _) {
+    Range(0, Limits.PARSE_ITEMS).loop((h, _) {
         p.peek().kind.is(Kind.End).then(() { h.break() });
         d = p.declaration().try();
-        push(roots, d).try();
+        roots.push(d).try();
     });
     Ok(Tree(source: Source(text: text), nodes: p.nodes, children: p.children, roots: roots))
 }
@@ -111,21 +110,21 @@ Parser = {
         self.expect(Kind.LParen, "`(`").try();
         kids ::= self.a.Vec<u32>();
         named = self.leaf(NodeKind.Name, name).try();
-        push(kids, named).try();
+        kids.push(named).try();
         self.parameters(kids).try();
         result = self.type_name().try();
-        push(kids, result).try();
+        kids.push(result).try();
         body = self.block().try();
-        push(kids, body).try();
+        kids.push(body).try();
         self.add(NodeKind.Function, name.start, self.span(body).end, kids)
     }
 
     // parameters = (Name ":" type ("," Name ":" type)*)? ")"
     parameters = (self :: @Self, kids :: Vec<u32>) Res<(), ParseError> {
-        Range(0, MAX_ITEMS).loop((h, _) {
+        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
             self.accept(Kind.RParen).then(() { h.break() });
             p = self.parameter().try();
-            push(kids, p).try();
+            kids.push(p).try();
             (!self.accept(Kind.Comma)).then(() { self.expect(Kind.RParen, "`,` or `)`").try(); h.break(); });
         });
         Ok
@@ -137,7 +136,7 @@ Parser = {
         self.expect(Kind.Colon, "`:`").try();
         t = self.type_name().try();
         kids ::= self.a.Vec<u32>();
-        push(kids, t).try();
+        kids.push(t).try();
         self.add(NodeKind.Param, name.start, name.end, kids)
     }
 
@@ -151,14 +150,14 @@ Parser = {
     block = (self :: @Self) Res<u32, ParseError> {
         open = self.expect(Kind.LBrace, "`{`").try();
         kids ::= self.a.Vec<u32>();
-        Range(0, MAX_ITEMS).loop((h, _) {
+        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
             binding = self.peek().kind.is(Kind.Name) && self.ahead(1).kind.is(Kind.Assign);
             (!binding).then(() { h.break() });
             s = self.statement().try();
-            push(kids, s).try();
+            kids.push(s).try();
         });
         e = self.expression().try();
-        push(kids, e).try();
+        kids.push(e).try();
         close = self.expect(Kind.RBrace, "`}`").try();
         self.add(NodeKind.Block, open.start, close.end, kids)
     }
@@ -171,16 +170,16 @@ Parser = {
         semi = self.expect(Kind.Semi, "`;`").try();
         kids ::= self.a.Vec<u32>();
         named = self.leaf(NodeKind.Name, name).try();
-        push(kids, named).try();
-        push(kids, value).try();
+        kids.push(named).try();
+        kids.push(value).try();
         self.add(NodeKind.Let, name.start, semi.end, kids)
     }
 
-    // expression = binary, nested at most MAX_DEPTH deep
+    // expression = binary, nested at most Limits.PARSE_DEPTH deep
     expression = (self :: @Self) Res<u32, ParseError> {
         self.depth = self.depth + 1;
         t = self.peek();
-        (self.depth <= MAX_DEPTH).ensure(unexpected(t, "less nesting")).try();
+        (self.depth <= Limits.PARSE_DEPTH).ensure(unexpected(t, "less nesting")).try();
         e = self.binary(1).try();
         self.depth = self.depth - 1;
         Ok(e)
@@ -189,7 +188,7 @@ Parser = {
     // binary = primary (operator primary)*, the tighter operators grouped first
     binary = (self :: @Self, min: u8) Res<u32, ParseError> {
         left ::= self.primary().try();
-        Range(0, MAX_ITEMS).loop((h, _) {
+        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
             binary_op(self.peek().kind).match({
                 None     => h.break(),
                 Ok(op)   => {
@@ -205,15 +204,15 @@ Parser = {
 
     combine = (self :: @Self, op: BinaryOp, left: u32, right: u32) Res<u32, ParseError> {
         kids ::= self.a.Vec<u32>();
-        push(kids, left).try();
-        push(kids, right).try();
+        kids.push(left).try();
+        kids.push(right).try();
         self.add(NodeKind.Binary(op), self.span(left).start, self.span(right).end, kids)
     }
 
     // primary = atom ("." "match" "(" groups ")")*
     primary = (self :: @Self) Res<u32, ParseError> {
         e ::= self.atom().try();
-        Range(0, MAX_ITEMS).loop((h, _) {
+        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
             (!self.accept(Kind.Dot)).then(() { h.break() });
             e = self.method(e).try();
         });
@@ -226,8 +225,8 @@ Parser = {
         self.word(name).eq("match").ensure(unexpected(name, "`match`, the only method so far")).try();
         self.expect(Kind.LParen, "`(`").try();
         kids ::= self.a.Vec<u32>();
-        push(kids, subject).try();
-        Range(0, MAX_ITEMS).loop((h, _) {
+        kids.push(subject).try();
+        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
             self.group(kids).try();
             (!self.accept(Kind.Comma)).then(() { h.break() });
         });
@@ -238,35 +237,38 @@ Parser = {
     // group = "{" pattern "=>" expression ("," pattern "=>" expression)* ","? "}" | "{" expression "}"
     group = (self :: @Self, kids :: Vec<u32>) Res<(), ParseError> {
         self.expect(Kind.LBrace, "`{`").try();
-        arms = self.peek().kind.is(Kind.Name) && self.ahead(1).kind.is(Kind.Arrow);
+        starts_pattern = pattern(self.peek().kind).match({ Ok(_) => true, None => false });
+        arms = starts_pattern && self.ahead(1).kind.is(Kind.Arrow);
         arms.match({
-            true  => Range(0, MAX_ITEMS).loop((h, _) {
+            true  => Range(0, Limits.PARSE_ITEMS).loop((h, _) {
                 self.accept(Kind.RBrace).then(() { h.break() });
                 a = self.arm().try();
-                push(kids, a).try();
+                kids.push(a).try();
                 (!self.accept(Kind.Comma)).then(() { self.expect(Kind.RBrace, "`,` or `}`").try(); h.break(); });
             }),
             false => {
                 value = self.expression().try();
                 body = self.expect(Kind.RBrace, "`}`").try();
                 one ::= self.a.Vec<u32>();
-                push(one, value).try();
+                one.push(value).try();
                 positional = self.add(NodeKind.Arm, self.span(value).start, body.end, one).try();
-                push(kids, positional).try();
+                kids.push(positional).try();
             },
         });
         Ok
     }
 
-    // arm = pattern "=>" expression, where a pattern is a name: true, false or _
+    // arm = pattern "=>" expression, where a pattern is true, false, _ or a name
     arm = (self :: @Self) Res<u32, ParseError> {
-        name = self.expect(Kind.Name, "a pattern").try();
-        pattern = self.leaf(NodeKind.Name, name).try();
+        name = self.peek();
+        kind = pattern(name.kind).ok_or(unexpected(name, "a pattern")).try();
+        self.at = self.at + 1;
+        pattern = self.leaf(kind, name).try();
         self.expect(Kind.Arrow, "`=>`").try();
         value = self.expression().try();
         kids ::= self.a.Vec<u32>();
-        push(kids, pattern).try();
-        push(kids, value).try();
+        kids.push(pattern).try();
+        kids.push(value).try();
         self.add(NodeKind.Arm, name.start, self.span(value).end, kids)
     }
 
@@ -276,6 +278,8 @@ Parser = {
         t.kind.match({
             Int    => { self.at = self.at + 1; self.leaf(NodeKind.Int, t) },
             Name   => { self.at = self.at + 1; self.name_or_call(t) },
+            True   => { self.at = self.at + 1; self.leaf(NodeKind.True, t) },
+            False  => { self.at = self.at + 1; self.leaf(NodeKind.False, t) },
             LParen => self.parenthesized(),
             _      => Err(unexpected(t, "an expression")),
         })
@@ -300,16 +304,27 @@ Parser = {
     // call = callee "(" (expression ("," expression)*)? ")", after the "("
     call = (self :: @Self, name: Token, callee: u32) Res<u32, ParseError> {
         kids ::= self.a.Vec<u32>();
-        push(kids, callee).try();
-        Range(0, MAX_ITEMS).loop((h, _) {
+        kids.push(callee).try();
+        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
             self.accept(Kind.RParen).then(() { h.break() });
             arg = self.expression().try();
-            push(kids, arg).try();
+            kids.push(arg).try();
             (!self.accept(Kind.Comma)).then(() { self.expect(Kind.RParen, "`,` or `)`").try(); h.break(); });
         });
         close = self.tokens.get(self.at - 1).match({ Ok(t) => t.end, None => name.end });
         self.add(NodeKind.Call, name.start, close, kids)
     }
+}
+
+// The pattern node a token starts, if any.
+pattern = (k: Kind) Res<NodeKind> {
+    k.match({
+        True     => Ok(NodeKind.True),
+        False    => Ok(NodeKind.False),
+        Wildcard => Ok(NodeKind.Wildcard),
+        Name     => Ok(NodeKind.Name),
+        _        => None,
+    })
 }
 
 // The binary operator a token stands for, if any.

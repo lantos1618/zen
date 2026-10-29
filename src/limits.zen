@@ -1,0 +1,9 @@
+// COMPILER.md Appendix J: every limit the compiler enforces, in one place. Reaching one
+// is a diagnostic or a ResourceLimit outcome, never a crash or a hang.
+
+Limits* = {
+    PARSE_DEPTH*: u32 = 256,            // nested expressions
+    PARSE_ITEMS*: usize = 1000000,      // declarations, parameters, arguments, arms in one list
+    RUN_STEPS*: u64 = 100000000,        // interpreter instructions per run
+    RUN_DEPTH*: u32 = 1000,             // interpreter call depth
+}

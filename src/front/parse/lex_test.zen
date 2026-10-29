@@ -38,7 +38,7 @@ main = (env: Env) Res<i32, IoError> {
     }).try();
     s.run("a match with @Self", (t) {
         expect_lex(t, "r.match({ Ok(v) => v, _ => @Self })",
-            "Name Dot Name LParen LBrace Name LParen Name RParen Arrow Name Comma Name Arrow At RBrace RParen End")
+            "Name Dot Name LParen LBrace Name LParen Name RParen Arrow Name Comma Wildcard Arrow At RBrace RParen End")
     }).try();
     s.run("two-byte operators", (t) { expect_lex(t, "a <= b != c << 2 && !d", "Name Le Name NotEqual Name Shl Int And Not Name End") }).try();
     s.run("a comment to the end of the line", (t) { expect_lex(t, "x // a comment\ny", "Name Name End") }).try();

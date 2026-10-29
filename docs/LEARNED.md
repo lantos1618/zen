@@ -61,3 +61,18 @@ Short, current facts that save the next person (or agent) an hour. Delete an ent
 - **Boundaries again:** `<` and `<=` only differ on equal operands, so a comparison test without `2 < 2` can't tell them apart. The mutation check found it.
 - **Names belong in the tree.** A binding's name is the Let node's first child; reading it back out of the source text was a hack.
 - **Find a mutation's line with grep, never by memory**: a guessed line number made one check silently change nothing.
+
+## From the review of #112
+
+| The language already has | So write |
+|---|---|
+| Error unions, widened by `.try()` | `Res<T, ParseError \| CheckError>`; no wrapper enum, no `.match` per stage. Match the union by type name. |
+| `impl Eq` on an enum with discriminants | `Type.impl(Eq, { eq = .. self.discriminant() == other.discriminant() })`, then `t == Type.I32` |
+| Limits of the primitives | `i32.MAX`; a value fits i32 when `.to_i32()` succeeds |
+| Constants grouped on a type | `Limits.PARSE_DEPTH` in `src/limits.zen`, every limit in one place (Appendix J) |
+| UFCS | `kids.push(x)` for a free function whose first parameter is the list |
+| `ignore` | `.ignore()` to drop a result on purpose |
+
+- **Built-in words are tokens.** `true`, `false` and `_` lex as their own kinds, so the parser, checker and lowering never compare text; only the lexer turns words into kinds.
+- **`.then` takes a body, not a value.** `.then(h.break())` would break immediately; the body has to run only when true. The spec allows `.then({ h.break() })`; stage 0 needs `() { .. }`.
+- **Missing in std, for our own:** `is_ok()` on `Res` (today `.match({ Ok(_) => true, None => false })`).

@@ -91,7 +91,7 @@ main = (env: Env) Res<i32, IoError> {
     }).try();
     s.run("a match with arms", (t) {
         expect_tree(t, "f = (b: bool) i32 { b.match({ true => 1, false => 2 }) }",
-            "Function f Param bool i32 Block Match b Arm true 1 Arm false 2")
+            "Function f Param bool i32 Block Match b Arm True 1 Arm False 2")
     }).try();
     s.run("a match with positional bodies", (t) {
         expect_tree(t, "f = (b: bool) i32 { b.match({ 1 }, { 2 }) }", "Function f Param bool i32 Block Match b Arm 1 Arm 2")

@@ -155,21 +155,13 @@ Emitter = {
         text = self.p.tree.text(n);
         n.kind.match({
             Int       => Ok(i32_const(text.parse_usize().match({ Ok(v) => v.to_u64(), None => 0 }))),
-            Name      => Ok(self.name(text)),
+            Name      => Ok(self.names.lookup(text).match({ Ok(v) => v, None => i32_const(0) })),
+            True      => Ok(Value.Constant(Constant.Bool(true))),
+            False     => Ok(Value.Constant(Constant.Bool(false))),
             Binary(o) => self.binary(o, n),
             Call      => self.call(n),
             Match     => self.bool_match(n),
             _         => Ok(i32_const(0)),
-        })
-    }
-
-    name = (self: @Self, text: str) Value {
-        text.eq("true").match({
-            true  => Value.Constant(Constant.Bool(true)),
-            false => text.eq("false").match({
-                true  => Value.Constant(Constant.Bool(false)),
-                false => self.names.lookup(text).match({ Ok(v) => v, None => i32_const(0) }),
-            }),
         })
     }
 
@@ -229,18 +221,22 @@ Emitter = {
     }
 
     // The value of the arm that runs when the subject is `which`: the first or second
-    // positional body, or the arm whose pattern names it, or the `_` arm.
+    // positional body, or the first arm whose pattern takes it.
     arm_for = (self: @Self, n: Node, which: bool) Node {
         first = self.child(n, 1);
         (first.count == 1).match({
             true  => self.child(self.child(n, which.match({ true => 1, false => 2 })), 0),
             false => {
-                wanted = which.match({ true => "true", false => "false" });
                 found ::= first;
                 Range(1, n.count).loop((h, k) {
                     arm = self.child(n, k);
-                    text = self.p.tree.text(self.child(arm, 0));
-                    (text.eq(wanted) || text.eq("_")).then(() { found = arm; h.break(); });
+                    runs = self.child(arm, 0).kind.match({
+                        True     => which,
+                        False    => !which,
+                        Wildcard => true,
+                        _        => false,
+                    });
+                    runs.then(() { found = arm; h.break(); });
                 });
                 self.child(found, 1)
             },

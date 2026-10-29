@@ -9,6 +9,9 @@
 
 Kind* = {
     | Name
+    | True          // true
+    | False         // false
+    | Wildcard      // _
     | At            // @Self @meta @scope
     | Int
     | Float
@@ -117,7 +120,12 @@ start = (s: Source, at: usize) Start {
             true  => Start.Name,
             false => is_digit(c).match({
                 true  => Start.Digit,
-                false => c.match({ '"' => Start.Quote, '\'' => Start.Apostrophe, '@' => Start.At, _ => Start.Other }),
+                false => c.match({
+                    '"'  => Start.Quote,
+                    '\'' => Start.Apostrophe,
+                    '@'  => Start.At,
+                    _    => Start.Other,
+                }),
             }),
         }),
     })
@@ -127,13 +135,26 @@ start = (s: Source, at: usize) Start {
 token = (s: Source, at: usize) Token {
     start(s, at).match({
         End        => span(Kind.End, at, at),
-        Name       => span(Kind.Name, at, s.scan(at, (c) { is_ident_cont(c) })),
+        Name       => word(s, at, s.scan(at, (c) { is_ident_cont(c) })),
         Digit      => number(s, at),
         Quote      => quoted(s, at, '"', Kind.Str),
         Apostrophe => quoted(s, at, '\'', Kind.Char),
         At         => span(Kind.At, at, s.scan(at + 1, (c) { is_ident_cont(c) })),
         Other      => symbol(s, at),
     })
+}
+
+// A name, or one of the built-in words that are tokens of their own.
+word = (s: Source, at: usize, end: usize) Token {
+    w = s.text.slice(at, end);
+    kind = w.eq("true").match({
+        true  => Kind.True,
+        false => w.eq("false").match({
+            true  => Kind.False,
+            false => w.eq("_").match({ true => Kind.Wildcard, false => Kind.Name }),
+        }),
+    });
+    span(kind, at, end)
 }
 
 // Decimal only. A leading zero is refused (`010`), and the value must fit u64.
@@ -168,7 +189,8 @@ quoted = (s: Source, at: usize, close: u8, kind: Kind) Token {
         (c == '\\').match({
             true  => {
                 known = is_escape(s.byte(i + 1));
-                (known || bad.match({ Ok(_) => true, None => false })).match({ true => (), false => { bad = Ok(i); } });
+                first_bad = !known && bad.match({ Ok(_) => false, None => true });
+                first_bad.then(() { bad = Ok(i); });
                 i = i + 2;
             },
             false => { i = i + 1; },
@@ -184,7 +206,16 @@ quoted = (s: Source, at: usize, close: u8, kind: Kind) Token {
 }
 
 is_escape = (c: u8) bool {
-    c.match({ 'n' => true, 't' => true, 'r' => true, '0' => true, '\\' => true, '"' => true, '\'' => true, _ => false })
+    c.match({
+        'n'  => true,
+        't'  => true,
+        'r'  => true,
+        '0'  => true,
+        '\\' => true,
+        '"'  => true,
+        '\'' => true,
+        _    => false,
+    })
 }
 
 // Operators and punctuation, longest match first.
@@ -208,7 +239,10 @@ symbol = (s: Source, at: usize) Token {
         '/' => one(Kind.Slash),
         '%' => one(Kind.Percent),
         ':' => (n == ':').match({
-            true  => (s.byte(at + 2) == '=').match({ true => span(Kind.Define, at, at + 3), false => two(Kind.ColonColon) }),
+            true  => (s.byte(at + 2) == '=').match({
+                true  => span(Kind.Define, at, at + 3),
+                false => two(Kind.ColonColon),
+            }),
             false => one(Kind.Colon),
         }),
         '=' => n.match({ '=' => two(Kind.Equal), '>' => two(Kind.Arrow), _ => one(Kind.Assign) }),

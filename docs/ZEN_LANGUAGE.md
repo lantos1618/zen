@@ -195,9 +195,45 @@ Timespec = c.record("time.h", "struct timespec", { tv_sec: c_long, tv_nsec: c_lo
 
 These are explicit declarations checked against the real header. There is no header parsing and no inferred link flags.
 
-## 14. Comptime and `@meta` — *fit + lower, T1*
+## 14. Comptime and `@meta` — *fit + lower, T0 reading, T1 walks, T2 building*
 
-`@meta(n: T).fields().loop((h, field) { .. n.at(field) .. })` walks a type's fields at compile time. `@meta(v).kind` is a typecase.
+`@meta` is the only reflection, and it carries the `@` because only the compiler can answer it. It returns the compiler's own declaration nodes:
+
+```zen
+@meta(T)     // a type      -> its Decl
+@meta(v)     // a value     -> the Decl of v's type; for an enum value, also .variant
+
+Decl    = { name: str, module: str, exported: bool, kind: Kind }
+Kind    = { Primitive: Prim | Struct: { fields: [Field] } | Enum: { variants: [Variant] }
+          | Function: { params: [Param], result: Decl }
+          | Array: { element: Decl, count: usize } | Ptr: Decl | Alias: Decl }
+Field   = { name: str, type: Decl, mutable: bool, has_default: bool, exported: bool }
+Variant = { name: str, index: u32, payload: Res<Decl> }
+Param   = { name: str, type: Decl, mutable: bool }
+```
+
+```zen
+name* = (self: @Self) str { @meta(self).variant.name }        // an enum value's own name
+
+describe = <T>(v: T) {                                        // a typecase on .kind
+    @meta(v).kind.match({
+        Struct(s) => s.fields.loop((f) { println("{} = {}", f.name, v.at(f)) }),
+        Enum(e)   => println("{} of {}", @meta(v).variant.name, e.variants.len),
+        _         => println("{}", @meta(v).name),
+    })
+}
+```
+
+| Tier | What |
+|---|---|
+| T0 | `.kind` typecase; `.variant` (name, index); field, variant and parameter lists |
+| T1 | walks that read values, `v.at(field)`: derived `Eq`, `Hash`, `Display`, CLI types (§15) |
+| T2 | building new types (`AddFoo(Circle)`), identified by their generating call |
+
+- **Declarations only, never bodies.** A function's parameters and result can be read; its statements can't. Reading or rewriting bodies would be macros, a second language and a larger attack surface.
+- **Compile time only.** Walks are unrolled while checking (COMPILER.md I.4). The one runtime trace: `.variant.name` on a runtime value reads a constant name table the compiler emits per enum.
+- **Nothing reflective without `@`.** There is no `variant_name()` or `type_name()` method; the stage-0 compiler's `variant_name()` is used only until the new compiler builds itself.
+
 Comptime is the language without IO or actors. It may allocate, it is step-limited, and it has no file reads.
 
 ## 15. Command lines are types — *lower, T1*

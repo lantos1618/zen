@@ -37,7 +37,7 @@ add = (dst: u32, lhs: Value, rhs: Value) Instruction {
 
 // Variant 0: the real sum_to. 1: b0 never sets r1. 2: the branch tests an I32.
 // 3: one instruction id is far past the function's instruction count.
-sum_to = (a: Alloc, variant: u32) Res<Module, AllocError> {
+sum_to* = (a: Alloc, variant: u32) Res<Module, AllocError> {
     sig_params ::= a.Vec<ScalarType>();
     sig_params.add(ScalarType.I32).try();
     sigs ::= a.Vec<Signature>();

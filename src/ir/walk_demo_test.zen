@@ -1,0 +1,109 @@
+// A demo of walking a function body as validated IR: what `@meta(f).ir` would give.
+// It prints sum_to's body, then answers two questions about it by walking the same data.
+
+{ Res, Ok, Err, None } = std.core
+{ Alloc, AllocError } = std.mem
+{ println } = std.io
+{ Env } = std.env
+{ Function, Value, Instruction, Exit, IntOp, Overflow, FunctionId } = ir.records
+{ validate } = ir.validate
+{ DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
+{ sum_to } = ir.selftest
+
+op_name = (op: IntOp) str {
+    op.match({
+        Add(m)      => m.match({ Checked => "add (checked)", Wrapping => "add" }),
+        Subtract(m) => m.match({ Checked => "sub (checked)", Wrapping => "sub" }),
+        Multiply(m) => m.match({ Checked => "mul (checked)", Wrapping => "mul" }),
+        _           => op.variant_name(),
+    })
+}
+
+// 1. Print the body, block by block.
+listing = (f: Function) {
+    f.blocks.loop((b) {
+        println("b{}:", b.id.index);
+        b.instructions.loop((rec) {
+            rec.instruction.match({
+                Set(x)        => println("  #{}  r{} = set", rec.id.index, x.dst.index),
+                IntBinary(x)  => println("  #{}  r{} = {} r{}, {}", rec.id.index, x.dst.index, op_name(x.op),
+                    x.lhs.match({ Register(r) => r.index, Constant(_) => 999 }),
+                    x.rhs.match({ Register(_) => "reg", Constant(_) => "const" })),
+                IntCompare(x) => println("  #{}  r{} = compare {}", rec.id.index, x.dst.index, x.op.variant_name()),
+                Call(_)       => println("  #{}  call", rec.id.index),
+                _             => println("  #{}  {}", rec.id.index, rec.instruction.variant_name()),
+            });
+        });
+        b.exit.match({
+            Jump(x)   => println("  jump b{}", x.target.index),
+            Branch(x) => println("  branch -> b{} / b{}", x.yes.index, x.no.index),
+            Return(_) => println("  return"),
+            _         => println("  {}", b.exit.variant_name()),
+        });
+    });
+}
+
+// 2. A lint: does the body call anything?
+calls = (f: Function) u32 {
+    n :: u32 = 0;
+    f.blocks.loop((b) {
+        b.instructions.loop((rec) {
+            rec.instruction.match({ Call(_) => { n = n + 1; }, _ => () });
+        });
+        b.exit.match({ CallNever(_) => { n = n + 1; }, _ => () });
+    });
+    n
+}
+
+// 3. Where can it trap? Checked arithmetic, division, shifts, checked conversions.
+trap_sites = (f: Function) {
+    f.blocks.loop((b) {
+        b.instructions.loop((rec) {
+            reason = rec.instruction.match({
+                IntBinary(x) => x.op.match({
+                    Add(m)      => m.match({ Checked => "IntegerOverflow", Wrapping => "" }),
+                    Subtract(m) => m.match({ Checked => "IntegerOverflow", Wrapping => "" }),
+                    Multiply(m) => m.match({ Checked => "IntegerOverflow", Wrapping => "" }),
+                    Divide      => "DivisionByZero",
+                    Remainder   => "DivisionByZero",
+                    _           => x.op.is_shift().match({ true => "InvalidShift", false => "" }),
+                }),
+                Convert(x)   => x.op.match({ IntegerChecked => "InvalidConversion", _ => "" }),
+                _            => "",
+            });
+            (reason.len > 0).match({
+                true  => println("  b{} #{} may trap: {}", b.id.index, rec.id.index, reason),
+                false => (),
+            });
+        });
+        b.exit.match({ Trap(t) => println("  b{} exit traps: code {}", b.id.index, t.code.code()), _ => () });
+    });
+}
+
+walk = (a: Alloc) Res<(), Diagnostic> {
+    built = sum_to(a, 0).match({ Ok(m) => Ok(m), Err(_) => Err(oom()) });
+    m = built.try();
+    ir = validate(a, m).try();
+    found = ir.view().function(FunctionId(index: 0)).match({ Ok(f) => Ok(f), None => Err(oom()) });
+    f = found.try();
+
+    println("== sum_to, walked as validated IR ==");
+    listing(f);
+    println("");
+    println("calls anything? {}", (calls(f) > 0).match({ true => "yes", false => "no: a leaf function" }));
+    println("trap sites:");
+    trap_sites(f);
+    Ok
+}
+
+oom = () Diagnostic {
+    Diagnostic(code: DiagnosticCode.ResourceLimit, stage: DiagnosticStage.IR,
+        function: None, block: None, instruction: None, message: "out of memory")
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    walk(env.mem.alloc()).match({
+        Ok     => Ok(0),
+        Err(d) => { println("failed: {}", d.message); Ok(1) },
+    })
+}

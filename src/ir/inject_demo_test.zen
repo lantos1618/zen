@@ -17,8 +17,8 @@
 { validate } = ir.validate
 { RuntimeValue, Outcome, run } = ir.interp
 { sum_to } = ir.selftest
+{ i32_const } = ir.build
 
-i32 = (n: u64) Value { Value.Constant(Constant.Integer(IntegerConstant(type: ScalarType.I32, bits: n))) }
 
 is_checked_add = (i: Instruction) bool {
     i.match({
@@ -42,7 +42,7 @@ count_adds = (a: Alloc, m: Module, broken: bool) Res<Module, AllocError> {
         dst: count,
         op: IntOp.Add(Overflow.Wrapping),
         lhs: Value.Register(count),
-        rhs: i32(1),
+        rhs: i32_const(1),
     ));
     next :: u32 = 0;
     blocks ::= a.Vec<Block>();
@@ -50,7 +50,7 @@ count_adds = (a: Alloc, m: Module, broken: bool) Res<Module, AllocError> {
         records ::= a.Vec<InstructionRecord>();
         (b.id.index == f.entry.index).match({
             true  => {
-                first = broken.match({ true => tick, false => Instruction.Set(Set(dst: count, value: i32(0))) });
+                first = broken.match({ true => tick, false => Instruction.Set(Set(dst: count, value: i32_const(0))) });
                 records.add(InstructionRecord(id: InstructionId(index: next), instruction: first)).try();
                 next = next + 1;
             },

@@ -20,7 +20,7 @@ BUDGETS = {                       # directory -> lines
     "src/build": 1_800,           # build.zen, packages, FFI (BUILD_AND_PACKAGES.md 9)
     "src/std": 4_000,
     "runtime/zen_rt.c": 200,      # C: entry, traps, Env glue
-    "runtime/actor": 400,         # C: threads, mailboxes, stack switch (T2)
+    "runtime/actor": 600,         # C: workers, stealing, poller, monitor, stack switch (T2)
 }
 TOTAL = 25_000
 

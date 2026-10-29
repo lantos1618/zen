@@ -15,6 +15,23 @@ One model from the page to the message, and from the call to the wait: **every b
      Vec / String / Map ...  take an Alloc; their bytes live in that arena
 ```
 
+## 0. Lineage: Go's machinery, Pony's ownership
+
+| Idea | From | Taken as | Not taken, and why |
+|---|---|---|---|
+| Stackful lightweight tasks, plain calls, no `async` | Go goroutines | every actor turn runs on its own small stack; waits suspend it (section 4) | **growable copied stacks**: moving a stack needs exact pointer maps, and `Ptr<T>` makes that impossible. We reserve virtual memory instead. |
+| M:N scheduler, per-worker run queues, work stealing | Go (G-M-P), Pony | section 7 | — |
+| Netpoller: a socket wait parks the task, not the thread | Go | one poller thread (epoll / kqueue) behind `Turn` | — |
+| Syscall handoff: a blocked thread gives its queue away | Go | the same for every C call (section 7) | — |
+| `select` over many waits | Go | `io.any` / `io.all` (section 4) | **channels**: a mailbox already is one; two ways to send would be one too many |
+| Actors with behaviours, causal per-sender order | Pony | section 3 | — |
+| Reference capabilities `iso` / `val` / `ref` / `tag` | Pony | `iso` = `Region` consumed, `val` = `Frozen`/static, `ref` = anything inside one actor, `tag` = `Ref<A>` | **`box`, `trn` and capability syntax**: proven at the send, never written |
+| Per-actor heap | Pony | per-actor arena | **ORCA garbage collection**: an arena is dropped whole; churn gets a fresh region |
+| No data races, no locks | Pony | the send rule (section 5) | **Go's shared memory and mutexes** |
+| Blocking `ask` | Go's ergonomics | one-shot `ask` that suspends the turn | **Pony's no-blocking-ever rule**: promises everywhere are a colour by another name |
+| Failure isolation | Pony / Erlang | a trap ends one actor (section 6) | **Go's panic that kills the process** |
+| Preemption | — | none; a turn is short by contract, and the watchdog names one that isn't | **Go's async preemption**: signals and safe points cost a lot of runtime for a bug class we report instead |
+
 ## 1. Allocators
 
 ```zen
@@ -93,8 +110,9 @@ Waiting is something only a capability can do (law 2: no ambient authority). So,
 
 ```zen
 Io* = {                                    // passed like Alloc: a fat value, copied freely
-    wait*  = (self: @Self, on: Pending) Res<Wake, IoError>   // the one place a call stops
-    stack* = (self: @Self) Alloc                             // where a waiting call's frames live
+    wait* = (self: @Self, on: Pending) Res<Wake, IoError>          // the one place a call stops
+    any*  = (self: @Self, on: [Pending]) Res<usize, IoError>       // Go's select: the first to finish
+    all*  = (self: @Self, on: [Pending]) Res<IoError>              // wait for every one
 }
 fetch = (io: Io, net: Net, url: str, a: Alloc) Res<String, NetError> {
     conn = net.connect(io, url).try();     // may wait: how is io's business
@@ -105,18 +123,24 @@ fetch = (io: Io, net: Net, url: str, a: Alloc) Res<String, NetError> {
 | `Io` | Where it comes from | A wait does | Waiting frames live in | Other work meanwhile |
 |---|---|---|---|---|
 | `Blocking` | `env.io` in `main` | parks the OS thread | the thread's own stack | other threads only |
-| `Turn` | `ctx.io` inside an actor | suspends this turn, and the worker runs other actors | a stack carved from **the actor's arena** | other actors |
-| `Seeded` | tests (`ZEN_ACTOR_SEED`) | as `Turn`, with the next actor picked by a seeded generator | the actor's arena | deterministic interleaving |
+| `Turn` | `ctx.io` inside an actor | suspends this turn, and the worker runs other actors | the turn's own stack (below) | other actors |
+| `Seeded` | tests (`ZEN_ACTOR_SEED`) | as `Turn`, with the next actor picked by a seeded generator | the turn's own stack | deterministic interleaving |
 
 ```text
  Blocking:  thread stack ─ f ─ g ─ net.read ──(OS parks thread)──► resumes in place
- Turn:      actor arena:  [stack 64 KiB: f ─ g ─ net.read] ──(switch to scheduler)
+ Turn:      turn stack:   [f ─ g ─ net.read] ──(switch to scheduler)
             worker runs other actors ... reply arrives ──(switch back)──► resumes in place
 ```
 
 - **Stackful, not a compiler transform.** A suspended call keeps its real stack, so the compiler emits the same code for both. No state machines, no colouring, nothing in the IR. The switch is a small per-target routine in `runtime/actor` (save callee-saved registers and `sp`, load another).
 - **Nothing moves while waiting.** The suspended frames sit in memory the waiting actor owns, so pointers into them stay valid. A reply is written into the waiting frame's result slot under section 5's rules. That's the only copy.
-- **Stacks are memory like any other.** A `Turn` stack is a fixed-size block from the actor's arena (or `Mem` pages with a guard page). Deep recursion inside an actor hits the stack limit as a trap, ending that actor (section 6).
+- **Turn stacks are reserved, not grown.** Each is 1 MiB of *reserved* virtual memory from `Mem`, with a guard page below it. The OS commits pages only as they're touched, so a typical turn costs a few KiB.
+  - **No overflow slips past the guard:** frames over 4 KiB already probe each page in order (COMPILER.md F), so a deep call always hits the guard page. The runtime turns that fault into a `StackOverflow` trap that ends the actor. No prologue check and no change to §6.
+  - **A turn that finishes without waiting** gives its stack straight back to the worker's pool, so a hot stack is reused. Only a waiting turn keeps one.
+  - **Stacks never come from an arena:** arena memory has no guard page.
+- **Waiting on many things:** `io.any` / `io.all` wait on several pending operations in one turn. That's the `select` of this design. For real parallel work, spawn actors: they cost a mailbox and a state record, as in Pony.
+- **C calls count as blocking.** A `c.bind` call can't wait through `Io`, so the worker marks itself "in C". If the call runs longer than 20 µs, the monitor thread hands that worker's run queue to a spare thread (Go's syscall handoff). Other actors keep running, and nothing is spelled differently at the call.
+- **A C callback never gets an `Io`.** Its frame may sit on a C stack that assumes one OS thread (thread-local state such as `errno`), so it must not suspend. `callback` takes a named, non-capturing function, so it can't capture an `Io`; fit refuses an `Io` parameter on one.
 - **A waiting actor is not re-entered.** While its turn waits, its mailbox queues and its state can't change underneath it. A wait cycle (A asks B, and B asks A) is detected like a mailbox cycle and fails the newest ask with `Cycle`.
 
 The compiler checks none of this specially. `Io` is an ordinary interface, `wait` is an ordinary call into the runtime, and fit's normal rules decide who may hold an `Io` (it is SCOPED to the actor or thread that made it).
@@ -150,7 +174,11 @@ worker.run(batch.consume());                 // zero copy: B now owns those page
 
 ## 7. Scheduling
 
-- **One worker thread per CPU.** A turn runs up to 100 messages, then the actor goes to the back of the ready queue.
+- **One worker per CPU, each with its own run queue; an idle worker steals half of another's** (Go's P queues, Pony's scheduler).
+- **A turn runs up to 100 messages,** then the actor goes to the back of its worker's queue.
+- **One poller thread** (epoll on Linux, kqueue on macOS) owns every socket wait. A ready socket makes its waiting actor ready again.
+- **One monitor thread** does three jobs: hand off workers stuck in C calls (section 4), fire `send_after` timers, and run the watchdog. The watchdog prints the wait-for graph when nothing can make progress, and names a turn that has run past its tick.
+- **No preemption.** A turn that loops forever is a bug the watchdog reports, not something the scheduler hides.
 - **Seeded schedules for tests:** `ZEN_ACTOR_SEED=n` runs everything on one thread, choosing the next actor from a seeded generator. Each seed is one reproducible interleaving, so concurrency bugs become ordinary failing tests.
 - **Plain threads** (`env.threads`) are an escape hatch. Data crossing to them follows the same section 5 rule, and they wait through `Blocking`.
 
@@ -162,7 +190,8 @@ worker.run(batch.consume());                 // zero copy: B now owns those page
 | A send argument is plain, `str`, `val` or a consumed `Region` | fit, at the call |
 | The sender has no name left after `.consume()` | flow (I.3, maybe-moved) |
 | A behaviour becomes `turn(state: Ptr, msg: Ptr)`; a send becomes `zen_send(ref, behaviour_id, msg, size)` | lower |
-| Threads, mailboxes, atomics, parking, stack switching | runtime C (`runtime/actor/`), not the IR |
+| Threads, run queues, stealing, poller, monitor, atomics, stack switching | runtime C (`runtime/actor/`), not the IR |
+| A C callback has no `Io` parameter | fit |
 
 ## 9. Tiers and budgets
 
@@ -171,11 +200,11 @@ worker.run(batch.consume());                 // zero copy: B now owns those page
 | `Mem`, `Alloc`, `Arena`, `REGION` checks | T0: the compiler itself runs on arenas | `std/mem` ≤ 400 lines |
 | `Fixed`, `copy_to` | T1 | (inside `std/mem`) |
 | `Io` with `Blocking` | T1: the compiler and CLIs wait this way | (inside `std/io`) |
-| Actors, `Turn` / `Seeded` Io, `Region`, `Frozen`, `Reply`, the scheduler | T2 | `std/actor` ≤ 800 Zen + `runtime/actor` ≤ 400 C |
+| Actors, `Turn` / `Seeded` Io, `Region`, `Frozen`, `Reply`, the scheduler | T2 | `std/actor` ≤ 800 Zen + `runtime/actor` ≤ 600 C |
 
 ## 10. Open decisions
 
 - **`Frozen<T>` release:** counted per region (as above), or frozen data lives until process exit (simpler, and it leaks by design)?
-- **`Turn` stack size:** a fixed 64 KiB per waiting turn, or set per actor at `spawn`?
+- **Turn stack reservation:** a fixed 1 MiB reserved per turn, or set per actor at `spawn`?
 - **Bounded mailbox size:** a fixed 256, or set per actor at `spawn`?
 - **`grow` on an arena that isn't at the last allocation:** copy (as above), or refuse so the caller picks a fresh region?

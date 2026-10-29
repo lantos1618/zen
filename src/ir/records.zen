@@ -15,7 +15,17 @@ StackObjectId* = { index*: u32 }
 GlobalId* = { index*: u32 }
 
 ScalarType* = {
-    Bool | I8 | U8 | I16 | U16 | I32 | U32 | I64 | U64 | F32 | F64
+    Bool
+        | I8
+        | U8
+        | I16
+        | U16
+        | I32
+        | U32
+        | I64
+        | U64
+        | F32
+        | F64
         | Pointer
         | FunctionPointer: SignatureId,
 
@@ -31,9 +41,9 @@ ScalarType* = {
         self.match({
             FunctionPointer(s) => other.match({
                 FunctionPointer(t) => s.index == t.index,
-                _ => false,
+                _                  => false,
             }),
-            _ => self.code() == other.code(),
+            _                  => self.code() == other.code(),
         })
     }
 
@@ -63,11 +73,11 @@ Constant* = {
 
     type* = (self: @Self) ScalarType {
         self.match({
-            Bool(_) => ScalarType.Bool,
-            Integer(c) => c.type,
-            F32Bits(_) => ScalarType.F32,
-            F64Bits(_) => ScalarType.F64,
-            NullPointer => ScalarType.Pointer,
+            Bool(_)                => ScalarType.Bool,
+            Integer(c)             => c.type,
+            F32Bits(_)             => ScalarType.F32,
+            F64Bits(_)             => ScalarType.F64,
+            NullPointer            => ScalarType.Pointer,
             NullFunctionPointer(s) => ScalarType.FunctionPointer(s),
         })
     }
@@ -77,9 +87,17 @@ Value* = { Register: RegisterId | Constant: Constant }
 
 Overflow* = { Checked | Wrapping }
 IntOp* = {
-    Add: Overflow | Subtract: Overflow | Multiply: Overflow
-        | Divide | Remainder | And | Or | Xor
-        | ShiftLeft | ShiftRightLogical | ShiftRightArithmetic,
+    Add: Overflow
+        | Subtract: Overflow
+        | Multiply: Overflow
+        | Divide
+        | Remainder
+        | And
+        | Or
+        | Xor
+        | ShiftLeft
+        | ShiftRightLogical
+        | ShiftRightArithmetic,
 
     is_shift* = (self: @Self) bool {
         self.match({ ShiftLeft => true, ShiftRightLogical => true, ShiftRightArithmetic => true, _ => false })
@@ -91,19 +109,37 @@ IntPredicate* = {
 
     is_equality* = (self: @Self) bool { self.match({ Equal => true, NotEqual => true, _ => false }) }
 }
-FloatPredicate* = { Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual | Unordered }
+FloatPredicate* = { Equal
+    | NotEqual
+    | Less
+    | LessEqual
+    | Greater
+    | GreaterEqual
+    | Unordered }
 ConvertOp* = {
-    IntegerChecked | IntegerWrapping | IntegerToFloat | FloatToIntegerChecked
-        | FloatWidth | BoolToInteger | PointerToInteger | Bitcast
+    IntegerChecked
+        | IntegerWrapping
+        | IntegerToFloat
+        | FloatToIntegerChecked
+        | FloatWidth
+        | BoolToInteger
+        | PointerToInteger
+        | Bitcast
 }
-AddressBase* = { Register: RegisterId | StackObject: StackObjectId | Symbol: SymbolId }
+AddressBase* = { Register: RegisterId
+    | StackObject: StackObjectId
+    | Symbol: SymbolId }
 Callee* = { Function: FunctionId | Register: RegisterId }
 Access* = { Ordinary | Volatile }
 MemoryAccess* = { alignment*: u32, access*: Access }
 
 TrapCode* = {
-    IntegerOverflow | DivisionByZero | InvalidShift | InvalidConversion
-        | InvalidValue | StackOverflow
+    IntegerOverflow
+        | DivisionByZero
+        | InvalidShift
+        | InvalidConversion
+        | InvalidValue
+        | StackOverflow
         | Explicit: u32,
 
     // The program result a trap reports (§1.2).
@@ -131,11 +167,19 @@ Store* = { address*: Value, value*: Value, memory*: MemoryAccess }
 Call* = { dst*: Res<RegisterId>, callee*: Callee, args*: Vec<Value> }
 
 Instruction* = {
-    Set: Set | Select: Select
-        | IntBinary: IntBinary | FloatBinary: FloatBinary | FloatNegate: FloatNegate
-        | IntCompare: IntCompare | PointerCompare: PointerCompare | FloatCompare: FloatCompare
-        | Convert: Convert | Address: Address
-        | Load: Load | Store: Store | Call: Call
+    Set: Set
+        | Select: Select
+        | IntBinary: IntBinary
+        | FloatBinary: FloatBinary
+        | FloatNegate: FloatNegate
+        | IntCompare: IntCompare
+        | PointerCompare: PointerCompare
+        | FloatCompare: FloatCompare
+        | Convert: Convert
+        | Address: Address
+        | Load: Load
+        | Store: Store
+        | Call: Call
 }
 
 SwitchCase* = { value*: Constant, target*: BlockId }
@@ -147,8 +191,12 @@ CallNever* = { callee*: Callee, args*: Vec<Value> }
 Trap* = { code*: TrapCode }
 
 Exit* = {
-    Jump: Jump | Branch: Branch | Switch: Switch
-        | Return: Return | CallNever: CallNever | Trap: Trap
+    Jump: Jump
+        | Branch: Branch
+        | Switch: Switch
+        | Return: Return
+        | CallNever: CallNever
+        | Trap: Trap
 }
 
 ReturnContract* = { Returns: Res<ScalarType> | Never }
@@ -196,9 +244,15 @@ Function* = {
     entry*: BlockId,
     blocks*: Vec<Block>,                    // BlockId is the position
 
-    register_type* = (self: @Self, r: RegisterId) Res<ScalarType> { self.register_types.get(r.index.to_usize()) }
-    block* = (self: @Self, b: BlockId) Res<Block> { self.blocks.get(b.index.to_usize()) }
-    object* = (self: @Self, o: StackObjectId) Res<StackObject> { self.objects.get(o.index.to_usize()) }
+    register_type* = (self: @Self, r: RegisterId) Res<ScalarType> { self.register_types.get(
+        r.index.to_usize()
+    ) }
+    block* = (self: @Self, b: BlockId) Res<Block> { self.blocks.get(
+        b.index.to_usize()
+    ) }
+    object* = (self: @Self, o: StackObjectId) Res<StackObject> { self.objects.get(
+        o.index.to_usize()
+    ) }
 }
 
 // FunctionIds are dense across definitions and imports: definitions first, then imports.
@@ -213,14 +267,22 @@ Module* = {
     exports*: Vec<Export>,
     trap_handler*: Res<FunctionId>,     // an Import of type (U32) -> Never
 
-    signature* = (self: @Self, s: SignatureId) Res<Signature> { self.signatures.get(s.index.to_usize()) }
-    symbol* = (self: @Self, s: SymbolId) Res<Symbol> { self.symbols.get(s.index.to_usize()) }
-    global* = (self: @Self, g: GlobalId) Res<Global> { self.globals.get(g.index.to_usize()) }
-    function* = (self: @Self, f: FunctionId) Res<Function> { self.functions.get(f.index.to_usize()) }
+    signature* = (self: @Self, s: SignatureId) Res<Signature> { self.signatures.get(
+        s.index.to_usize()
+    ) }
+    symbol* = (self: @Self, s: SymbolId) Res<Symbol> { self.symbols.get(
+        s.index.to_usize()
+    ) }
+    global* = (self: @Self, g: GlobalId) Res<Global> { self.globals.get(
+        g.index.to_usize()
+    ) }
+    function* = (self: @Self, f: FunctionId) Res<Function> { self.functions.get(
+        f.index.to_usize()
+    ) }
     import* = (self: @Self, f: FunctionId) Res<Import> {
         i = f.index.to_usize();
         (i < self.functions.len).match({
-            true => None,
+            true  => None,
             false => self.imports.get(i - self.functions.len),
         })
     }
@@ -229,7 +291,7 @@ Module* = {
     signature_of* = (self: @Self, f: FunctionId) Res<SignatureId> {
         self.function(f).match({
             Ok(function) => Ok(function.signature),
-            None => Ok(self.import(f).try().signature),
+            None         => Ok(self.import(f).try().signature),
         })
     }
 }

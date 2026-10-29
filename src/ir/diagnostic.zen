@@ -5,13 +5,29 @@
 { FunctionId, BlockId, InstructionId } = ir.records
 
 DiagnosticCode* = {
-    UnknownName | DuplicateName | PrivateImport | InvalidRecursiveType
-        | InvalidId | DuplicateId | TypeMismatch | ArityMismatch
-        | MissingExit | InvalidSuccessor | DuplicateSwitchCase | UninitializedRegister
-        | InvalidConstant | InvalidAlignment | InvalidLayout | InvalidSymbol
-        | InvalidInstructionForm | InvalidReturnContract
-        | UnsupportedTarget | UnsupportedFeature | MissingLowering
-        | ResourceLimit | ExternalToolFailure,
+    UnknownName
+        | DuplicateName
+        | PrivateImport
+        | InvalidRecursiveType
+        | InvalidId
+        | DuplicateId
+        | TypeMismatch
+        | ArityMismatch
+        | MissingExit
+        | InvalidSuccessor
+        | DuplicateSwitchCase
+        | UninitializedRegister
+        | InvalidConstant
+        | InvalidAlignment
+        | InvalidLayout
+        | InvalidSymbol
+        | InvalidInstructionForm
+        | InvalidReturnContract
+        | UnsupportedTarget
+        | UnsupportedFeature
+        | MissingLowering
+        | ResourceLimit
+        | ExternalToolFailure,
 
     name* = (self: @Self) str {
         self.match({
@@ -31,7 +47,13 @@ DiagnosticCode* = {
     }
 }
 
-DiagnosticStage* = { Source | IR | Target | Selection | Allocation | Assembly | Toolchain }
+DiagnosticStage* = { Source
+    | IR
+    | Target
+    | Selection
+    | Allocation
+    | Assembly
+    | Toolchain }
 
 Diagnostic* = {
     code*: DiagnosticCode,

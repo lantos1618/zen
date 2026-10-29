@@ -119,15 +119,23 @@ Parser = {
         self.add(NodeKind.Function, name.start, self.span(body).end, kids)
     }
 
-    // parameters = (Name ":" type ("," Name ":" type)*)? ")"
+    // parameters = (parameter ("," parameter)* ","?)? ")"
     parameters = (self :: @Self, kids :: Vec<u32>) Res<(), ParseError> {
-        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
-            self.accept(Kind.RParen).then(() { h.break() });
-            p = self.parameter().try();
-            kids.push(p).try();
-            (!self.accept(Kind.Comma)).then(() { self.expect(Kind.RParen, "`,` or `)`").try(); h.break(); });
-        });
+        self.comma_list(kids, Kind.RParen, "`,` or `)`", () { self.parameter() }).try();
         Ok
+    }
+
+    // item ("," item)* ","? close, or just close: each item's node joins kids, and the
+    // closing token is returned. Every comma-separated list in the grammar is this one.
+    comma_list = (self :: @Self, kids :: Vec<u32>, close: Kind, closing: str, item: () Res<u32, ParseError>)
+        Res<Token, ParseError> {
+        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
+            self.peek().kind.is(close).then(() { h.break() });
+            node = item().try();
+            kids.push(node).try();
+            (!self.accept(Kind.Comma)).then(() { h.break() });
+        });
+        self.expect(close, closing)
     }
 
     // parameter = Name ":" type
@@ -240,12 +248,7 @@ Parser = {
         starts_pattern = pattern(self.peek().kind).match({ Ok(_) => true, None => false });
         arms = starts_pattern && self.ahead(1).kind.is(Kind.Arrow);
         arms.match({
-            true  => Range(0, Limits.PARSE_ITEMS).loop((h, _) {
-                self.accept(Kind.RBrace).then(() { h.break() });
-                a = self.arm().try();
-                kids.push(a).try();
-                (!self.accept(Kind.Comma)).then(() { self.expect(Kind.RBrace, "`,` or `}`").try(); h.break(); });
-            }),
+            true  => { self.comma_list(kids, Kind.RBrace, "`,` or `}`", () { self.arm() }).try(); },
             false => {
                 value = self.expression().try();
                 body = self.expect(Kind.RBrace, "`}`").try();
@@ -301,18 +304,12 @@ Parser = {
         })
     }
 
-    // call = callee "(" (expression ("," expression)*)? ")", after the "("
+    // call = callee "(" (expression ("," expression)* ","?)? ")", after the "("
     call = (self :: @Self, name: Token, callee: u32) Res<u32, ParseError> {
         kids ::= self.a.Vec<u32>();
         kids.push(callee).try();
-        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
-            self.accept(Kind.RParen).then(() { h.break() });
-            arg = self.expression().try();
-            kids.push(arg).try();
-            (!self.accept(Kind.Comma)).then(() { self.expect(Kind.RParen, "`,` or `)`").try(); h.break(); });
-        });
-        close = self.tokens.get(self.at - 1).match({ Ok(t) => t.end, None => name.end });
-        self.add(NodeKind.Call, name.start, close, kids)
+        close = self.comma_list(kids, Kind.RParen, "`,` or `)`", () { self.expression() }).try();
+        self.add(NodeKind.Call, name.start, close.end, kids)
     }
 }
 

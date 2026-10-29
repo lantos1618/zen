@@ -1,6 +1,6 @@
 # Memory, allocators and actors
 
-One model from the page to the message, and from the call to the wait: **every byte has exactly one owner, and the only things that cross between owners are values nobody can change (`val`) or values handed over whole (`iso`).** An actor is the unit of ownership, so concurrency needs no locks, and a failure frees exactly what the failing owner held.
+One model from the page to the message, and from the call to the wait. `Alloc` is memory; `Env` is the zone (memory pages plus how calls wait): **every byte has exactly one owner, and the only things that cross between owners are values nobody can change (`val`) or values handed over whole (`iso`).** An actor is the unit of ownership, so concurrency needs no locks, and a failure frees exactly what the failing owner held.
 
 ```text
  OS pages ──► Mem (env.mem: page / release)              capability, from main's Env
@@ -23,7 +23,7 @@ One model from the page to the message, and from the call to the wait: **every b
 | M:N scheduler, per-worker run queues, work stealing | Go (G-M-P), Pony | section 7 | — |
 | Netpoller: a socket wait parks the task, not the thread | Go | one poller thread (epoll / kqueue) behind `Turn` | — |
 | Syscall handoff: a blocked thread gives its queue away | Go | the same for every C call (section 7) | — |
-| `select` over many waits | Go | `io.any` / `io.all` (section 4) | **channels**: a mailbox already is one; two ways to send would be one too many |
+| `select` over many waits | Go | `env.any` / `env.all` (section 4) | **channels**: a mailbox already is one; two ways to send would be one too many |
 | Actors with behaviours, causal per-sender order | Pony | section 3 | — |
 | Reference capabilities `iso` / `val` / `ref` / `tag` | Pony | `iso` = `Region` consumed, `val` = `Frozen`/static, `ref` = anything inside one actor, `tag` = `Ref<A>` | **`box`, `trn` and capability syntax**: proven at the send, never written |
 | Per-actor heap | Pony | per-actor arena | **ORCA garbage collection**: an arena is dropped whole; churn gets a fresh region |
@@ -89,42 +89,49 @@ There are no copy constructors, no `Clone` and no hidden deep copies. A deep cop
 ```
 
 ```zen
-Counter = {
-    n :: u64 = 0,
-    add*   ::= (self :: @Self, k: u64) { self.n = self.n + k }        // a behaviour: runs in a turn
-    total* ::= (self: @Self, reply: Reply<u64>) { reply.send(self.n) }
-}
-c = env.spawn(Counter()).try();     // Ref<Counter>: an address, copies freely
-c.add(5);                           // a send: enqueued, returns at once
-t = c.ask(io, Counter.total).try(); // one-shot request/reply: waits, so it takes an Io
+Counter = { n :: u64 = 0 }
+Counter.impl(Actor, {
+    add   = (self :: @Self, env: Env, k: u64) { self.n = self.n + k }           // behaviour
+    total = (self: @Self, env: Env, reply: Reply<u64>) { reply.send(self.n) }
+})
+c = env.spawn(Counter()).try();      // Ref<Counter>: an address, copies freely
+c.add(5);                            // a send: enqueued, returns at once
+t = c.ask(env, Counter.total).try(); // request/reply: waits, so it takes the caller's Env
 ```
 
+- **Each behaviour receives its actor's own `Env`** (section 4), not `main`'s. That `Env` is the actor's memory and its way of waiting.
 - **An actor owns its state and its arena.** Only one worker runs it at a time; it handles one message per turn, FIFO per sender.
 - **A behaviour is a method whose call is a send.** It returns nothing to the sender, and replies come back as messages (`Reply<T>`, one-shot).
 - **Mailboxes are bounded (256).** A sender that hits a full mailbox waits. That's backpressure, not unbounded memory. A cycle of waiting senders is detected, and one send goes through, so it can't wedge.
 - **No locks, no atomics, no shared mutable memory in the language.** The runtime uses atomics internally, in C, and nothing else does (COMPILER.md removed atomics from the core IR).
 
-## 4. Sync or async is a capability, not a function colour
+## 4. `Env` is the zone: memory and waiting in one capability
 
-Waiting is something only a capability can do (law 2: no ambient authority). So, like `Alloc` decides where bytes live, an **`Io` decides how a call waits**. The same function runs blocking in a CLI and suspending inside an actor, and it is written once.
+`Alloc` is memory and nothing else. **`Env` is the zone you're running in**: where pages come from, and how a call waits. `main` gets the process's `Env`; every actor gets its own and hands it to each behaviour. A function is sync or async only through the `Env` it was given, so every function is "multisync" by default (Nim needs a macro and two copies for this; here it's one compiled function).
 
-```zen
-Io* = {                                    // passed like Alloc: a fat value, copied freely
-    wait* = (self: @Self, on: Pending) Res<Wake, IoError>          // the one place a call stops
-    any*  = (self: @Self, on: [Pending]) Res<usize, IoError>       // Go's select: the first to finish
-    all*  = (self: @Self, on: [Pending]) Res<IoError>              // wait for every one
-}
-fetch = (io: Io, net: Net, url: str, a: Alloc) Res<String, NetError> {
-    conn = net.connect(io, url).try();     // may wait: how is io's business
-    conn.read_all(io, a)
-}
+```text
+ zone = { Env, its arena(s), its mailbox }
+        Env.mem   pages -> arenas -> Alloc        what memory is
+        Env.fs / net / out / spawn / ask          what you may do, and how it waits
+ main's Env  : Blocking  (waits park the OS thread)
+ actor's Env : Turn      (waits suspend the turn; the worker runs other actors)
+ test Env    : Seeded    (as Turn, with a seeded schedule)
+ between zones: only send / receive / ask, carrying plain | str | val | iso Region (section 5)
 ```
 
-| `Io` | Where it comes from | A wait does | Waiting frames live in | Other work meanwhile |
-|---|---|---|---|---|
-| `Blocking` | `env.io` in `main` | parks the OS thread | the thread's own stack | other threads only |
-| `Turn` | `ctx.io` inside an actor | suspends this turn, and the worker runs other actors | the turn's own stack (below) | other actors |
-| `Seeded` | tests (`ZEN_ACTOR_SEED`) | as `Turn`, with the next actor picked by a seeded generator | the turn's own stack | deterministic interleaving |
+```zen
+fetch = (env: Env, url: str, a: Alloc) Res<String, NetError> {
+    conn = env.net.connect(url).try();     // may wait: how depends on whose Env this is
+    conn.read_all(a)                       // conn came from env.net, so it waits the same way
+}
+parse = (a: Alloc, text: str) Res<Ast, ParseError>   // takes no Env: it can't wait, and the signature says so
+```
+
+| `Env` of | A wait does | Waiting frames live in | Other work meanwhile |
+|---|---|---|---|
+| `main` (Blocking) | parks the OS thread | the thread's own stack | other threads only |
+| an actor (Turn) | suspends this turn, and the worker runs other actors | the turn's own stack (below) | other actors |
+| a test (Seeded) | as Turn, with the next actor picked by a seeded generator | the turn's own stack | deterministic interleaving |
 
 ```text
  Blocking:  thread stack ─ f ─ g ─ net.read ──(OS parks thread)──► resumes in place
@@ -132,20 +139,22 @@ fetch = (io: Io, net: Net, url: str, a: Alloc) Res<String, NetError> {
             worker runs other actors ... reply arrives ──(switch back)──► resumes in place
 ```
 
+- **Why `Alloc` isn't the gate.** Most code allocates without waiting: parsing, formatting, the compiler itself. If the allocator carried the waiting mode, every allocating function would look like it might wait. Keeping `Alloc` memory-only means a signature with an `Alloc` and no `Env` *proves* the function never waits.
+- **A capability keeps its zone's mode.** `env.net.connect` returns a connection that waits the way its `Env` does, so the mode follows the capability, not an extra parameter.
 - **Stackful, not a compiler transform.** A suspended call keeps its real stack, so the compiler emits the same code for both. No state machines, no colouring, nothing in the IR. The switch is a small per-target routine in `runtime/actor` (save callee-saved registers and `sp`, load another).
 - **Nothing moves while waiting.** The suspended frames sit in memory the waiting actor owns, so pointers into them stay valid. A reply is written into the waiting frame's result slot under section 5's rules. That's the only copy.
-- **Turn stacks are reserved, not grown.** Each is 1 MiB of *reserved* virtual memory from `Mem`, with a guard page below it. The OS commits pages only as they're touched, so a typical turn costs a few KiB.
+- **Turn stacks are reserved, not grown.** Each is 1 MiB of *reserved* virtual memory from the zone's `Mem`, with a guard page below it. The OS commits pages only as they're touched, so a typical turn costs a few KiB.
   - **No overflow slips past the guard:** frames over 4 KiB already probe each page in order (COMPILER.md F), so a deep call always hits the guard page. The runtime turns that fault into a `StackOverflow` trap that ends the actor. No prologue check and no change to §6.
-  - **A turn that finishes without waiting** gives its stack straight back to the worker's pool, so a hot stack is reused. Only a waiting turn keeps one.
+  - **A turn that finishes without waiting** gives its stack straight back to the worker's pool. Only a waiting turn keeps one.
   - **Stacks never come from an arena:** arena memory has no guard page.
-- **Waiting on many things:** `io.any` / `io.all` wait on several pending operations in one turn. That's the `select` of this design. For real parallel work, spawn actors: they cost a mailbox and a state record, as in Pony.
-- **C calls count as blocking.** A `c.bind` call can't wait through `Io`, so the worker marks itself "in C". If the call runs longer than 20 µs, the monitor thread hands that worker's run queue to a spare thread (Go's syscall handoff). Other actors keep running, and nothing is spelled differently at the call.
-- **A C callback never gets an `Io`.** Its frame may sit on a C stack that assumes one OS thread (thread-local state such as `errno`), so it must not suspend. `callback` takes a named, non-capturing function, so it can't capture an `Io`; fit refuses an `Io` parameter on one.
+- **Waiting on many things:** `env.any([...])` / `env.all([...])` wait on several pending operations in one turn. That's the `select` of this design. For real parallel work, spawn actors: they cost a mailbox and a state record, as in Pony.
+- **C calls count as blocking.** A `c.bind` call can't wait through `Env`, so the worker marks itself "in C". If the call runs longer than 20 µs, the monitor thread hands that worker's run queue to a spare thread (Go's syscall handoff). Other actors keep running, and nothing is spelled differently at the call.
+- **A C callback never gets an `Env`.** Its frame may sit on a C stack that assumes one OS thread (thread-local state such as `errno`), so it must not suspend. `callback` takes a named, non-capturing function, so it can't capture an `Env`; fit refuses an `Env` parameter on one.
 - **A waiting actor is not re-entered.** While its turn waits, its mailbox queues and its state can't change underneath it. A wait cycle (A asks B, and B asks A) is detected like a mailbox cycle and fails the newest ask with `Cycle`.
 
-The compiler checks none of this specially. `Io` is an ordinary interface, `wait` is an ordinary call into the runtime, and fit's normal rules decide who may hold an `Io` (it is SCOPED to the actor or thread that made it).
+An `Env` is SCOPED to its zone: it can be passed inward to any function, but it can't be sent, stored in another actor, or returned out of its zone. That one fit rule keeps a function from waiting in the wrong zone.
 
-**Why this, not the actors, removes red/blue.** Actors alone don't: Pony's behaviours never block, so results come back as promises and promises spread, which is the colour problem again. Erlang has actors and no colours because `receive` suspends a process that has its own stack. This design is on Erlang's side: `ask` and every other wait suspend a turn on its own stack. What remains is visible but not a split: a function that may wait takes an `Io`, and any `Io` works, including `Blocking`. The one true restriction is that code called from C can't wait.
+**Why this, not the actors, removes red/blue.** Actors alone don't: Pony's behaviours never block, so results come back as promises and promises spread, which is the colour problem again. Erlang has actors and no colours because `receive` suspends a process that has its own stack. This design is on Erlang's side: `ask` and every other wait suspend a turn on its own stack. What remains is visible but not a split: a function that may wait takes an `Env`, and any zone's `Env` works, including `main`'s. The one true restriction is that code called from C can't wait.
 
 ## 5. What a message may carry
 
@@ -193,7 +202,7 @@ worker.run(batch.consume());                 // zero copy: B now owns those page
 | The sender has no name left after `.consume()` | flow (I.3, maybe-moved) |
 | A behaviour becomes `turn(state: Ptr, msg: Ptr)`; a send becomes `zen_send(ref, behaviour_id, msg, size)` | lower |
 | Threads, run queues, stealing, poller, monitor, atomics, stack switching | runtime C (`runtime/actor/`), not the IR |
-| A C callback has no `Io` parameter | fit |
+| A C callback has no `Env` parameter; an `Env` never leaves its zone | fit |
 
 ## 9. Tiers and budgets
 
@@ -201,8 +210,8 @@ worker.run(batch.consume());                 // zero copy: B now owns those page
 |---|---|---|
 | `Mem`, `Alloc`, `Arena`, `REGION` checks | T0: the compiler itself runs on arenas | `std/mem` ≤ 400 lines |
 | `Fixed`, `copy_to` | T1 | (inside `std/mem`) |
-| `Io` with `Blocking` | T1: the compiler and CLIs wait this way | (inside `std/io`) |
-| Actors, `Turn` / `Seeded` Io, `Region`, `Frozen`, `Reply`, the scheduler | T2 | `std/actor` ≤ 800 Zen + `runtime/actor` ≤ 600 C |
+| `main`'s Blocking `Env` | T0: the compiler and CLIs wait this way | (inside `std/env`) |
+| Actors, Turn / Seeded `Env`, `Region`, `Frozen`, `Reply`, the scheduler | T2 | `std/actor` ≤ 800 Zen + `runtime/actor` ≤ 600 C |
 
 ## 10. Open decisions
 

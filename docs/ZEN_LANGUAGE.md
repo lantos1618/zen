@@ -213,7 +213,7 @@ A `:` field is positional and a `::` field is an option. The impl is the table, 
 ## 16. Concurrency — *lower + runtime, T2*
 
 Actors: `Ref<A>`, behaviours are sends, there is one-shot request/reply, and payloads are sendable (`val`/`iso`). Threads come from `env.threads` (`spawn`, `every`, `join`). Doors: process and stream capabilities.
-Waiting is a capability: an `Io` passed like `Alloc` decides whether a call blocks or suspends, so there is no async colouring. Allocators, moves, messages and `Io` are specified in [MEMORY_AND_ACTORS.md](MEMORY_AND_ACTORS.md).
+`Env` is the zone: `main` gets the process's and each actor gets its own. A call waits only through an `Env`, and whose `Env` it is decides whether the wait blocks or suspends, so there is no async colouring. `Alloc` is memory only, so a function with an `Alloc` and no `Env` can't wait. Allocators, moves, messages and `Io` are specified in [MEMORY_AND_ACTORS.md](MEMORY_AND_ACTORS.md).
 
 ## 17. Low-level and security extras — *T2*
 

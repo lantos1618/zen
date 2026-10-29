@@ -1,0 +1,84 @@
+// The lexer on real Zen and on every lexical rule of ZEN_LANGUAGE.md §2.
+// Each case is source text and the kind names of the tokens it must produce.
+
+{ Res, Ok, None } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ String } = std.text
+{ str } = std.text
+{ println } = std.io
+{ Env } = std.env
+{ Token, Kind, lex, position } = front.parse.lex
+
+// A token's kind name: "Name", "Define", ... A fault shows its reason instead.
+name = (
+    t : Token
+) str { t.kind.match({ Fault(f) => f.variant_name(), _ => t.kind.variant_name() }) }
+
+// Lex `src` and compare its kinds, in order, with the space-separated `wanted`.
+case = (a: Alloc, src: str, wanted: str) Res<bool, AllocError> {
+    tokens = lex(a, src).try();
+    words ::= wanted.split(' ');
+    ok    ::= true;
+    tokens.loop(
+        (t) { ok = words.next().match({ Ok(w) => w.eq(name(
+            t
+        )), None => false }) && ok; }
+    );
+    ok = words.next().match({ Ok(_) => false, None => true }) && ok;
+    println("{} {}", ok.match({ true => "ok  ", false => "FAIL" }), src);
+    ok.match({
+        true  => (),
+        false => { println("       want {}", wanted); tokens.loop((t) { println("       got  {}", name(t)); }); },
+    });
+    Ok(ok)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    all ::= true;
+
+    // ordinary code
+    all = case(a, "x ::= 0;", "Name Define Int Semi End").try() && all;
+    all = case(
+        a,
+        "add* = (a: i32) i32 { a +% 1 }",
+        "Name Star Assign LParen Name Colon Name RParen Name LBrace Name PlusWrap Int RBrace End"
+    ).try() && all;
+    all = case(
+        a,
+        "r.match({ Ok(v) => v, _ => @Self })",
+        "Name Dot Name LParen LBrace Name LParen Name RParen Arrow Name Comma Name Arrow At RBrace RParen End"
+    ).try() && all;
+    all = case(
+        a,
+        "a <= b != c << 2 && !d",
+        "Name Le Name NotEqual Name Shl Int And Not Name End"
+    ).try() && all;
+    all = case(a, "x // a comment\ny", "Name Name End").try() && all;
+    all = case(a, "1.5 1.x", "Float Int Dot Name End").try() && all;
+    all = case(a, "\"a\\n\\\"b\" 'c'", "Str Char End").try() && all;
+    all = case(a, "", "End").try() && all;
+
+    // the lexical rules: reject rather than reinterpret
+    all = case(a, "010", "LeadingZero End").try() && all;
+    all = case(a, "0 7", "Int Int End").try() && all;
+    all = case(a, "18446744073709551615", "Int End").try() && all;
+    all = case(a, "18446744073709551616", "IntegerTooLarge End").try() && all;
+    all = case(a, "\"a\\q\" x", "UnknownEscape Name End").try() && all;
+    all = case(a, "\"abc", "Unterminated End").try() && all;
+    all = case(a, "a $ b", "Name UnexpectedByte Name End").try() && all;
+
+    // positions are computed from the offset only when a diagnostic needs one
+    p      = position("ab\ncd\nef", 7);
+    pos_ok = p.line == 3 && p.column == 2;
+    println(
+        "{} position of offset 7 is {}:{}",
+        pos_ok.match({ true => "ok  ", false => "FAIL" }),
+        p.line,
+        p.column
+    );
+    all = pos_ok && all;
+
+    all.match({ true => Ok(0), false => Ok(1) })
+}

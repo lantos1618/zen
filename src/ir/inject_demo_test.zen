@@ -1,0 +1,119 @@
+// A demo of injecting into a function body: build a NEW function from sum_to's IR, then
+// validate it again before it may run. The validator is the gate, so an injection can
+// add behaviour but never break the IR's guarantees.
+
+{ Res, Ok, Err, None, to_usize, truncate_u32 } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ println } = std.io
+{ Env } = std.env
+{ str } = std.text
+{
+    Module, Function, Block, ScalarType, Constant, IntegerConstant, Value, Instruction,
+    InstructionRecord, Exit, IntBinary, Set, Return, IntOp, Overflow, FunctionId, RegisterId,
+    InstructionId
+} = ir.records
+{ Diagnostic } = ir.diagnostic
+{ validate } = ir.validate
+{ RuntimeValue, Outcome, run } = ir.interp
+{ sum_to } = ir.selftest
+
+i32 = (n: u64) Value { Value.Constant(Constant.Integer(IntegerConstant(type: ScalarType.I32, bits: n))) }
+
+is_checked_add = (i: Instruction) bool {
+    i.match({
+        IntBinary(x) => x.op.match({ Add(m) => m.match({ Checked => true, Wrapping => false }), _ => false }),
+        _            => false,
+    })
+}
+
+// A copy of f with a counter register that ticks after every checked add,
+// returning the count instead of the sum. `broken` ticks the counter before
+// setting it, which the validator must refuse.
+count_adds = (a: Alloc, m: Module, broken: bool) Res<Module, AllocError> {
+    first_function = m.functions.get(0).match({ Ok(f) => Ok(f), None => Err(AllocError.OutOfMemory) });
+    f = first_function.try();
+    types ::= a.Vec<ScalarType>();
+    f.register_types.loop((t) { types.add(t).try(); });
+    count = RegisterId(index: f.register_types.len.truncate_u32());
+    types.add(ScalarType.I32).try();
+
+    tick = Instruction.IntBinary(IntBinary(
+        dst: count,
+        op: IntOp.Add(Overflow.Wrapping),
+        lhs: Value.Register(count),
+        rhs: i32(1),
+    ));
+    next :: u32 = 0;
+    blocks ::= a.Vec<Block>();
+    f.blocks.loop((b) {
+        records ::= a.Vec<InstructionRecord>();
+        (b.id.index == f.entry.index).match({
+            true  => {
+                first = broken.match({ true => tick, false => Instruction.Set(Set(dst: count, value: i32(0))) });
+                records.add(InstructionRecord(id: InstructionId(index: next), instruction: first)).try();
+                next = next + 1;
+            },
+            false => (),
+        });
+        b.instructions.loop((rec) {
+            records.add(InstructionRecord(id: InstructionId(index: next), instruction: rec.instruction)).try();
+            next = next + 1;
+            is_checked_add(rec.instruction).match({
+                true  => {
+                    records.add(InstructionRecord(id: InstructionId(index: next), instruction: tick)).try();
+                    next = next + 1;
+                },
+                false => (),
+            });
+        });
+        exit = b.exit.match({
+            Return(_) => Exit.Return(Return(value: Ok(Value.Register(count)))),
+            _         => b.exit,
+        });
+        blocks.add(Block(id: b.id, instructions: records, exit: exit)).try();
+    });
+
+    functions ::= a.Vec<Function>();
+    functions.add(Function(
+        id: f.id, symbol: f.symbol, signature: f.signature, parameters: f.parameters,
+        register_types: types, objects: f.objects, entry: f.entry, blocks: blocks,
+    )).try();
+    Ok(Module(
+        signatures: m.signatures, symbols: m.symbols, globals: m.globals, imports: m.imports,
+        functions: functions, exports: m.exports, trap_handler: m.trap_handler,
+    ))
+}
+
+// Validate the injected module, then run it with n = 10.
+try_injection = (a: Alloc, name: str, broken: bool) Res<(), AllocError> {
+    injected = count_adds(a, sum_to(a, 0).try(), broken).try();
+    validate(a, injected).match({
+        Err(d) => println("{}: refused by the validator: {} ({})", name, d.code.name(), d.message),
+        Ok(ir) => {
+            args ::= a.Vec<RuntimeValue>();
+            args.add(RuntimeValue.Int(IntegerConstant(type: ScalarType.I32, bits: 10))).try();
+            run(a, ir, FunctionId(index: 0), args).match({
+                Ok(outcome) => outcome.match({
+                    Returned(v) => v.match({
+                        Ok(rv) => rv.match({
+                            Int(k) => println("{}: validated, ran sum_to(10): {} checked adds", name, k.bits),
+                            _      => println("{}: returned a non-integer", name),
+                        }),
+                        None   => println("{}: returned nothing", name),
+                    }),
+                    _           => println("{}: stopped early", name),
+                }),
+                Err(d)      => println("{}: {}", name, d.message),
+            });
+        },
+    });
+    Ok
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    try_injection(a, "inject a counter", false).try();
+    try_injection(a, "inject a counter, read before it is set", true).try();
+    Ok(0)
+}

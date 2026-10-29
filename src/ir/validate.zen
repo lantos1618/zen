@@ -108,7 +108,7 @@ Validator = {
                 self.require(
                     sig.parameters.get(
                         0
-                    ).match({ Ok(t) => t.code() == ScalarType.U32.code(), None => false }),
+                    ).match({ Ok(t) => t.same(ScalarType.U32), None => false }),
                     DiagnosticCode.TypeMismatch,
                     "the trap handler must be (U32) -> Never"
                 ).try();
@@ -693,7 +693,7 @@ Validator = {
             IntegerWrapping       => from.is_integer() && to.is_integer(),
             IntegerToFloat        => from.is_integer() && to.is_float(),
             FloatToIntegerChecked => from.is_float() && to.is_integer(),
-            FloatWidth            => from.is_float() && to.is_float() && from.code() != to.code(),
+            FloatWidth            => from.is_float() && to.is_float() && !from.same(to),
             BoolToInteger         => from.match({ Bool => true, _ => false }) && to.is_integer(),
             PointerToInteger      => from.match({ Pointer => true, _ => false }) && to.match({ U64 => true, _ => false }),
             Bitcast               => from.width() == to.width() && (from.is_integer() && to.is_float() || from.is_float() && to.is_integer()),

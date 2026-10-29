@@ -99,6 +99,20 @@ The format and runner are in COMPILER.md E.2. A test catches one bug. Its first 
 - [ ] args, stdin bytes exactly, files, exit codes
 - [ ] A CLI type: a positional `:`, an option `::`, an unknown flag, a missing positional
 
+## Memory and actors (T2, when `std/actor` exists; MEMORY_AND_ACTORS.md)
+- [ ] A value from a dropped arena can't be stored or returned past it (`REGION`)
+- [ ] Send rule: plain, `str`, `val` and a consumed `Region` pass; a `Vec` in the sender's arena, a `Ptr` or a trait value is refused with the fix named
+- [ ] A send to a full mailbox answers `Full` and never waits; a send to a stopped actor answers `Closed`
+- [ ] `ask`: answered, `Timeout`, `Closed` (receiver ended or dropped its `Reply`), `Cycle` (A asks B asks A)
+- [ ] A late reply after a timeout is dropped and never writes into the returned frame
+- [ ] `@scope.deadline` and `cancel_on`: a pending wait returns `Cancelled`/`Timeout` and the scope's defers run
+- [ ] Stack-checked profile: deep recursion in an actor traps `StackOverflow` and ends only that actor; the same depth behaves the same in `main`
+- [ ] A trap in one actor: its watchers get `failed`, its arena and pool are freed, other actors keep running
+- [ ] The same function run with `main`'s `Env` and an actor's `Env` gives the same result
+- [ ] A C callback with an `Env` parameter is refused; an `Env` can't be sent or stored in another actor
+- [ ] Seeded schedules: every test above passes under several `ZEN_ACTOR_SEED` values, and a failure names its seed
+- [ ] `Pool`: a long-lived actor that churns stays at a stable size
+
 ## Build and packages (when `src/build` exists)
 - [ ] A lock mismatch is an error; no network when the lock covers the graph
 - [ ] A dependency's `build` never runs; only products import

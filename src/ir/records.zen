@@ -1,5 +1,6 @@
 // COMPILER.md §1.1, one to one. Every table is dense: an ID is its position,
 // so `module.functions[f]` is one index. validate proves `table[i].id == i`.
+// Instruction ids are dense per function too: each of 0..n-1 exactly once.
 
 { Res, Ok, None, to_usize, to_u64 } = std.core
 { Vec } = std.collections

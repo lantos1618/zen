@@ -26,3 +26,13 @@ Short, current facts that save the next person (or agent) an hour. Delete an ent
 - **Validation is the gate for generated code.** Injected or transformed IR goes back through `validate`, so meta-programming can't break the IR's guarantees.
 - **Reviews from a second model catch different things.** Gemini found a quadratic lookup the first review missed; the first found missing export and argument checks. Bundle the files: the Gemini CLI keeps only the last `-f`.
 - **Formatting is about 8.7 tokens per line**, so budgets count tokens, not lines.
+
+## From the review of #111
+
+- **Check std first.** The lexer re-wrote `is_digit`, `is_space`, a u64 parser and a test printer that std already had.
+- **Helpers are methods or a named module, never loose.** Text reads became `Source`; integer math became `Int`; IR constructors became `ir/build.zen`. Each change also made the code using them shorter.
+- **Enums carry their numbers** (`= 1`, `.discriminant()`), and a represented enum's catch-all (`Explicit`) is made only by `from_discriminant`.
+- **The stage-0 `zen fmt` fights the style** (it puts enum variants on one line), so layout is by hand, by STYLE.md's rules.
+- **`.try()` inside a closure leaves the enclosing function.** A `std.test` body is therefore one expression; one check per test fits that anyway.
+- **Mutation checks find weak tests.** Weakening the leading-zero rule went unnoticed until a two-digit case was added.
+- **A function with `Alloc` and no `Env` can't wait or do IO.** The lexer takes `Alloc` on purpose; that's the rule from MEMORY_AND_ACTORS.md, not an oversight.

@@ -1,0 +1,76 @@
+// COMPILER.md §1.3 as visitors: each register read or written, in order, with no allocation.
+// Initialization (§1.4) and liveness (§4.1) both walk these.
+
+{ Res, Ok, None } = std.core
+{
+    RegisterId, BlockId, Value, Callee, AddressBase, Instruction, Exit
+} = ir.records
+
+value_reg = (v: Value, body: (r: RegisterId) ()) {
+    v.match({ Register(r) => body(r), Constant(_) => () })
+}
+
+callee_reg = (c: Callee, body: (r: RegisterId) ()) {
+    c.match({ Register(r) => body(r), Function(_) => () })
+}
+
+each_use* = (i: Instruction, body: (r: RegisterId) ()) {
+    i.match({
+        Set(x) => value_reg(x.value, body),
+        Select(x) => { value_reg(x.condition, body); value_reg(x.yes, body); value_reg(x.no, body); },
+        IntBinary(x) => { value_reg(x.lhs, body); value_reg(x.rhs, body); },
+        FloatBinary(x) => { value_reg(x.lhs, body); value_reg(x.rhs, body); },
+        FloatNegate(x) => value_reg(x.value, body),
+        IntCompare(x) => { value_reg(x.lhs, body); value_reg(x.rhs, body); },
+        PointerCompare(x) => { value_reg(x.lhs, body); value_reg(x.rhs, body); },
+        FloatCompare(x) => { value_reg(x.lhs, body); value_reg(x.rhs, body); },
+        Convert(x) => value_reg(x.value, body),
+        Address(x) => {
+            x.base.match({ Register(r) => body(r), StackObject(_) => (), Symbol(_) => () });
+            value_reg(x.byte_offset, body);
+        },
+        Load(x) => value_reg(x.address, body),
+        Store(x) => { value_reg(x.address, body); value_reg(x.value, body); },
+        Call(x) => { callee_reg(x.callee, body); x.args.loop((v) { value_reg(v, body); }); },
+    })
+}
+
+each_exit_use* = (e: Exit, body: (r: RegisterId) ()) {
+    e.match({
+        Branch(x) => value_reg(x.condition, body),
+        Switch(x) => value_reg(x.value, body),
+        Return(x) => x.value.match({ Ok(v) => value_reg(v, body), None => () }),
+        CallNever(x) => { callee_reg(x.callee, body); x.args.loop((v) { value_reg(v, body); }); },
+        Jump(_) => (),
+        Trap(_) => (),
+    })
+}
+
+each_def* = (i: Instruction, body: (r: RegisterId) ()) {
+    i.match({
+        Set(x) => body(x.dst),
+        Select(x) => body(x.dst),
+        IntBinary(x) => body(x.dst),
+        FloatBinary(x) => body(x.dst),
+        FloatNegate(x) => body(x.dst),
+        IntCompare(x) => body(x.dst),
+        PointerCompare(x) => body(x.dst),
+        FloatCompare(x) => body(x.dst),
+        Convert(x) => body(x.dst),
+        Address(x) => body(x.dst),
+        Load(x) => body(x.dst),
+        Store(_) => (),
+        Call(x) => x.dst.match({ Ok(r) => body(r), None => () }),
+    })
+}
+
+each_successor* = (e: Exit, body: (b: BlockId) ()) {
+    e.match({
+        Jump(x) => body(x.target),
+        Branch(x) => { body(x.yes); body(x.no); },
+        Switch(x) => { x.cases.loop((c) { body(c.target); }); body(x.default); },
+        Return(_) => (),
+        CallNever(_) => (),
+        Trap(_) => (),
+    })
+}

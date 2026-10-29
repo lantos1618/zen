@@ -1,0 +1,123 @@
+// ZEN_LANGUAGE.md §3–§4, the part a first program needs. Every name resolves, every
+// value is i32, every call matches its function, and `main` exists. The result, a
+// Program, is what lowering reads, so names are looked up in one place.
+
+{ Res, Ok, Err, None, Range, ensure, ok_or, to_usize, truncate_u32 } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str } = std.text
+{ Tree, Node, NodeKind } = front.parse.ast
+
+// What is wrong, and where: "add takes 2 arguments, not 1".
+CheckError* = { at*: u32, message*: str }
+
+// A declared function: its node, its name, and its parameters' names in order.
+Decl* = {
+    node*: Node,
+    name*: str,
+    params*: Vec<str>,
+
+    // The register of a parameter: its position.
+    param* = (self: @Self, name: str) Res<u32> {
+        found :: Res<u32> = None;
+        self.params.loop((h, k, p) { p.eq(name).then(() { found = Ok(k.truncate_u32()); h.break(); }); });
+        found
+    }
+}
+
+Program* = {
+    tree*: Tree,
+    decls*: Vec<Decl>,
+    index: Map<str, u32>,        // name -> position in decls
+
+    find* = (self: @Self, name: str) Res<u32> { self.index.get(name) }
+    decl* = (self: @Self, k: u32) Res<Decl> { self.decls.get(k.to_usize()) }
+}
+
+I32_MAX: u64 = 2147483647
+
+check* = (a: Alloc, tree: Tree) Res<Program, CheckError> {
+    c = Checker(a: a, tree: tree);
+    p = c.collect().try();
+    p.decls.loop((d) { c.function(p, d).try(); });
+    p.find("main").ok_or(CheckError(at: 0, message: "a program needs `main`")).try();
+    Ok(p)
+}
+
+Checker = {
+    a: Alloc,
+    tree: Tree,
+
+    at = (self: @Self, n: Node, message: str) CheckError { CheckError(at: n.start, message: message) }
+
+    memory = (self: @Self, r: Res<AllocError>) Res<(), CheckError> {
+        r.match({ Ok => Ok, Err(_) => Err(CheckError(at: 0, message: "out of memory")) })
+    }
+
+    child = (self: @Self, n: Node, k: u32) Res<Node, CheckError> {
+        self.tree.child(n, k).ok_or(self.at(n, "a malformed tree"))
+    }
+
+    // Every declaration's name and parameters; a name declared twice is an error.
+    collect = (self: @Self) Res<Program, CheckError> {
+        decls ::= self.a.Vec<Decl>();
+        index ::= self.a.Map<str, u32>();
+        self.tree.roots.loop((r) {
+            n = self.tree.node(r).ok_or(CheckError(at: 0, message: "a malformed tree")).try();
+            name = self.tree.text(self.child(n, 0).try());
+            first = index.get(name).match({ Ok(_) => false, None => true });
+            first.ensure(self.at(n, "this name is already declared")).try();
+            params ::= self.a.Vec<str>();
+            Range(1, n.count - 2).loop((k) {
+                p = self.child(n, k).try();
+                self.memory(params.add(self.tree.text(p))).try();
+            });
+            self.memory(index.set(name, decls.len.truncate_u32())).try();
+            self.memory(decls.add(Decl(node: n, name: name, params: params))).try();
+        });
+        Ok(Program(tree: self.tree, decls: decls, index: index))
+    }
+
+    // Parameter and result types are i32, and the body is a valid i32 expression.
+    function = (self: @Self, p: Program, d: Decl) Res<(), CheckError> {
+        Range(1, d.node.count - 2).loop((k) {
+            param = self.child(d.node, k).try();
+            self.i32_type(self.child(param, 0).try()).try();
+        });
+        self.i32_type(self.child(d.node, d.node.count - 2).try()).try();
+        block = self.child(d.node, d.node.count - 1).try();
+        self.expression(p, d, self.child(block, 0).try())
+    }
+
+    i32_type = (self: @Self, n: Node) Res<(), CheckError> {
+        self.tree.text(n).eq("i32").ensure(self.at(n, "only i32 is supported so far"))
+    }
+
+    expression = (self: @Self, p: Program, d: Decl, n: Node) Res<(), CheckError> {
+        n.kind.match({
+            Int       => self.int_literal(n),
+            Name      => { d.param(self.tree.text(n)).ok_or(self.at(n, "unknown name")).try(); Ok },
+            Binary(_) => {
+                self.expression(p, d, self.child(n, 0).try()).try();
+                self.expression(p, d, self.child(n, 1).try())
+            },
+            Call      => self.call(p, d, n),
+            _         => Err(self.at(n, "not an expression")),
+        })
+    }
+
+    int_literal = (self: @Self, n: Node) Res<(), CheckError> {
+        fits = self.tree.text(n).parse_usize().match({ Ok(v) => v.to_u64() <= I32_MAX, None => false });
+        fits.ensure(self.at(n, "this integer doesn't fit i32"))
+    }
+
+    // The callee is a declared function, and it gets one argument per parameter.
+    call = (self: @Self, p: Program, d: Decl, n: Node) Res<(), CheckError> {
+        callee = self.child(n, 0).try();
+        k = p.find(self.tree.text(callee)).ok_or(self.at(callee, "unknown function")).try();
+        target = p.decl(k).ok_or(self.at(callee, "unknown function")).try();
+        (n.count - 1 == target.params.len.truncate_u32()).ensure(self.at(n, "wrong number of arguments")).try();
+        Range(1, n.count).loop((i) { self.expression(p, d, self.child(n, i).try()).try(); });
+        Ok
+    }
+}

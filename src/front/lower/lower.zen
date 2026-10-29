@@ -1,0 +1,130 @@
+// COMPILER.md Appendix C, the part a first program needs: a checked Program becomes an
+// IR Module. One IR function per declaration, with the same position; parameters are
+// registers 0..n-1; each expression writes a fresh register; the body's value is returned.
+
+{ Res, Ok, Err, None, Range, truncate_u32, to_u64 } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{
+    Module, Function, Block, Signature, Symbol, Import, Export, Global, StackObject,
+    ScalarType, Value, Instruction, InstructionRecord, Exit, Return, Call, Callee,
+    IntOp, Overflow, ReturnContract, CallingConvention, SymbolKind, Linkage, Id, Register
+} = ir.records
+{ reg, value_of, i32_const, record, int_op } = ir.build
+{ Node, BinaryOp } = front.parse.ast
+{ Program, Decl } = front.check.check
+
+lower* = (a: Alloc, p: Program) Res<Module, AllocError> {
+    signatures ::= a.Vec<Signature>();
+    symbols ::= a.Vec<Symbol>();
+    functions ::= a.Vec<Function>();
+    p.decls.loop((h, k, d) {
+        id = k.truncate_u32();
+        signatures.add(signature(a, d).try()).try();
+        symbol = Symbol(
+            id: Id<Symbol>(index: id),
+            kind: SymbolKind.Function,
+            linkage: Linkage.Internal,
+            external_name: None,
+        );
+        symbols.add(symbol).try();
+        emitter ::= Emitter(a: a, p: p, d: d, types: a.Vec<ScalarType>(), code: a.Vec<InstructionRecord>());
+        functions.add(emitter.function(id).try()).try();
+    });
+    Ok(Module(
+        signatures: signatures,
+        symbols: symbols,
+        globals: a.Vec<Global>(),
+        imports: a.Vec<Import>(),
+        functions: functions,
+        exports: a.Vec<Export>(),
+        trap_handler: None,
+    ))
+}
+
+// (i32, ..) -> i32, one i32 per parameter.
+signature = (a: Alloc, d: Decl) Res<Signature, AllocError> {
+    params ::= a.Vec<ScalarType>();
+    d.params.loop((p) { params.add(ScalarType.I32).try(); });
+    Ok(Signature(
+        parameters: params,
+        result: ReturnContract.Returns(Ok(ScalarType.I32)),
+        calling_convention: CallingConvention.PlatformDefault,
+    ))
+}
+
+// Writes one function's instructions, one fresh register per value.
+Emitter = {
+    a: Alloc,
+    p: Program,
+    d: Decl,
+    types :: Vec<ScalarType>,
+    code :: Vec<InstructionRecord>,
+
+    function = (self :: @Self, id: u32) Res<Function, AllocError> {
+        params ::= self.a.Vec<Id<Register>>();
+        self.d.params.loop((p) { params.add(self.fresh().try()).try(); });
+        body = self.p.tree.child(self.d.node, self.d.node.count - 1).match({ Ok(b) => b, None => self.d.node });
+        result = self.expression(self.p.tree.child(body, 0).match({ Ok(e) => e, None => body })).try();
+        blocks ::= self.a.Vec<Block>();
+        exit = Exit.Return(Return(value: Ok(result)));
+        blocks.add(Block(id: Id<Block>(index: 0), instructions: self.code, exit: exit)).try();
+        Ok(Function(
+            id: Id<Function>(index: id),
+            symbol: Id<Symbol>(index: id),
+            signature: Id<Signature>(index: id),
+            parameters: params,
+            register_types: self.types,
+            objects: self.a.Vec<StackObject>(),
+            entry: Id<Block>(index: 0),
+            blocks: blocks,
+        ))
+    }
+
+    fresh = (self :: @Self) Res<Id<Register>, AllocError> {
+        self.types.add(ScalarType.I32).try();
+        Ok(reg(self.types.len.truncate_u32() - 1))
+    }
+
+    emit = (self :: @Self, i: Instruction) Res<(), AllocError> {
+        self.code.add(record(self.code.len.truncate_u32(), i))
+    }
+
+    // The value of an expression the checker accepted.
+    expression = (self :: @Self, n: Node) Res<Value, AllocError> {
+        text = self.p.tree.text(n);
+        n.kind.match({
+            Int       => Ok(i32_const(text.parse_usize().match({ Ok(v) => v.to_u64(), None => 0 }))),
+            Name      => Ok(value_of(reg(self.d.param(text).match({ Ok(k) => k, None => 0 })))),
+            Binary(o) => self.binary(o, n),
+            Call      => self.call(n),
+            _         => Ok(i32_const(0)),
+        })
+    }
+
+    binary = (self :: @Self, o: BinaryOp, n: Node) Res<Value, AllocError> {
+        left = self.expression(self.child(n, 0)).try();
+        right = self.expression(self.child(n, 1)).try();
+        op = o.match({
+            Add      => IntOp.Add(Overflow.Checked),
+            Subtract => IntOp.Subtract(Overflow.Checked),
+            Multiply => IntOp.Multiply(Overflow.Checked),
+        });
+        dst = self.fresh().try();
+        self.emit(int_op(op, dst, left, right)).try();
+        Ok(value_of(dst))
+    }
+
+    // Arguments first, in order, then the call into a fresh register.
+    call = (self :: @Self, n: Node) Res<Value, AllocError> {
+        args ::= self.a.Vec<Value>();
+        Range(1, n.count).loop((i) { args.add(self.expression(self.child(n, i)).try()).try(); });
+        target = self.p.find(self.p.tree.text(self.child(n, 0))).match({ Ok(k) => k, None => 0 });
+        dst = self.fresh().try();
+        callee = Callee.Function(Id<Function>(index: target));
+        self.emit(Instruction.Call(Call(dst: Ok(dst), callee: callee, args: args))).try();
+        Ok(value_of(dst))
+    }
+
+    child = (self: @Self, n: Node, k: u32) Node { self.p.tree.child(n, k).match({ Ok(c) => c, None => n }) }
+}

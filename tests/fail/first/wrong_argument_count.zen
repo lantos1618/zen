@@ -1,0 +1,7 @@
+// Catches: a call with too few arguments, which would read a missing parameter.
+
+add = (a: i32, b: i32) i32 { a + b }
+main = () i32 { add(1) }
+
+//! error: 4:17
+//! hint: wrong number of arguments

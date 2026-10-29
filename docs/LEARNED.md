@@ -48,3 +48,9 @@ Short, current facts that save the next person (or agent) an hour. Delete an ent
 - **A table stays a table:** every arm of `check_instruction` is one call; logic lives in the named rule it calls.
 - **Questions about a record belong on the record** (`Symbol.is_function`, `must_be_defined`), not repeated inline.
 - **Edit by line number or exact text, never by a loose pattern.** A `sed` meant for one `Ok` line matched seven, one of them making a function call itself.
+
+## The first program
+
+- **Run every test on both compilers.** `tests/stage0.sh` and `tests/fresh.sh` run the same files; when they disagree, one of them, or the test, is wrong. The first disagreement found a wrong test: `2147483647 + 1` is a provable trap, so §8 makes it a compile error.
+- **Not yet in our checker:** refusing provable traps at compile time (§8). Stage 0 does it.
+- **A test must be able to fail.** `add(40, 2)` couldn't catch swapped arguments, because `+` doesn't care about order; `sub(50, 8)` can, and swapping operands in lowering makes it exit 214 instead of 42.

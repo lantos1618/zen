@@ -96,6 +96,8 @@ Parser = {
         self.expect(Kind.Assign, "`=`").try();
         self.expect(Kind.LParen, "`(`").try();
         kids ::= self.a.Vec<u32>();
+        named = self.leaf(NodeKind.Name, name).try();
+        push(kids, named).try();
         self.parameters(kids).try();
         result = self.type_name().try();
         push(kids, result).try();

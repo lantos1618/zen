@@ -61,25 +61,25 @@ main = (env: Env) Res<i32, IoError> {
     s ::= Suite(env: env);
 
     s.run("a function with a tail expression", (t) {
-        expect_tree(t, "main = () i32 { 42 }", "Function i32 Block 42")
+        expect_tree(t, "main = () i32 { 42 }", "Function main i32 Block 42")
     }).try();
     s.run("parameters and an addition", (t) {
-        expect_tree(t, "add = (a: i32, b: i32) i32 { a + b }", "Function Param i32 Param i32 i32 Block Add a b")
+        expect_tree(t, "add = (a: i32, b: i32) i32 { a + b }", "Function add Param i32 Param i32 i32 Block Add a b")
     }).try();
     s.run("a call with arguments", (t) {
-        expect_tree(t, "main = () i32 { add(40, 2) }", "Function i32 Block Call add 40 2")
+        expect_tree(t, "main = () i32 { add(40, 2) }", "Function main i32 Block Call add 40 2")
     }).try();
     s.run("two declarations", (t) {
-        expect_tree(t, "f = () i32 { 1 } g = () i32 { 2 }", "Function i32 Block 1 Function i32 Block 2")
+        expect_tree(t, "f = () i32 { 1 } g = () i32 { 2 }", "Function f i32 Block 1 Function g i32 Block 2")
     }).try();
     s.run("* binds tighter than +", (t) {
-        expect_tree(t, "f = () i32 { 1 + 2 * 3 }", "Function i32 Block Add 1 Multiply 2 3")
+        expect_tree(t, "f = () i32 { 1 + 2 * 3 }", "Function f i32 Block Add 1 Multiply 2 3")
     }).try();
     s.run("- groups to the left", (t) {
-        expect_tree(t, "f = () i32 { 9 - 4 - 1 }", "Function i32 Block Subtract Subtract 9 4 1")
+        expect_tree(t, "f = () i32 { 9 - 4 - 1 }", "Function f i32 Block Subtract Subtract 9 4 1")
     }).try();
     s.run("parentheses group first", (t) {
-        expect_tree(t, "f = () i32 { (1 + 2) * 3 }", "Function i32 Block Multiply Add 1 2 3")
+        expect_tree(t, "f = () i32 { (1 + 2) * 3 }", "Function f i32 Block Multiply Add 1 2 3")
     }).try();
 
     // errors: the first one stops parsing, at its position

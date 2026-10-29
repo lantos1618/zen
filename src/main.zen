@@ -1,0 +1,101 @@
+// zen <file.zen>: compile the file with this compiler and run its `main` on the IR
+// interpreter. The process exits with main's result; an error prints file:line:col and
+// exits 1; a trap exits 134 (ZEN_LANGUAGE.md §8).
+
+{ Res, Ok, Err, None, IoError } = std.core
+{ Alloc } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Env, Console } = std.env
+{ Id, Function, TrapCode } = ir.records
+{ Diagnostic } = ir.diagnostic
+{ validate } = ir.validate
+{ RuntimeValue, Outcome, run } = ir.interp
+{ Int } = ir.int
+{ Source } = front.parse.source
+{ SyntaxError, ParseError, parse } = front.parse.parse
+{ CheckError, check } = front.check.check
+{ lower } = front.lower.lower
+
+// Why compiling or running stopped.
+Failure = {
+    | Syntax: SyntaxError
+    | Check: CheckError
+    | Invalid: Diagnostic       // the lowered IR failed validation: a bug in this compiler
+    | Trap: TrapCode
+    | Fault: str
+    | OutOfMemory
+}
+
+I32: Int = Int(width: 32, signed: true)
+
+main = (env: Env) Res<i32, IoError> {
+    a = env.mem.alloc();
+    path = env.argv.get(1).match({ Ok(p) => p, None => "" });
+    (path.len == 0).match({
+        true  => { env.out.errorln("usage: zen <file.zen>").try(); Ok(2) },
+        false => env.fs.read(a, path).match({
+            Err(_)   => { env.out.errorln("{}: can't read this file", path).try(); Ok(1) },
+            Ok(text) => Ok(finish(env.out, path, text.view(), compile_and_run(a, text.view()))),
+        }),
+    })
+}
+
+// The exit code: main's result, or 1 after a compile error, or 134 after a trap.
+finish = (out: Console, path: str, text: str, result: Res<i32, Failure>) i32 {
+    result.match({
+        Ok(code)  => code,
+        Err(fail) => {
+            report(out, path, Source(text: text), fail).match({ Ok => (), Err(_) => () });
+            fail.match({ Trap(_) => 134, _ => 1 })
+        },
+    })
+}
+
+// The failure on stderr, as file:line:col: message where there is a position.
+report = (out: Console, path: str, s: Source, fail: Failure) Res<IoError> {
+    fail.match({
+        Syntax(e)   => {
+            p = s.position(e.at);
+            found = e.found.variant_name();
+            out.errorln("{}:{}:{}: expected {}, found {}", path, p.line, p.column, e.wanted, found)
+        },
+        Check(e)    => {
+            p = s.position(e.at);
+            out.errorln("{}:{}:{}: {}", path, p.line, p.column, e.message)
+        },
+        Invalid(d)  => out.errorln("{}: internal error: invalid IR: {} ({})", path, d.message, d.code.name()),
+        Trap(code)  => out.errorln("{}: trap: {}", path, code.variant_name()),
+        Fault(what) => out.errorln("{}: fault: {}", path, what),
+        OutOfMemory => out.errorln("{}: out of memory", path),
+    })
+}
+
+// source -> tree -> program -> IR -> validated IR -> run main.
+compile_and_run = (a: Alloc, text: str) Res<i32, Failure> {
+    tree = parse(a, text).match({
+        Ok(t)  => Ok(t),
+        Err(e) => Err(e.match({ Syntax(s) => Failure.Syntax(s), OutOfMemory => Failure.OutOfMemory })),
+    }).try();
+    program = check(a, tree).match({ Ok(p) => Ok(p), Err(e) => Err(Failure.Check(e)) }).try();
+    module = lower(a, program).match({ Ok(m) => Ok(m), Err(_) => Err(Failure.OutOfMemory) }).try();
+    ir = validate(a, module).match({ Ok(ir) => Ok(ir), Err(d) => Err(Failure.Invalid(d)) }).try();
+    entry = program.find("main").match({ Ok(k) => k, None => 0 });
+    outcome = run(a, ir, Id<Function>(index: entry), a.Vec<RuntimeValue>()).match({
+        Ok(o)  => Ok(o),
+        Err(d) => Err(Failure.Invalid(d)),
+    }).try();
+    outcome.match({
+        Returned(v)   => Ok(exit_code(v)),
+        Trapped(code) => Err(Failure.Trap(code)),
+        Fault(f)      => Err(Failure.Fault(f.variant_name())),
+        ResourceLimit => Err(Failure.Fault("a resource limit was reached")),
+    })
+}
+
+// main's i32 result as a process exit code.
+exit_code = (v: Res<RuntimeValue>) i32 {
+    bits = v.match({ Ok(rv) => rv.match({ Int(k) => k.bits, _ => 0 }), None => 0 });
+    size = I32.magnitude(bits).to_i32().match({ Ok(n) => n, None => 0 });
+    I32.negative(bits).match({ true => 0 - size, false => size })
+}

@@ -7,7 +7,7 @@
 { Source } = front.parse.source
 
 NodeKind* = {
-    | Function      // name = (params) result { body }: params, then result, then body
+    | Function      // name = (params) result { body }: the name, params, result, body
     | Param         // name: type: one child, the type
     | Block         // { expression }: one child
     | Call          // callee(args): the callee, then the arguments

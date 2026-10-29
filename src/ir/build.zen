@@ -16,6 +16,8 @@ i32_const* = (n: u64) Value { Value.Constant(Constant.Integer(IntegerConstant(ty
 
 record* = (id: u32, i: Instruction) InstructionRecord { InstructionRecord(id: Id<Instruction>(index: id), instruction: i) }
 
-checked_add* = (dst: Id<Register>, lhs: Value, rhs: Value) Instruction {
-    Instruction.IntBinary(IntBinary(dst: dst, op: IntOp.Add(Overflow.Checked), lhs: lhs, rhs: rhs))
+int_op* = (op: IntOp, dst: Id<Register>, lhs: Value, rhs: Value) Instruction {
+    Instruction.IntBinary(IntBinary(dst: dst, op: op, lhs: lhs, rhs: rhs))
 }
+
+checked_add* = (dst: Id<Register>, lhs: Value, rhs: Value) Instruction { int_op(IntOp.Add(Overflow.Checked), dst, lhs, rhs) }

@@ -1,29 +1,51 @@
-// ZEN_LANGUAGE.md §3–§4, the part a first program needs. Every name resolves, every
-// value is i32, every call matches its function, and `main` exists. The result, a
-// Program, is what lowering reads, so names are looked up in one place.
+// ZEN_LANGUAGE.md §3–§5, the part the first programs need. Every name resolves; values
+// are i32 or bool; calls match their function; a bool match covers true and false and its
+// arms agree; `main` exists. The result, a Program, is what lowering reads.
 
 { Res, Ok, Err, None, Range, ensure, ok_or, to_usize, truncate_u32 } = std.core
 { Alloc, AllocError } = std.mem
 { Vec, Map } = std.collections
 { str } = std.text
-{ Tree, Node, NodeKind } = front.parse.ast
+{ Tree, Node, NodeKind, BinaryOp } = front.parse.ast
 
-// What is wrong, and where: "add takes 2 arguments, not 1".
+// What is wrong, and where: "wrong number of arguments".
 CheckError* = { at*: u32, message*: str }
 
-// A declared function: its node, its name, and its parameters' names in order.
-Decl* = {
-    node*: Node,
-    name*: str,
-    params*: Vec<str>,
+Type* = {
+    | I32
+    | Bool,
 
-    // The register of a parameter: its position.
-    param* = (self: @Self, name: str) Res<u32> {
-        found :: Res<u32> = None;
-        self.params.loop((h, k, p) { p.eq(name).then(() { found = Ok(k.truncate_u32()); h.break(); }); });
+    same* = (self: @Self, other: Type) bool { self.variant_name().eq(other.variant_name()) }
+}
+
+// What each name means at one point in a function: parameters first, then bindings.
+// A later binding shadows an earlier one, so lookups go newest first.
+Scope*<T> = {
+    names :: Vec<str>,
+    values :: Vec<T>,
+
+    lookup* = (self: @Self, name: str) Res<T> {
+        found :: Res<T> = None;
+        Range(0, self.names.len).loop((h, i) {
+            k = self.names.len - 1 - i;
+            self.names.get(k).match({ Ok(n) => n.eq(name), None => false }).then(() {
+                found = self.values.get(k);
+                h.break();
+            });
+        });
         found
     }
+
+    bind* = (self :: @Self, name: str, value: T) Res<AllocError> {
+        self.names.add(name).try();
+        self.values.add(value)
+    }
 }
+
+scope* = <T>(a: Alloc) Scope<T> { Scope<T>(names: a.Vec<str>(), values: a.Vec<T>()) }
+
+// A declared function: its node, name, parameters (names and types) and result type.
+Decl* = { node*: Node, name*: str, params*: Vec<str>, types*: Vec<Type>, result*: Type }
 
 Program* = {
     tree*: Tree,
@@ -58,7 +80,16 @@ Checker = {
         self.tree.child(n, k).ok_or(self.at(n, "a malformed tree"))
     }
 
-    // Every declaration's name and parameters; a name declared twice is an error.
+    // The type a type name stands for.
+    type_named = (self: @Self, n: Node) Res<Type, CheckError> {
+        name = self.tree.text(n);
+        name.eq("i32").match({
+            true  => Ok(Type.I32),
+            false => name.eq("bool").match({ true => Ok(Type.Bool), false => Err(self.at(n, "unknown type")) }),
+        })
+    }
+
+    // Every declaration's name, parameters and result type; a name declared twice is an error.
     collect = (self: @Self) Res<Program, CheckError> {
         decls ::= self.a.Vec<Decl>();
         index ::= self.a.Map<str, u32>();
@@ -68,56 +99,134 @@ Checker = {
             first = index.get(name).match({ Ok(_) => false, None => true });
             first.ensure(self.at(n, "this name is already declared")).try();
             params ::= self.a.Vec<str>();
+            types ::= self.a.Vec<Type>();
             Range(1, n.count - 2).loop((k) {
                 p = self.child(n, k).try();
                 self.memory(params.add(self.tree.text(p))).try();
+                t = self.type_named(self.child(p, 0).try()).try();
+                self.memory(types.add(t)).try();
             });
+            result = self.type_named(self.child(n, n.count - 2).try()).try();
             self.memory(index.set(name, decls.len.truncate_u32())).try();
-            self.memory(decls.add(Decl(node: n, name: name, params: params))).try();
+            self.memory(decls.add(Decl(node: n, name: name, params: params, types: types, result: result))).try();
         });
         Ok(Program(tree: self.tree, decls: decls, index: index))
     }
 
-    // Parameter and result types are i32, and the body is a valid i32 expression.
+    // The body's type is the declared result type.
     function = (self: @Self, p: Program, d: Decl) Res<(), CheckError> {
-        Range(1, d.node.count - 2).loop((k) {
-            param = self.child(d.node, k).try();
-            self.i32_type(self.child(param, 0).try()).try();
+        names ::= scope<Type>(self.a);
+        d.params.loop((h, k, name) {
+            t = d.types.get(k).match({ Ok(t) => t, None => Type.I32 });
+            self.memory(names.bind(name, t)).try();
         });
-        self.i32_type(self.child(d.node, d.node.count - 2).try()).try();
-        block = self.child(d.node, d.node.count - 1).try();
-        self.expression(p, d, self.child(block, 0).try())
+        body = self.child(d.node, d.node.count - 1).try();
+        t = self.block(p, names, body).try();
+        t.same(d.result).ensure(self.at(body, "the body's type is not the declared result type"))
     }
 
-    i32_type = (self: @Self, n: Node) Res<(), CheckError> {
-        self.tree.text(n).eq("i32").ensure(self.at(n, "only i32 is supported so far"))
+    // Each binding adds a name; the block's type is its tail's.
+    block = (self: @Self, p: Program, names :: Scope<Type>, b: Node) Res<Type, CheckError> {
+        Range(0, b.count - 1).loop((k) {
+            binding = self.child(b, k).try();
+            t = self.expression(p, names, self.child(binding, 1).try()).try();
+            self.memory(names.bind(self.tree.text(self.child(binding, 0).try()), t)).try();
+        });
+        self.expression(p, names, self.child(b, b.count - 1).try())
     }
 
-    expression = (self: @Self, p: Program, d: Decl, n: Node) Res<(), CheckError> {
+    expression = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
         n.kind.match({
             Int       => self.int_literal(n),
-            Name      => { d.param(self.tree.text(n)).ok_or(self.at(n, "unknown name")).try(); Ok },
-            Binary(_) => {
-                self.expression(p, d, self.child(n, 0).try()).try();
-                self.expression(p, d, self.child(n, 1).try())
-            },
-            Call      => self.call(p, d, n),
+            Name      => self.name(names, n),
+            Binary(o) => self.binary(p, names, o, n),
+            Call      => self.call(p, names, n),
+            Match     => self.bool_match(p, names, n),
             _         => Err(self.at(n, "not an expression")),
         })
     }
 
-    int_literal = (self: @Self, n: Node) Res<(), CheckError> {
+    int_literal = (self: @Self, n: Node) Res<Type, CheckError> {
         fits = self.tree.text(n).parse_usize().match({ Ok(v) => v.to_u64() <= I32_MAX, None => false });
-        fits.ensure(self.at(n, "this integer doesn't fit i32"))
+        fits.ensure(self.at(n, "this integer doesn't fit i32")).try();
+        Ok(Type.I32)
     }
 
-    // The callee is a declared function, and it gets one argument per parameter.
-    call = (self: @Self, p: Program, d: Decl, n: Node) Res<(), CheckError> {
+    // `true` and `false` are built in; any other name is a parameter or a binding.
+    name = (self: @Self, names: Scope<Type>, n: Node) Res<Type, CheckError> {
+        text = self.tree.text(n);
+        (text.eq("true") || text.eq("false")).match({
+            true  => Ok(Type.Bool),
+            false => names.lookup(text).ok_or(self.at(n, "unknown name")),
+        })
+    }
+
+    // Arithmetic and ordering need i32; == and != need two values of one type.
+    binary = (self: @Self, p: Program, names: Scope<Type>, o: BinaryOp, n: Node) Res<Type, CheckError> {
+        left = self.expression(p, names, self.child(n, 0).try()).try();
+        second = self.child(n, 1).try();
+        right = self.expression(p, names, second).try();
+        left.same(right).ensure(self.at(second, "both sides need the same type")).try();
+        equality = o.match({ Equal => true, NotEqual => true, _ => false });
+        (equality || left.same(Type.I32)).ensure(self.at(n, "this operator needs i32")).try();
+        Ok(o.is_comparison().match({ true => Type.Bool, false => Type.I32 }))
+    }
+
+    // The callee is a declared function, and each argument has its parameter's type.
+    call = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
         callee = self.child(n, 0).try();
         k = p.find(self.tree.text(callee)).ok_or(self.at(callee, "unknown function")).try();
         target = p.decl(k).ok_or(self.at(callee, "unknown function")).try();
         (n.count - 1 == target.params.len.truncate_u32()).ensure(self.at(n, "wrong number of arguments")).try();
-        Range(1, n.count).loop((i) { self.expression(p, d, self.child(n, i).try()).try(); });
-        Ok
+        Range(1, n.count).loop((i) {
+            arg = self.child(n, i).try();
+            want = target.types.get((i - 1).to_usize()).match({ Ok(t) => t, None => Type.I32 });
+            self.expression(p, names, arg).try().same(want).ensure(self.at(arg, "wrong argument type")).try();
+        });
+        Ok(target.result)
+    }
+
+    // A bool match: two positional bodies, or arms that cover true and false (or `_`).
+    // Every arm's value has one type, the match's type.
+    bool_match = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
+        subject = self.expression(p, names, self.child(n, 0).try()).try();
+        subject.same(Type.Bool).ensure(self.at(n, "only bool can be matched so far")).try();
+        first = self.child(n, 1).try();
+        (first.count == 1).match({
+            true  => (n.count == 3).ensure(self.at(n, "a bool match has a true body and a false body")).try(),
+            false => self.covers_bool(n).try(),
+        });
+        want = self.arm_value(p, names, first).try();
+        Range(2, n.count).loop((k) {
+            arm = self.child(n, k).try();
+            (arm.count == first.count).ensure(self.at(arm, "don't mix arms and positional bodies")).try();
+            value = self.child(arm, arm.count - 1).try();
+            t = self.expression(p, names, value).try();
+            t.same(want).ensure(self.at(value, "every arm needs the same type")).try();
+        });
+        Ok(want)
+    }
+
+    arm_value = (self: @Self, p: Program, names: Scope<Type>, arm: Node) Res<Type, CheckError> {
+        self.expression(p, names, self.child(arm, arm.count - 1).try())
+    }
+
+    // Each of true and false is matched exactly once, by name or by `_`; no arm is unreachable.
+    covers_bool = (self: @Self, n: Node) Res<(), CheckError> {
+        seen_true ::= false;
+        seen_false ::= false;
+        Range(1, n.count).loop((k) {
+            arm = self.child(n, k).try();
+            pattern = self.child(arm, 0).try();
+            text = self.tree.text(pattern);
+            any = text.eq("_");
+            known = any || text.eq("true") || text.eq("false");
+            known.ensure(self.at(pattern, "a bool pattern is true, false or _")).try();
+            new = (text.eq("true") || any) && !seen_true || (text.eq("false") || any) && !seen_false;
+            new.ensure(self.at(arm, "this arm can never be reached")).try();
+            seen_true = seen_true || text.eq("true") || any;
+            seen_false = seen_false || text.eq("false") || any;
+        });
+        (seen_true && seen_false).ensure(self.at(n, "this match doesn't cover both true and false"))
     }
 }

@@ -9,8 +9,11 @@
 NodeKind* = {
     | Function      // name = (params) result { body }: the name, params, result, body
     | Param         // name: type: one child, the type
-    | Block         // { expression }: one child
+    | Block         // { statements; tail }: the Let statements, then the tail expression
+    | Let           // name = value;: the name, then the value
     | Call          // callee(args): the callee, then the arguments
+    | Match         // subject.match(arms): the subject, then the arms
+    | Arm           // pattern => value: two children; a positional body { value }: one
     | Binary: BinaryOp
     | Name
     | Int
@@ -19,12 +22,20 @@ NodeKind* = {
 BinaryOp* = {
     | Add
     | Subtract
-    | Multiply,
+    | Multiply
+    | Equal
+    | NotEqual
+    | Less
+    | LessEqual
+    | Greater
+    | GreaterEqual,
 
-    // Higher binds tighter: `a + b * c` is `a + (b * c)`.
+    // Higher binds tighter: `a + b * c > d` is `(a + (b * c)) > d`.
     precedence* = (self: @Self) u8 {
-        self.match({ Multiply => 2, _ => 1 })
+        self.match({ Multiply => 3, Add => 2, Subtract => 2, _ => 1 })
     }
+
+    is_comparison* = (self: @Self) bool { self.precedence() == 1 }
 }
 
 // A node's own text is source[start, end). Its children are tree.children[first, first + count).

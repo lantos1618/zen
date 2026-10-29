@@ -1,0 +1,11 @@
+// Each comparison operator, as one bit of the result. Equal operands tell < from <= and
+// > from >=. Catches: an operator mapped to the wrong predicate, or an unsigned compare
+// (then 0 - 1 < 1 would be false).
+
+bit = (b: bool) i32 { b.match({ 1 }, { 0 }) }
+main = () i32 {
+    bit(1 < 2) + 2 * bit(2 < 2) + 4 * bit(2 <= 2) + 8 * bit(2 > 2)
+        + 16 * bit(2 >= 2) + 32 * bit(5 == 5) + 64 * bit(5 != 5) + 128 * bit(0 - 1 < 1)
+}
+
+//! exit: 181

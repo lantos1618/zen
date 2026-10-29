@@ -1,0 +1,5 @@
+// Catches: a binding read before it is set, or bound to the wrong value.
+
+main = () i32 { x = 2; y = x * 5; y + x }
+
+//! exit: 12

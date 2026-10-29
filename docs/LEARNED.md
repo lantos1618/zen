@@ -54,3 +54,10 @@ Short, current facts that save the next person (or agent) an hour. Delete an ent
 - **Run every test on both compilers.** `tests/stage0.sh` and `tests/fresh.sh` run the same files; when they disagree, one of them, or the test, is wrong. The first disagreement found a wrong test: `2147483647 + 1` is a provable trap, so §8 makes it a compile error.
 - **Not yet in our checker:** refusing provable traps at compile time (§8). Stage 0 does it.
 - **A test must be able to fail.** `add(40, 2)` couldn't catch swapped arguments, because `+` doesn't care about order; `sub(50, 8)` can, and swapping operands in lowering makes it exit 214 instead of 42.
+
+## bool and .match
+
+- **Point at the thing that's wrong.** Stage 0 reports a type error at the offending operand or arm value, not at the whole expression; ours does the same now.
+- **Boundaries again:** `<` and `<=` only differ on equal operands, so a comparison test without `2 < 2` can't tell them apart. The mutation check found it.
+- **Names belong in the tree.** A binding's name is the Let node's first child; reading it back out of the source text was a hack.
+- **Find a mutation's line with grep, never by memory**: a guessed line number made one check silently change nothing.

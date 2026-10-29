@@ -82,7 +82,28 @@ main = (env: Env) Res<i32, IoError> {
         expect_tree(t, "f = () i32 { (1 + 2) * 3 }", "Function f i32 Block Multiply Add 1 2 3")
     }).try();
 
+    // bindings, comparisons, .match
+    s.run("bindings before the tail", (t) {
+        expect_tree(t, "f = () i32 { x = 1; y = x + 2; y }", "Function f i32 Block Let x 1 Let y Add x 2 y")
+    }).try();
+    s.run("a comparison binds looser than +", (t) {
+        expect_tree(t, "f = (a: i32) bool { a + 1 > 2 }", "Function f Param i32 bool Block Greater Add a 1 2")
+    }).try();
+    s.run("a match with arms", (t) {
+        expect_tree(t, "f = (b: bool) i32 { b.match({ true => 1, false => 2 }) }",
+            "Function f Param bool i32 Block Match b Arm true 1 Arm false 2")
+    }).try();
+    s.run("a match with positional bodies", (t) {
+        expect_tree(t, "f = (b: bool) i32 { b.match({ 1 }, { 2 }) }", "Function f Param bool i32 Block Match b Arm 1 Arm 2")
+    }).try();
+    s.run("a match on a parenthesized comparison", (t) {
+        expect_tree(t, "f = (a: i32) i32 { (a < 0).match({ 0 - a }, { a }) }",
+            "Function f Param i32 i32 Block Match Less a 0 Arm Subtract 0 a Arm a")
+    }).try();
+
     // errors: the first one stops parsing, at its position
+    s.run("a binding needs its `;`", (t) { expect_error(t, "f = () i32 { x = 1 x }", 1, 20) }).try();
+    s.run("only .match exists so far", (t) { expect_error(t, "f = (b: bool) i32 { b.then({ 1 }) }", 1, 23) }).try();
     s.run("a missing `)` is reported at the token found instead", (t) { expect_error(t, "f = (a: i32 i32 { a }", 1, 13) }).try();
     s.run("a missing expression", (t) { expect_error(t, "f = () i32 { }", 1, 14) }).try();
     s.run("a lexical fault stops the parse", (t) { expect_error(t, "f = () i32 { 010 }", 1, 14) }).try();

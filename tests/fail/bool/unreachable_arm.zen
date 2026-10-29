@@ -1,0 +1,7 @@
+// Catches: an arm after `_` accepted although it can never run.
+
+f = (b: bool) i32 { b.match({ true => 1, _ => 2, false => 3 }) }
+main = () i32 { f(true) }
+
+//! error: 3:50
+//! hint: this arm can never be reached

@@ -30,7 +30,15 @@ unexpected = (t: Token, wanted: str) ParseError {
 
 parse* = (a: Alloc, text: str) Res<Tree, ParseError> {
     lexed = lex(a, text).match({ Ok(t) => Ok(t), Err(_) => Err(ParseError.OutOfMemory) });
-    p ::= Parser(tokens: lexed.try(), a: a, at: 0, depth: 0, nodes: a.Vec<Node>(), children: a.Vec<u32>());
+    p ::= Parser(
+        text: text,
+        tokens: lexed.try(),
+        a: a,
+        at: 0,
+        depth: 0,
+        nodes: a.Vec<Node>(),
+        children: a.Vec<u32>(),
+    );
     roots ::= a.Vec<u32>();
     Range(0, MAX_ITEMS).loop((h, _) {
         p.peek().kind.is(Kind.End).then(() { h.break() });
@@ -41,6 +49,7 @@ parse* = (a: Alloc, text: str) Res<Tree, ParseError> {
 }
 
 Parser = {
+    text: str,
     tokens: Vec<Token>,         // always ends with Kind.End
     a: Alloc,
     at :: usize,
@@ -50,9 +59,14 @@ Parser = {
 
     // ---- reading tokens
 
-    peek = (self: @Self) Token {
-        self.tokens.get(self.at).match({ Ok(t) => t, None => END })
+    peek = (self: @Self) Token { self.ahead(0) }
+
+    // The token n places after the next one.
+    ahead = (self: @Self, n: usize) Token {
+        self.tokens.get(self.at + n).match({ Ok(t) => t, None => END })
     }
+
+    word = (self: @Self, t: Token) str { self.text.slice(t.start.to_usize(), t.end.to_usize()) }
 
     // Take the next token if it is `kind`; otherwise the error names what was wanted.
     expect = (self :: @Self, kind: Kind, wanted: str) Res<Token, ParseError> {
@@ -133,14 +147,33 @@ Parser = {
         self.leaf(NodeKind.Name, t)
     }
 
-    // block = "{" expression "}"
+    // block = "{" statement* expression "}"
     block = (self :: @Self) Res<u32, ParseError> {
         open = self.expect(Kind.LBrace, "`{`").try();
-        e = self.expression().try();
-        close = self.expect(Kind.RBrace, "`}`").try();
         kids ::= self.a.Vec<u32>();
+        Range(0, MAX_ITEMS).loop((h, _) {
+            binding = self.peek().kind.is(Kind.Name) && self.ahead(1).kind.is(Kind.Assign);
+            (!binding).then(() { h.break() });
+            s = self.statement().try();
+            push(kids, s).try();
+        });
+        e = self.expression().try();
         push(kids, e).try();
+        close = self.expect(Kind.RBrace, "`}`").try();
         self.add(NodeKind.Block, open.start, close.end, kids)
+    }
+
+    // statement = Name "=" expression ";"
+    statement = (self :: @Self) Res<u32, ParseError> {
+        name = self.expect(Kind.Name, "a name").try();
+        self.expect(Kind.Assign, "`=`").try();
+        value = self.expression().try();
+        semi = self.expect(Kind.Semi, "`;`").try();
+        kids ::= self.a.Vec<u32>();
+        named = self.leaf(NodeKind.Name, name).try();
+        push(kids, named).try();
+        push(kids, value).try();
+        self.add(NodeKind.Let, name.start, semi.end, kids)
     }
 
     // expression = binary, nested at most MAX_DEPTH deep
@@ -177,8 +210,68 @@ Parser = {
         self.add(NodeKind.Binary(op), self.span(left).start, self.span(right).end, kids)
     }
 
-    // primary = Int | Name | Name "(" arguments ")" | "(" expression ")"
+    // primary = atom ("." "match" "(" groups ")")*
     primary = (self :: @Self) Res<u32, ParseError> {
+        e ::= self.atom().try();
+        Range(0, MAX_ITEMS).loop((h, _) {
+            (!self.accept(Kind.Dot)).then(() { h.break() });
+            e = self.method(e).try();
+        });
+        Ok(e)
+    }
+
+    // Only `.match` exists so far.
+    method = (self :: @Self, subject: u32) Res<u32, ParseError> {
+        name = self.expect(Kind.Name, "a method name").try();
+        self.word(name).eq("match").ensure(unexpected(name, "`match`, the only method so far")).try();
+        self.expect(Kind.LParen, "`(`").try();
+        kids ::= self.a.Vec<u32>();
+        push(kids, subject).try();
+        Range(0, MAX_ITEMS).loop((h, _) {
+            self.group(kids).try();
+            (!self.accept(Kind.Comma)).then(() { h.break() });
+        });
+        close = self.expect(Kind.RParen, "`,` or `)`").try();
+        self.add(NodeKind.Match, self.span(subject).start, close.end, kids)
+    }
+
+    // group = "{" pattern "=>" expression ("," pattern "=>" expression)* ","? "}" | "{" expression "}"
+    group = (self :: @Self, kids :: Vec<u32>) Res<(), ParseError> {
+        self.expect(Kind.LBrace, "`{`").try();
+        arms = self.peek().kind.is(Kind.Name) && self.ahead(1).kind.is(Kind.Arrow);
+        arms.match({
+            true  => Range(0, MAX_ITEMS).loop((h, _) {
+                self.accept(Kind.RBrace).then(() { h.break() });
+                a = self.arm().try();
+                push(kids, a).try();
+                (!self.accept(Kind.Comma)).then(() { self.expect(Kind.RBrace, "`,` or `}`").try(); h.break(); });
+            }),
+            false => {
+                value = self.expression().try();
+                body = self.expect(Kind.RBrace, "`}`").try();
+                one ::= self.a.Vec<u32>();
+                push(one, value).try();
+                positional = self.add(NodeKind.Arm, self.span(value).start, body.end, one).try();
+                push(kids, positional).try();
+            },
+        });
+        Ok
+    }
+
+    // arm = pattern "=>" expression, where a pattern is a name: true, false or _
+    arm = (self :: @Self) Res<u32, ParseError> {
+        name = self.expect(Kind.Name, "a pattern").try();
+        pattern = self.leaf(NodeKind.Name, name).try();
+        self.expect(Kind.Arrow, "`=>`").try();
+        value = self.expression().try();
+        kids ::= self.a.Vec<u32>();
+        push(kids, pattern).try();
+        push(kids, value).try();
+        self.add(NodeKind.Arm, name.start, self.span(value).end, kids)
+    }
+
+    // atom = Int | Name | Name "(" arguments ")" | "(" expression ")"
+    atom = (self :: @Self) Res<u32, ParseError> {
         t = self.peek();
         t.kind.match({
             Int    => { self.at = self.at + 1; self.leaf(NodeKind.Int, t) },
@@ -224,8 +317,14 @@ binary_op = (k: Kind) Res<BinaryOp> {
     k.match({
         Plus  => Ok(BinaryOp.Add),
         Minus => Ok(BinaryOp.Subtract),
-        Star  => Ok(BinaryOp.Multiply),
-        _     => None,
+        Star     => Ok(BinaryOp.Multiply),
+        Equal    => Ok(BinaryOp.Equal),
+        NotEqual => Ok(BinaryOp.NotEqual),
+        Lt       => Ok(BinaryOp.Less),
+        Le       => Ok(BinaryOp.LessEqual),
+        Gt       => Ok(BinaryOp.Greater),
+        Ge       => Ok(BinaryOp.GreaterEqual),
+        _        => None,
     })
 }
 

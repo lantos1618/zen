@@ -1,0 +1,6 @@
+// Catches: == between a bool and an i32 accepted (it can never be true).
+
+main = () i32 { (true == 1).match({ true => 1, false => 0 }) }
+
+//! error: 3:26
+//! hint: both sides need the same type

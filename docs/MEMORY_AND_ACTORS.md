@@ -96,7 +96,7 @@ Counter = {
 }
 c = env.spawn(Counter()).try();     // Ref<Counter>: an address, copies freely
 c.add(5);                           // a send: enqueued, returns at once
-t = c.ask(Counter.total).try();     // one-shot request/reply
+t = c.ask(io, Counter.total).try(); // one-shot request/reply: waits, so it takes an Io
 ```
 
 - **An actor owns its state and its arena.** Only one worker runs it at a time; it handles one message per turn, FIFO per sender.
@@ -144,6 +144,8 @@ fetch = (io: Io, net: Net, url: str, a: Alloc) Res<String, NetError> {
 - **A waiting actor is not re-entered.** While its turn waits, its mailbox queues and its state can't change underneath it. A wait cycle (A asks B, and B asks A) is detected like a mailbox cycle and fails the newest ask with `Cycle`.
 
 The compiler checks none of this specially. `Io` is an ordinary interface, `wait` is an ordinary call into the runtime, and fit's normal rules decide who may hold an `Io` (it is SCOPED to the actor or thread that made it).
+
+**Why this, not the actors, removes red/blue.** Actors alone don't: Pony's behaviours never block, so results come back as promises and promises spread, which is the colour problem again. Erlang has actors and no colours because `receive` suspends a process that has its own stack. This design is on Erlang's side: `ask` and every other wait suspend a turn on its own stack. What remains is visible but not a split: a function that may wait takes an `Io`, and any `Io` works, including `Blocking`. The one true restriction is that code called from C can't wait.
 
 ## 5. What a message may carry
 

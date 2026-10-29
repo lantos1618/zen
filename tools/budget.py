@@ -19,7 +19,8 @@ BUDGETS = {                       # directory -> lines
     "src/c": 1_500,               # C route
     "src/build": 1_800,           # build.zen, packages, FFI (BUILD_AND_PACKAGES.md 9)
     "src/std": 4_000,
-    "runtime": 200,               # C
+    "runtime/zen_rt.c": 200,      # C: entry, traps, Env glue
+    "runtime/actor": 400,         # C: threads, mailboxes, stack switch (T2)
 }
 TOTAL = 25_000
 

@@ -5,7 +5,7 @@ Goals, in order: **small, works, elegant, low attack surface.** When two rules p
 ## 1. File layout
 
 ```text
-docs/        ZEN_LANGUAGE  COMPILER  BUILD_AND_PACKAGES  STYLE  TESTING
+docs/        ZEN_LANGUAGE  COMPILER  BUILD_AND_PACKAGES  MEMORY_AND_ACTORS  STYLE  TESTING
 src/
   main.zen                 driver: argv -> stages -> exit code; nothing else
   front/
@@ -20,7 +20,7 @@ src/
   c/         write_c.zen (App D)                                                        (1,500)
   build/     manifest.zen  graph.zen  mvs.zen  lock.zen  fetch.zen  ffi.zen            (1,800)
   std/       core/  mem/  seq/  text/  collections/  io/   (App L)                      (4,000)
-runtime/     zen_rt.c                                                                   (200)
+runtime/     zen_rt.c (200)   actor/ threads, mailboxes, stack switch (T2, 400)
 tests/       run/<topic>/  fail/<topic>/  run.py  stage0.sh  baseline-*.txt
 tools/       budget.py
 ```

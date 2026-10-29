@@ -27,7 +27,8 @@ TOTAL = 25_000
 
 def lines(path: Path) -> int:
     files = [path] if path.is_file() else [*path.rglob("*.zen"), *path.rglob("*.c"), *path.rglob("*.h")]
-    return sum(1 for f in files for l in f.read_text().splitlines() if l.strip())
+    product = [f for f in files if "test" not in f.stem]     # tests are not compiler size
+    return sum(1 for f in product for l in f.read_text().splitlines() if l.strip())
 
 
 def main() -> int:

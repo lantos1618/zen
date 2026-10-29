@@ -53,7 +53,10 @@ Validator = {
     }
 
     memory = (self: @Self, r: Res<AllocError>) Res<(), Diagnostic> {
-        r.match({ Ok => Ok, Err(_) => self.fail<()>(DiagnosticCode.ResourceLimit, "out of memory during validation") })
+        r.match({ Ok => Ok, Err(_) => self.fail<()>(
+            DiagnosticCode.ResourceLimit,
+            "out of memory during validation"
+        ) })
     }
 
     // ---- module tables
@@ -68,21 +71,32 @@ Validator = {
         m.functions.loop((h, i, f) {
             self.function = Ok(f.id);
             self.check_function(i, f).try();
-            self.function = None;
-            self.block = None;
+            self.function    = None;
+            self.block       = None;
             self.instruction = None;
         });
         m.trap_handler.match({
             Ok(h) => {
                 sig = self.signature(self.signature_of(h).try()).try();
-                self.require(self.m.import(h).match({ Ok(_) => true, None => false }),
-                    DiagnosticCode.InvalidSymbol, "the trap handler must be an import").try();
-                self.require(sig.is_never() && sig.parameters.len == 1,
-                    DiagnosticCode.TypeMismatch, "the trap handler must be (U32) -> Never").try();
-                self.require(sig.parameters.get(0).match({ Ok(t) => t.code() == ScalarType.U32.code(), None => false }),
-                    DiagnosticCode.TypeMismatch, "the trap handler must be (U32) -> Never").try();
+                self.require(
+                    self.m.import(h).match({ Ok(_) => true, None => false }),
+                    DiagnosticCode.InvalidSymbol,
+                    "the trap handler must be an import"
+                ).try();
+                self.require(
+                    sig.is_never() && sig.parameters.len == 1,
+                    DiagnosticCode.TypeMismatch,
+                    "the trap handler must be (U32) -> Never"
+                ).try();
+                self.require(
+                    sig.parameters.get(
+                        0
+                    ).match({ Ok(t) => t.code() == ScalarType.U32.code(), None => false }),
+                    DiagnosticCode.TypeMismatch,
+                    "the trap handler must be (U32) -> Never"
+                ).try();
             },
-            None => (),
+            None  => (),
         });
         Ok
     }
@@ -100,15 +114,19 @@ Validator = {
     }
 
     check_type = (self: @Self, t: ScalarType) Res<(), Diagnostic> {
-        t.match({ FunctionPointer(s) => { self.signature(s).try(); }, _ => () });
+        t.match({ FunctionPointer(s) => { self.signature(
+            s
+        ).try(); }, _ => () });
         Ok
     }
 
     check_signature = (self: @Self, s: Signature) Res<(), Diagnostic> {
         s.parameters.loop((t) { self.check_type(t).try(); });
         s.result.match({
-            Returns(r) => r.match({ Ok(t) => self.check_type(t).try(), None => () }),
-            Never => (),
+            Returns(r) => r.match({ Ok(t) => self.check_type(
+                t
+            ).try(), None => () }),
+            Never      => (),
         });
         Ok
     }
@@ -116,59 +134,110 @@ Validator = {
     check_symbols = (self: @Self) Res<(), Diagnostic> {
         names ::= self.a.Map<str, u32>();
         self.m.symbols.loop((h, i, s) {
-            self.require(s.id.index.to_usize() == i, DiagnosticCode.InvalidId, "symbol ids must equal their position").try();
+            self.require(
+                s.id.index.to_usize() == i,
+                DiagnosticCode.InvalidId,
+                "symbol ids must equal their position"
+            ).try();
             external = s.linkage.match({ Internal => false, ExternalDefinition => true, ExternalImport => true });
             s.external_name.match({
                 Ok(name) => {
-                    self.require(external, DiagnosticCode.InvalidSymbol, "an internal symbol has no external name").try();
-                    self.require(name.len > 0 && name.is_identifier(), DiagnosticCode.InvalidSymbol, "an external name must match [A-Za-z_][A-Za-z0-9_]*").try();
-                    self.require(names.get(name).match({ Ok(_) => false, None => true }), DiagnosticCode.DuplicateName, "external names must be unique").try();
+                    self.require(
+                        external,
+                        DiagnosticCode.InvalidSymbol,
+                        "an internal symbol has no external name"
+                    ).try();
+                    self.require(
+                        name.len > 0 && name.is_identifier(),
+                        DiagnosticCode.InvalidSymbol,
+                        "an external name must match [A-Za-z_][A-Za-z0-9_]*"
+                    ).try();
+                    self.require(
+                        names.get(name).match({ Ok(_) => false, None => true }),
+                        DiagnosticCode.DuplicateName,
+                        "external names must be unique"
+                    ).try();
                     self.memory(names.set(name, s.id.index)).try();
                 },
-                None => self.require(!external, DiagnosticCode.InvalidSymbol, "an external symbol needs an external name").try(),
+                None     => self.require(
+                    !external,
+                    DiagnosticCode.InvalidSymbol,
+                    "an external symbol needs an external name"
+                ).try(),
             });
         });
         Ok
     }
 
     check_import = (self: @Self, i: usize, im: Import) Res<(), Diagnostic> {
-        self.require(im.function.index.to_usize() == self.m.functions.len + i, DiagnosticCode.InvalidId,
-            "import function ids follow the defined functions, in order").try();
+        self.require(
+            im.function.index.to_usize() == self.m.functions.len + i,
+            DiagnosticCode.InvalidId,
+            "import function ids follow the defined functions, in order"
+        ).try();
         sym = self.symbol(im.symbol).try();
-        self.require(sym.linkage.match({ ExternalImport => true, _ => false }) && sym.kind.match({ Function => true, Data => false }),
-            DiagnosticCode.InvalidSymbol, "an import names an external function symbol").try();
+        self.require(
+            sym.linkage.match({ ExternalImport => true, _ => false }) && sym.kind.match({ Function => true, Data => false }),
+            DiagnosticCode.InvalidSymbol,
+            "an import names an external function symbol"
+        ).try();
         self.signature(im.signature).try();
         Ok
     }
 
     check_global = (self: @Self, g: Global) Res<(), Diagnostic> {
         sym = self.symbol(g.symbol).try();
-        self.require(sym.kind.match({ Data => true, Function => false }) && sym.linkage.match({ ExternalImport => false, _ => true }),
-            DiagnosticCode.InvalidSymbol, "a global is a data symbol defined here").try();
-        self.require(is_power_of_two(g.alignment.to_u64()), DiagnosticCode.InvalidAlignment, "global alignment must be a power of two").try();
+        self.require(
+            sym.kind.match({ Data => true, Function => false }) && sym.linkage.match({ ExternalImport => false, _ => true }),
+            DiagnosticCode.InvalidSymbol,
+            "a global is a data symbol defined here"
+        ).try();
+        self.require(
+            is_power_of_two(g.alignment.to_u64()),
+            DiagnosticCode.InvalidAlignment,
+            "global alignment must be a power of two"
+        ).try();
         total :: u64 = 0;
         g.initializer.loop((part) {
             part.match({
                 Address(p) => {
                     self.symbol(p.symbol).try();
-                    self.require(p.type.match({ Pointer => true, FunctionPointer(_) => true, _ => false }),
-                        DiagnosticCode.TypeMismatch, "an address part is a Pointer or FunctionPointer").try();
+                    self.require(
+                        p.type.match({ Pointer => true, FunctionPointer(_) => true, _ => false }),
+                        DiagnosticCode.TypeMismatch,
+                        "an address part is a Pointer or FunctionPointer"
+                    ).try();
                 },
-                _ => (),
+                _          => (),
             });
             total = total + part.size();
         });
-        self.require(total == g.size, DiagnosticCode.InvalidLayout, "initializer parts must add up to the global's size").try();
+        self.require(
+            total == g.size,
+            DiagnosticCode.InvalidLayout,
+            "initializer parts must add up to the global's size"
+        ).try();
         Ok
     }
 
     check_export = (self: @Self, e: Export) Res<(), Diagnostic> {
         sym = self.symbol(e.symbol).try();
-        self.require(sym.linkage.match({ ExternalDefinition => true, _ => false }), DiagnosticCode.InvalidSymbol,
-            "an export binds an ExternalDefinition symbol").try();
+        self.require(
+            sym.linkage.match({ ExternalDefinition => true, _ => false }),
+            DiagnosticCode.InvalidSymbol,
+            "an export binds an ExternalDefinition symbol"
+        ).try();
         e.definition.match({
-            Function(f) => self.require(self.m.function(f).match({ Ok(_) => true, None => false }), DiagnosticCode.InvalidId, "export of an unknown function").try(),
-            Global(g) => self.require(self.m.global(g).match({ Ok(_) => true, None => false }), DiagnosticCode.InvalidId, "export of an unknown global").try(),
+            Function(f) => self.require(
+                self.m.function(f).match({ Ok(_) => true, None => false }),
+                DiagnosticCode.InvalidId,
+                "export of an unknown function"
+            ).try(),
+            Global(g)   => self.require(
+                self.m.global(g).match({ Ok(_) => true, None => false }),
+                DiagnosticCode.InvalidId,
+                "export of an unknown global"
+            ).try(),
         });
         Ok
     }
@@ -176,30 +245,65 @@ Validator = {
     // ---- functions
 
     check_function = (self :: @Self, i: usize, f: Function) Res<(), Diagnostic> {
-        self.require(f.id.index.to_usize() == i, DiagnosticCode.InvalidId, "function ids must equal their position").try();
+        self.require(
+            f.id.index.to_usize() == i,
+            DiagnosticCode.InvalidId,
+            "function ids must equal their position"
+        ).try();
         sym = self.symbol(f.symbol).try();
-        self.require(sym.kind.match({ Function => true, Data => false }) && sym.linkage.match({ ExternalImport => false, _ => true }),
-            DiagnosticCode.InvalidSymbol, "a function is a function symbol defined here").try();
+        self.require(
+            sym.kind.match({ Function => true, Data => false }) && sym.linkage.match({ ExternalImport => false, _ => true }),
+            DiagnosticCode.InvalidSymbol,
+            "a function is a function symbol defined here"
+        ).try();
         sig = self.signature(f.signature).try();
         f.register_types.loop((t) { self.check_type(t).try(); });
-        self.require(f.parameters.len == sig.parameters.len, DiagnosticCode.ArityMismatch, "parameters must match the signature").try();
+        self.require(
+            f.parameters.len == sig.parameters.len,
+            DiagnosticCode.ArityMismatch,
+            "parameters must match the signature"
+        ).try();
         f.parameters.loop((h, k, r) {
-            self.require(self.register(f, r).try().same(self.found(sig.parameters.get(k)).try()), DiagnosticCode.TypeMismatch, "parameter type differs from the signature").try();
+            self.require(
+                self.register(f, r).try().same(self.found(sig.parameters.get(k)).try()),
+                DiagnosticCode.TypeMismatch,
+                "parameter type differs from the signature"
+            ).try();
         });
         f.objects.loop((h, k, o) {
-            self.require(o.id.index.to_usize() == k, DiagnosticCode.InvalidId, "stack object ids must equal their position").try();
-            self.require(o.size > 0 && is_power_of_two(o.alignment.to_u64()), DiagnosticCode.InvalidLayout, "a stack object has a size and a power-of-two alignment").try();
+            self.require(
+                o.id.index.to_usize() == k,
+                DiagnosticCode.InvalidId,
+                "stack object ids must equal their position"
+            ).try();
+            self.require(
+                o.size > 0 && is_power_of_two(o.alignment.to_u64()),
+                DiagnosticCode.InvalidLayout,
+                "a stack object has a size and a power-of-two alignment"
+            ).try();
         });
-        self.require(f.block(f.entry).match({ Ok(_) => true, None => false }), DiagnosticCode.InvalidSuccessor, "the entry block does not exist").try();
+        self.require(
+            f.block(f.entry).match({ Ok(_) => true, None => false }),
+            DiagnosticCode.InvalidSuccessor,
+            "the entry block does not exist"
+        ).try();
         seen ::= self.a.Vec<bool>();
         f.blocks.loop((h, k, b) {
             self.block = Ok(b.id);
-            self.require(b.id.index.to_usize() == k, DiagnosticCode.InvalidId, "block ids must equal their position").try();
+            self.require(
+                b.id.index.to_usize() == k,
+                DiagnosticCode.InvalidId,
+                "block ids must equal their position"
+            ).try();
             b.instructions.loop((rec) {
                 self.instruction = Ok(rec.id);
-                id = rec.id.index.to_usize();
+                id               = rec.id.index.to_usize();
                 Range(seen.len, id + 1).loop((_) { self.memory(seen.add(false)).try(); });
-                self.require(!self.found(seen.get(id)).try(), DiagnosticCode.DuplicateId, "instruction ids must be unique in a function").try();
+                self.require(
+                    !self.found(seen.get(id)).try(),
+                    DiagnosticCode.DuplicateId,
+                    "instruction ids must be unique in a function"
+                ).try();
                 seen.set(id, true);
                 self.check_instruction(f, rec.instruction).try();
             });
@@ -224,13 +328,21 @@ Validator = {
 
     check_constant = (self: @Self, c: Constant) Res<(), Diagnostic> {
         c.match({
-            Integer(k) => {
-                self.require(k.type.is_integer(), DiagnosticCode.InvalidConstant, "an integer constant has an integer type").try();
+            Integer(k)             => {
+                self.require(
+                    k.type.is_integer(),
+                    DiagnosticCode.InvalidConstant,
+                    "an integer constant has an integer type"
+                ).try();
                 w = k.type.width();
-                self.require(w == 64 || k.bits.shift_right(w.to_usize()) == 0, DiagnosticCode.InvalidConstant, "integer bits must fit the type's width").try();
+                self.require(
+                    w == 64 || k.bits.shift_right(w.to_usize()) == 0,
+                    DiagnosticCode.InvalidConstant,
+                    "integer bits must fit the type's width"
+                ).try();
             },
             NullFunctionPointer(s) => { self.signature(s).try(); },
-            _ => (),
+            _                      => (),
         });
         Ok
     }
@@ -242,95 +354,234 @@ Validator = {
     check_instruction = (self: @Self, f: Function, i: Instruction) Res<(), Diagnostic> {
         bool_type = ScalarType.Bool;
         i.match({
-            Set(x) => self.same(self.register(f, x.dst).try(), self.value(f, x.value).try(), "Set needs equal types").try(),
-            Select(x) => {
-                self.same(self.value(f, x.condition).try(), bool_type, "the condition is Bool").try();
+            Set(x)            => self.same(
+                self.register(f, x.dst).try(),
+                self.value(f, x.value).try(),
+                "Set needs equal types"
+            ).try(),
+            Select(x)         => {
+                self.same(
+                    self.value(f, x.condition).try(),
+                    bool_type,
+                    "the condition is Bool"
+                ).try();
                 t = self.register(f, x.dst).try();
-                self.same(t, self.value(f, x.yes).try(), "Select needs equal types").try();
-                self.same(t, self.value(f, x.no).try(), "Select needs equal types").try();
+                self.same(
+                    t,
+                    self.value(f, x.yes).try(),
+                    "Select needs equal types"
+                ).try();
+                self.same(
+                    t,
+                    self.value(f, x.no).try(),
+                    "Select needs equal types"
+                ).try();
             },
-            IntBinary(x) => {
+            IntBinary(x)      => {
                 t = self.register(f, x.dst).try();
-                self.require(t.is_integer(), DiagnosticCode.TypeMismatch, "IntBinary works on integers").try();
-                self.same(t, self.value(f, x.lhs).try(), "IntBinary needs equal types").try();
+                self.require(
+                    t.is_integer(),
+                    DiagnosticCode.TypeMismatch,
+                    "IntBinary works on integers"
+                ).try();
+                self.same(
+                    t,
+                    self.value(f, x.lhs).try(),
+                    "IntBinary needs equal types"
+                ).try();
                 r = self.value(f, x.rhs).try();
                 x.op.is_shift().match({
-                    true => self.require(r.is_integer(), DiagnosticCode.TypeMismatch, "a shift count is an integer").try(),
-                    false => self.same(t, r, "IntBinary needs equal types").try(),
+                    true  => self.require(
+                        r.is_integer(),
+                        DiagnosticCode.TypeMismatch,
+                        "a shift count is an integer"
+                    ).try(),
+                    false => self.same(
+                        t,
+                        r,
+                        "IntBinary needs equal types"
+                    ).try(),
                 });
             },
-            FloatBinary(x) => {
+            FloatBinary(x)    => {
                 t = self.register(f, x.dst).try();
-                self.require(t.is_float(), DiagnosticCode.TypeMismatch, "FloatBinary works on floats").try();
-                self.same(t, self.value(f, x.lhs).try(), "FloatBinary needs equal types").try();
-                self.same(t, self.value(f, x.rhs).try(), "FloatBinary needs equal types").try();
+                self.require(
+                    t.is_float(),
+                    DiagnosticCode.TypeMismatch,
+                    "FloatBinary works on floats"
+                ).try();
+                self.same(
+                    t,
+                    self.value(f, x.lhs).try(),
+                    "FloatBinary needs equal types"
+                ).try();
+                self.same(
+                    t,
+                    self.value(f, x.rhs).try(),
+                    "FloatBinary needs equal types"
+                ).try();
             },
-            FloatNegate(x) => {
+            FloatNegate(x)    => {
                 t = self.register(f, x.dst).try();
-                self.require(t.is_float(), DiagnosticCode.TypeMismatch, "FloatNegate works on floats").try();
-                self.same(t, self.value(f, x.value).try(), "FloatNegate needs equal types").try();
+                self.require(
+                    t.is_float(),
+                    DiagnosticCode.TypeMismatch,
+                    "FloatNegate works on floats"
+                ).try();
+                self.same(
+                    t,
+                    self.value(f, x.value).try(),
+                    "FloatNegate needs equal types"
+                ).try();
             },
-            IntCompare(x) => {
+            IntCompare(x)     => {
                 l = self.value(f, x.lhs).try();
-                self.same(l, self.value(f, x.rhs).try(), "IntCompare needs equal types").try();
-                plain = l.is_integer();
+                self.same(
+                    l,
+                    self.value(f, x.rhs).try(),
+                    "IntCompare needs equal types"
+                ).try();
+                plain    = l.is_integer();
                 equality = l.match({ Bool => true, FunctionPointer(_) => true, _ => false }) && x.op.is_equality();
-                self.require(plain || equality, DiagnosticCode.TypeMismatch, "IntCompare: integers, or Bool/FunctionPointer with Equal/NotEqual").try();
-                self.same(self.register(f, x.dst).try(), bool_type, "a compare writes Bool").try();
+                self.require(
+                    plain || equality,
+                    DiagnosticCode.TypeMismatch,
+                    "IntCompare: integers, or Bool/FunctionPointer with Equal/NotEqual"
+                ).try();
+                self.same(
+                    self.register(f, x.dst).try(),
+                    bool_type,
+                    "a compare writes Bool"
+                ).try();
             },
             PointerCompare(x) => {
-                self.same(self.value(f, x.lhs).try(), ScalarType.Pointer, "PointerCompare works on Pointer").try();
-                self.same(self.value(f, x.rhs).try(), ScalarType.Pointer, "PointerCompare works on Pointer").try();
-                self.same(self.register(f, x.dst).try(), bool_type, "a compare writes Bool").try();
+                self.same(
+                    self.value(f, x.lhs).try(),
+                    ScalarType.Pointer,
+                    "PointerCompare works on Pointer"
+                ).try();
+                self.same(
+                    self.value(f, x.rhs).try(),
+                    ScalarType.Pointer,
+                    "PointerCompare works on Pointer"
+                ).try();
+                self.same(
+                    self.register(f, x.dst).try(),
+                    bool_type,
+                    "a compare writes Bool"
+                ).try();
             },
-            FloatCompare(x) => {
+            FloatCompare(x)   => {
                 l = self.value(f, x.lhs).try();
-                self.require(l.is_float(), DiagnosticCode.TypeMismatch, "FloatCompare works on floats").try();
-                self.same(l, self.value(f, x.rhs).try(), "FloatCompare needs equal types").try();
-                self.same(self.register(f, x.dst).try(), bool_type, "a compare writes Bool").try();
+                self.require(
+                    l.is_float(),
+                    DiagnosticCode.TypeMismatch,
+                    "FloatCompare works on floats"
+                ).try();
+                self.same(
+                    l,
+                    self.value(f, x.rhs).try(),
+                    "FloatCompare needs equal types"
+                ).try();
+                self.same(
+                    self.register(f, x.dst).try(),
+                    bool_type,
+                    "a compare writes Bool"
+                ).try();
             },
-            Convert(x) => self.check_convert(x.op, self.value(f, x.value).try(), self.register(f, x.dst).try()).try(),
-            Address(x) => {
-                self.require(self.value(f, x.byte_offset).try().is_integer(), DiagnosticCode.TypeMismatch, "an address offset is an integer").try();
+            Convert(x)        => self.check_convert(
+                x.op,
+                self.value(f, x.value).try(),
+                self.register(f, x.dst).try()
+            ).try(),
+            Address(x)        => {
+                self.require(
+                    self.value(f, x.byte_offset).try().is_integer(),
+                    DiagnosticCode.TypeMismatch,
+                    "an address offset is an integer"
+                ).try();
                 t = self.register(f, x.dst).try();
                 x.base.match({
-                    Register(r) => self.same(self.register(f, r).try(), ScalarType.Pointer, "an address base register is a Pointer").try(),
-                    StackObject(o) => self.require(f.object(o).match({ Ok(_) => true, None => false }), DiagnosticCode.InvalidId, "unknown stack object").try(),
-                    Symbol(s) => self.symbol(s).try().kind.match({
-                        Data => (),
+                    Register(r)    => self.same(
+                        self.register(f, r).try(),
+                        ScalarType.Pointer,
+                        "an address base register is a Pointer"
+                    ).try(),
+                    StackObject(o) => self.require(
+                        f.object(o).match({ Ok(_) => true, None => false }),
+                        DiagnosticCode.InvalidId,
+                        "unknown stack object"
+                    ).try(),
+                    Symbol(s)      => self.symbol(s).try().kind.match({
+                        Data     => (),
                         Function => {
-                            sig = self.signature_of(self.function_of_symbol(s).try()).try();
-                            self.same(t, ScalarType.FunctionPointer(sig), "a function's address is its FunctionPointer").try();
-                            self.require(x.byte_offset.match({ Constant(c) => c.match({ Integer(k) => k.bits == 0, _ => false }), Register(_) => false }),
-                                DiagnosticCode.InvalidInstructionForm, "a function address has offset 0").try();
+                            sig = self.signature_of(
+                                self.function_of_symbol(s).try()
+                            ).try();
+                            self.same(
+                                t,
+                                ScalarType.FunctionPointer(sig),
+                                "a function's address is its FunctionPointer"
+                            ).try();
+                            self.require(
+                                x.byte_offset.match({ Constant(c) => c.match({ Integer(k) => k.bits == 0, _ => false }), Register(_) => false }),
+                                DiagnosticCode.InvalidInstructionForm,
+                                "a function address has offset 0"
+                            ).try();
                         },
                     }),
                 });
-                is_function = x.base.match({ Symbol(s) => self.symbol(s).try().kind.match({ Function => true, Data => false }), _ => false });
-                is_function.match({ true => (), false => self.same(t, ScalarType.Pointer, "a data address is a Pointer").try() });
+                is_function = x.base.match({ Symbol(s) => self.symbol(
+                    s
+                ).try().kind.match({ Function => true, Data => false }), _ => false });
+                is_function.match({ true => (), false => self.same(
+                    t,
+                    ScalarType.Pointer,
+                    "a data address is a Pointer"
+                ).try() });
             },
-            Load(x) => {
-                self.same(self.value(f, x.address).try(), ScalarType.Pointer, "a load address is a Pointer").try();
+            Load(x)           => {
+                self.same(
+                    self.value(f, x.address).try(),
+                    ScalarType.Pointer,
+                    "a load address is a Pointer"
+                ).try();
                 self.register(f, x.dst).try();
                 self.check_access(x.memory).try();
             },
-            Store(x) => {
-                self.same(self.value(f, x.address).try(), ScalarType.Pointer, "a store address is a Pointer").try();
+            Store(x)          => {
+                self.same(
+                    self.value(f, x.address).try(),
+                    ScalarType.Pointer,
+                    "a store address is a Pointer"
+                ).try();
                 self.value(f, x.value).try();
                 self.check_access(x.memory).try();
             },
-            Call(x) => {
+            Call(x)           => {
                 sig = self.check_call(f, x.callee, x.args).try();
-                self.require(!sig.is_never(), DiagnosticCode.InvalidReturnContract, "a Never callee needs CallNever").try();
+                self.require(
+                    !sig.is_never(),
+                    DiagnosticCode.InvalidReturnContract,
+                    "a Never callee needs CallNever"
+                ).try();
                 sig.result.match({
                     Returns(r) => r.match({
                         Ok(t) => x.dst.match({
-                            Ok(d) => self.same(self.register(f, d).try(), t, "the call result type differs").try(),
-                            None => (),
+                            Ok(d) => self.same(
+                                self.register(f, d).try(),
+                                t,
+                                "the call result type differs"
+                            ).try(),
+                            None  => (),
                         }),
-                        None => self.require(x.dst.match({ Ok(_) => false, None => true }), DiagnosticCode.TypeMismatch, "a unit call has no destination").try(),
+                        None  => self.require(
+                            x.dst.match({ Ok(_) => false, None => true }),
+                            DiagnosticCode.TypeMismatch,
+                            "a unit call has no destination"
+                        ).try(),
                     }),
-                    Never => (),
+                    Never      => (),
                 });
             },
         });
@@ -339,78 +590,149 @@ Validator = {
 
     function_of_symbol = (self: @Self, s: SymbolId) Res<FunctionId, Diagnostic> {
         found :: Res<FunctionId> = None;
-        self.m.functions.loop((h, f) { (f.symbol.index == s.index).match({ true => { found = Ok(f.id); h.break(); }, false => () }); });
-        self.m.imports.loop((h, im) { (im.symbol.index == s.index).match({ true => { found = Ok(im.function); h.break(); }, false => () }); });
+        self.m.functions.loop(
+            (h, f) { (f.symbol.index == s.index).match({ true => { found = Ok(
+                f.id
+            ); h.break(); }, false => () }); }
+        );
+        self.m.imports.loop(
+            (h, im) { (im.symbol.index == s.index).match({ true => { found = Ok(
+                im.function
+            ); h.break(); }, false => () }); }
+        );
         found.match({ Ok(f) => Ok(f), None => self.fail<FunctionId>(DiagnosticCode.InvalidSymbol, "a function symbol names no function") })
     }
 
     check_access = (self: @Self, m: MemoryAccess) Res<(), Diagnostic> {
-        self.require(is_power_of_two(m.alignment.to_u64()), DiagnosticCode.InvalidAlignment, "alignment must be a power of two")
+        self.require(
+            is_power_of_two(m.alignment.to_u64()),
+            DiagnosticCode.InvalidAlignment,
+            "alignment must be a power of two"
+        )
     }
 
     check_convert = (self: @Self, op: ConvertOp, from: ScalarType, to: ScalarType) Res<(), Diagnostic> {
         legal = op.match({
-            IntegerChecked => from.is_integer() && to.is_integer(),
-            IntegerWrapping => from.is_integer() && to.is_integer(),
-            IntegerToFloat => from.is_integer() && to.is_float(),
+            IntegerChecked        => from.is_integer() && to.is_integer(),
+            IntegerWrapping       => from.is_integer() && to.is_integer(),
+            IntegerToFloat        => from.is_integer() && to.is_float(),
             FloatToIntegerChecked => from.is_float() && to.is_integer(),
-            FloatWidth => from.is_float() && to.is_float() && from.code() != to.code(),
-            BoolToInteger => from.match({ Bool => true, _ => false }) && to.is_integer(),
-            PointerToInteger => from.match({ Pointer => true, _ => false }) && to.match({ U64 => true, _ => false }),
-            Bitcast => from.width() == to.width() && (from.is_integer() && to.is_float() || from.is_float() && to.is_integer()),
+            FloatWidth            => from.is_float() && to.is_float() && from.code() != to.code(),
+            BoolToInteger         => from.match({ Bool => true, _ => false }) && to.is_integer(),
+            PointerToInteger      => from.match({ Pointer => true, _ => false }) && to.match({ U64 => true, _ => false }),
+            Bitcast               => from.width() == to.width() && (from.is_integer() && to.is_float() || from.is_float() && to.is_integer()),
         });
-        self.require(legal, DiagnosticCode.TypeMismatch, "illegal conversion pair")
+        self.require(
+            legal,
+            DiagnosticCode.TypeMismatch,
+            "illegal conversion pair"
+        )
     }
 
     check_call = (self: @Self, f: Function, callee: Callee, args: Vec<Value>) Res<Signature, Diagnostic> {
         sig = callee.match({
             Function(id) => self.signature(self.signature_of(id).try()).try(),
-            Register(r) => self.register(f, r).try().match({
+            Register(r)  => self.register(f, r).try().match({
                 FunctionPointer(s) => self.signature(s).try(),
-                _ => self.fail<Signature>(DiagnosticCode.TypeMismatch, "an indirect callee is a FunctionPointer").try(),
+                _                  => self.fail<Signature>(
+                    DiagnosticCode.TypeMismatch,
+                    "an indirect callee is a FunctionPointer"
+                ).try(),
             }),
         });
-        self.require(args.len == sig.parameters.len, DiagnosticCode.ArityMismatch, "argument count differs from the signature").try();
-        args.loop((h, k, v) { self.same(self.value(f, v).try(), self.found(sig.parameters.get(k)).try(), "argument type differs from the signature").try(); });
+        self.require(
+            args.len == sig.parameters.len,
+            DiagnosticCode.ArityMismatch,
+            "argument count differs from the signature"
+        ).try();
+        args.loop(
+            (h, k, v) { self.same(
+                self.value(f, v).try(),
+                self.found(sig.parameters.get(k)).try(),
+                "argument type differs from the signature"
+            ).try(); }
+        );
         Ok(sig)
     }
 
     check_exit = (self: @Self, f: Function, sig: Signature, e: Exit) Res<(), Diagnostic> {
         each_successor(e, (b) {
-            self.require(f.block(b).match({ Ok(_) => true, None => false }), DiagnosticCode.InvalidSuccessor, "a successor block does not exist").try();
+            self.require(
+                f.block(b).match({ Ok(_) => true, None => false }),
+                DiagnosticCode.InvalidSuccessor,
+                "a successor block does not exist"
+            ).try();
         });
         e.match({
-            Branch(x) => self.same(self.value(f, x.condition).try(), ScalarType.Bool, "a branch condition is Bool").try(),
-            Switch(x) => {
+            Branch(x)    => self.same(
+                self.value(f, x.condition).try(),
+                ScalarType.Bool,
+                "a branch condition is Bool"
+            ).try(),
+            Switch(x)    => {
                 t = self.value(f, x.value).try();
-                self.require(t.is_integer(), DiagnosticCode.TypeMismatch, "a switch selector is an integer").try();
+                self.require(
+                    t.is_integer(),
+                    DiagnosticCode.TypeMismatch,
+                    "a switch selector is an integer"
+                ).try();
                 values ::= self.a.Vec<u64>();
                 x.cases.loop((c) {
-                    self.same(t, self.value(f, Value.Constant(c.value)).try(), "a case has the selector's type").try();
+                    self.same(
+                        t,
+                        self.value(f, Value.Constant(c.value)).try(),
+                        "a case has the selector's type"
+                    ).try();
                     self.memory(values.add(case_bits(c.value))).try();
                 });
                 distinct = all_distinct(self.a, values).match({ Ok(d) => d, Err(_) => self.fail<bool>(DiagnosticCode.ResourceLimit, "out of memory during validation").try() });
-                self.require(distinct, DiagnosticCode.DuplicateSwitchCase, "switch cases must be unique").try();
+                self.require(
+                    distinct,
+                    DiagnosticCode.DuplicateSwitchCase,
+                    "switch cases must be unique"
+                ).try();
             },
-            Return(x) => sig.result.match({
-                Never => self.fail<()>(DiagnosticCode.InvalidReturnContract, "a Never function cannot return").try(),
+            Return(x)    => sig.result.match({
+                Never      => self.fail<()>(
+                    DiagnosticCode.InvalidReturnContract,
+                    "a Never function cannot return"
+                ).try(),
                 Returns(r) => r.match({
                     Ok(t) => x.value.match({
-                        Ok(v) => self.same(self.value(f, v).try(), t, "the return value differs from the signature").try(),
-                        None => self.fail<()>(DiagnosticCode.InvalidReturnContract, "this function returns a value").try(),
+                        Ok(v) => self.same(
+                            self.value(f, v).try(),
+                            t,
+                            "the return value differs from the signature"
+                        ).try(),
+                        None  => self.fail<()>(
+                            DiagnosticCode.InvalidReturnContract,
+                            "this function returns a value"
+                        ).try(),
                     }),
-                    None => self.require(x.value.match({ Ok(_) => false, None => true }), DiagnosticCode.InvalidReturnContract, "this function returns nothing").try(),
+                    None  => self.require(
+                        x.value.match({ Ok(_) => false, None => true }),
+                        DiagnosticCode.InvalidReturnContract,
+                        "this function returns nothing"
+                    ).try(),
                 }),
             }),
             CallNever(x) => {
                 callee = self.check_call(f, x.callee, x.args).try();
-                self.require(callee.is_never(), DiagnosticCode.InvalidReturnContract, "CallNever needs a Never callee").try();
+                self.require(
+                    callee.is_never(),
+                    DiagnosticCode.InvalidReturnContract,
+                    "CallNever needs a Never callee"
+                ).try();
             },
-            Trap(x) => x.code.match({
-                Explicit(n) => self.require(n >= 65536, DiagnosticCode.InvalidConstant, "an explicit trap code is at least 65536").try(),
-                _ => (),
+            Trap(x)      => x.code.match({
+                Explicit(n) => self.require(
+                    n >= 65536,
+                    DiagnosticCode.InvalidConstant,
+                    "an explicit trap code is at least 65536"
+                ).try(),
+                _           => (),
             }),
-            Jump(_) => (),
+            Jump(_)      => (),
         });
         Ok
     }
@@ -419,20 +741,29 @@ Validator = {
 
     check_definite_initialization = (self :: @Self, f: Function) Res<(), Diagnostic> {
         words = (f.register_types.len + 63) / 64;
-        live = self.reachable(f).try();
-        ins ::= self.bits(f.blocks.len * words).try();     // IN[b]: `words` per block
-        outs ::= self.bits(f.blocks.len * words).try();    // OUT[b]: starts full
+        live  = self.reachable(f).try();
+        ins  ::= self.bits(
+            f.blocks.len * words
+        ).try();     // IN[b]: `words` per block
+        outs ::= self.bits(
+            f.blocks.len * words
+        ).try();    // OUT[b]: starts full
         Range(0, outs.len).loop((i) { outs.set(i, FULL); });
         Range(0, f.blocks.len + 2).loop((h, round) {
             compute_ins(f, live, outs, ins, words);
             changed ::= false;
             f.blocks.loop((h2, k, b) {
                 self.found(live.get(k)).try().match({
-                    true => {
+                    true  => {
                         base = k * words;
                         before ::= self.bits(words).try();
                         Range(0, words).loop((w) { before.set(w, self.found(outs.get(base + w)).try()); outs.set(base + w, self.found(ins.get(base + w)).try()); });
-                        b.instructions.loop((rec) { each_def(rec.instruction, (r) { set_bit_at(outs, base, r); }); });
+                        b.instructions.loop(
+                            (rec) { each_def(
+                                rec.instruction,
+                                (r) { set_bit_at(outs, base, r); }
+                            ); }
+                        );
                         Range(0, words).loop((w) { (self.found(before.get(w)).try() == self.found(outs.get(base + w)).try()).match({ true => (), false => { changed = true; } }); });
                     },
                     false => (),
@@ -443,20 +774,31 @@ Validator = {
         compute_ins(f, live, outs, ins, words);
         f.blocks.loop((h, k, b) {
             self.found(live.get(k)).try().match({
-                true => {
+                true  => {
                     self.block = Ok(b.id);
                     set ::= self.bits(words).try();
                     Range(0, words).loop((w) { set.set(w, self.found(ins.get(k * words + w)).try()); });
                     b.instructions.loop((rec) {
                         self.instruction = Ok(rec.id);
                         each_use(rec.instruction, (r) {
-                            self.require(has_bit_at(set, 0, r), DiagnosticCode.UninitializedRegister, "a register is read before it is set on some path").try();
+                            self.require(
+                                has_bit_at(set, 0, r),
+                                DiagnosticCode.UninitializedRegister,
+                                "a register is read before it is set on some path"
+                            ).try();
                         });
-                        each_def(rec.instruction, (r) { set_bit_at(set, 0, r); });
+                        each_def(
+                            rec.instruction,
+                            (r) { set_bit_at(set, 0, r); }
+                        );
                     });
                     self.instruction = None;
                     each_exit_use(b.exit, (r) {
-                        self.require(has_bit_at(set, 0, r), DiagnosticCode.UninitializedRegister, "a register is read before it is set on some path").try();
+                        self.require(
+                            has_bit_at(set, 0, r),
+                            DiagnosticCode.UninitializedRegister,
+                            "a register is read before it is set on some path"
+                        ).try();
                     });
                 },
                 false => (),
@@ -482,9 +824,11 @@ Validator = {
         Range(0, f.blocks.len + 1).loop((h, _) {
             (stack.len == 0).match({ true => h.break(), false => () });
             b = self.found(stack.take(stack.len - 1)).try();
-            each_successor(self.found(f.block(BlockId(index: b))).try().exit, (s) {
+            each_successor(self.found(f.block(BlockId(
+                index: b
+            ))).try().exit, (s) {
                 (self.found(seen.get(s.index.to_usize())).try()).match({
-                    true => (),
+                    true  => (),
                     false => { seen.set(s.index.to_usize(), true); self.memory(stack.add(s.index)).try(); },
                 });
             });
@@ -500,7 +844,7 @@ all_distinct = (a: Alloc, values: Vec<u64>) Res<bool, AllocError> {
     size :: u64 = 2;
     Range(0, 64).loop((h, i) { (size >= (values.len * 2).to_u64()).match({ true => h.break(), false => { size = size * 2; } }); });
     slots ::= a.Vec<u64>();
-    used ::= a.Vec<bool>();
+    used  ::= a.Vec<bool>();
     Range(0, size).loop((i) { slots.add(0).try(); used.add(false).try(); });
     distinct ::= true;
     values.loop((h, v) {
@@ -508,7 +852,9 @@ all_distinct = (a: Alloc, values: Vec<u64>) Res<bool, AllocError> {
         Range(0, size).loop((h2, step) {
             slot = i.to_usize().match({ Ok(x) => x, None => 0 });
             used.get(slot).match({ Ok(true) => (), _ => { used.set(slot, true); slots.set(slot, v); h2.break(); } });
-            (slots.get(slot).match({ Ok(x) => x, None => 0 }) == v).match({ true => { distinct = false; h2.break(); }, false => () });
+            (slots.get(
+                slot
+            ).match({ Ok(x) => x, None => 0 }) == v).match({ true => { distinct = false; h2.break(); }, false => () });
             i = (i + 1) % size;
         });
         distinct.match({ false => h.break(), true => () });
@@ -522,7 +868,13 @@ FULL: u64 = 18446744073709551615
 
 // IN[b] = the intersection of OUT[p] over b's live predecessors. The entry block
 // also has a synthetic predecessor holding exactly the parameters (§1.4).
-compute_ins = (f: Function, live: Vec<bool>, outs: Vec<u64>, ins :: Vec<u64>, words: usize) {
+compute_ins = (
+    f     : Function,
+    live  : Vec<bool>,
+    outs  : Vec<u64>,
+    ins   :: Vec<u64>,
+    words : usize
+) {
     entry = f.entry.index.to_usize() * words;
     Range(0, ins.len).loop((i) { ins.set(i, FULL); });
     Range(0, words).loop((w) { ins.set(entry + w, 0); });
@@ -531,19 +883,24 @@ compute_ins = (f: Function, live: Vec<bool>, outs: Vec<u64>, ins :: Vec<u64>, wo
         live.get(p).match({ Ok(true) => each_successor(pred.exit, (s) {
             Range(0, words).loop((w) {
                 i = s.index.to_usize() * words + w;
-                ins.set(i, ins.get(i).match({ Ok(x) => x, None => 0 }).bit_and(outs.get(p * words + w).match({ Ok(x) => x, None => 0 })));
+                ins.set(
+                    i,
+                    ins.get(i).match({ Ok(x) => x, None => 0 }).bit_and(outs.get(p * words + w).match({ Ok(x) => x, None => 0 }))
+                );
             });
         }), _ => () });
     });
 }
 
 has_bit_at = (bits: Vec<u64>, base: usize, r: RegisterId) bool {
-    word = bits.get(base + (r.index / 64).to_usize()).match({ Ok(w) => w, None => 0 });
+    word = bits.get(
+        base + (r.index / 64).to_usize()
+    ).match({ Ok(w) => w, None => 0 });
     word.shift_right((r.index % 64).to_usize()).bit_and(1) == 1
 }
 
 set_bit_at = (bits :: Vec<u64>, base: usize, r: RegisterId) {
-    i = base + (r.index / 64).to_usize();
+    i    = base + (r.index / 64).to_usize();
     word = bits.get(i).match({ Ok(w) => w, None => 0 });
     bits.set(i, word.bit_or(ONE.shift_left((r.index % 64).to_usize())));
 }

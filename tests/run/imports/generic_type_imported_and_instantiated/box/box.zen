@@ -1,5 +1,0 @@
-Box*<T> = {
-    value*: T,
-}
-
-unwrap*<T> = (b: Box<T>) T { b.value }

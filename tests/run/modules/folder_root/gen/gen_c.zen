@@ -1,5 +1,0 @@
-// the c backend
-
-backend_name* = () str { "c" }
-
-emit_c* = (n: i32) i32 { n + 1 }

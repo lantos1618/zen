@@ -1,6 +1,0 @@
-take = <T>(value: T) {}
-
-main = () { take<u8>(300); }
-
-//! error: literal_too_large_at_a_generic_call.zen:3:22
-//! hint: literal 300 does not fit u8

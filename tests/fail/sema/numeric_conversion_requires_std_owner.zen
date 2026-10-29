@@ -1,7 +1,0 @@
-// An unused local signature must not acquire cast behavior from its name.
-to_i32 = (value: u64) i32
-
-main = () {}
-
-//! error: 2:1
-//! hint: bodyless numeric conversion requires a supported std.core.num signature

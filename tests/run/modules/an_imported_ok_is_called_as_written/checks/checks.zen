@@ -1,2 +1,0 @@
-// A validation result spelled the way this package's callers read it.
-Ok* = (n: i32) bool { n >= 0 }

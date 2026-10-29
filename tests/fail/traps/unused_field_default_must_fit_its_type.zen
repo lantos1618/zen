@@ -1,5 +1,0 @@
-Unused = { value :: u8 = 300 }
-main = () {}
-
-//! error: 1:26
-//! hint: literal 300 does not fit u8

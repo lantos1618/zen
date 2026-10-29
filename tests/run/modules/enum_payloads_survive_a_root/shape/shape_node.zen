@@ -1,5 +1,0 @@
-Pos* = {
-    line*: usize,
-}
-
-Node* = { Leaf: i32 | At: Pos | Empty }

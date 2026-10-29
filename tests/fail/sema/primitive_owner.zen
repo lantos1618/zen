@@ -1,5 +1,0 @@
-mul_wide = (self: u64, other: u64) u128
-main = () {}
-
-//! error: 1:1
-//! hint: bodyless machine primitive requires

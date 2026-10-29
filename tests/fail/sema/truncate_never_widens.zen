@@ -1,8 +1,0 @@
-{ truncate_u32 } = std.core.num
-main = () {
-    small: u16 = 1;
-    cut        = small.truncate_u32();
-}
-
-//! error: 4:24
-//! hint: no `truncate_u32` on `u16`

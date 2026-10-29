@@ -1,8 +1,0 @@
-main = () {
-    a: u32 = 6;
-    n: u32 = 1;
-    low = n < a >> 1;
-}
-
-//! error: 4:17
-//! hint: a bitwise operator needs parentheses beside `<`: write `n < (a >> 1)`

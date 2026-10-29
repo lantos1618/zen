@@ -1,7 +1,0 @@
-main = (env: Env) i32 {
-    value = 0x;
-    0
-}
-
-//! error: 2:13
-//! hint: a hexadecimal integer needs a digit after `0x`

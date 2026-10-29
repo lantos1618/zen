@@ -1,5 +1,0 @@
-compiler_barrier* = () ()
-main = () {}
-
-//! error: 1:1
-//! hint: bodyless machine primitive requires

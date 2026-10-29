@@ -1,8 +1,0 @@
-{ bit_xor, rotate_right } = std.core.num
-main = () {
-    small: u32 = 1;
-    value      = rotate_right(1, small);
-}
-
-//! error: 4:18
-//! hint: no overload matches

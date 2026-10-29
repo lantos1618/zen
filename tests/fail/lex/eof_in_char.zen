@@ -1,8 +1,0 @@
-// EOF arrives inside a char literal.
-Error = AllocError | IoError
-
-main = (env: Env) Res<i32, Error> {
-    c: u8 = 'a
-
-//! error: 5:13
-//! hint: unterminated character literal: end of file

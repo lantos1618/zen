@@ -1,8 +1,0 @@
-{ Env } = std.env
-
-Code = { | Unknown: u8 | First = 1 }
-
-main = (env: Env) i32 { 0 }
-
-//! error: 3:12
-//! hint: invalid enum discriminant

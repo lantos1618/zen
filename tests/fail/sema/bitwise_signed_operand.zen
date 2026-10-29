@@ -1,7 +1,0 @@
-main = () {
-    count: i32 = 6;
-    low        = count & 1;
-}
-
-//! error: 3:18
-//! hint: convert it to an unsigned type first

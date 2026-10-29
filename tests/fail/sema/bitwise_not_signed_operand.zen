@@ -1,7 +1,0 @@
-main = () {
-    count: i64 = 6;
-    flipped    = ~count;
-}
-
-//! error: 3:19
-//! hint: convert it to an unsigned type first

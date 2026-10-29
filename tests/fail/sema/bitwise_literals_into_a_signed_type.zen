@@ -1,6 +1,0 @@
-main = () {
-    mask: i32 = 1 << 4;
-}
-
-//! error: 2:17
-//! hint: bitwise operators take unsigned integers

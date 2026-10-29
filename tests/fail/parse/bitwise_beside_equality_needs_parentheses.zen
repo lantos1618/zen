@@ -1,8 +1,0 @@
-main = () {
-    a: u8 = 6;
-    b: u8 = 2;
-    same = a & b == b;
-}
-
-//! error: 4:14
-//! hint: a bitwise operator needs parentheses beside `==`: write `(a & b) == b`

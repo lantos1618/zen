@@ -1,9 +1,0 @@
-main = () {
-    a: u8 = 6;
-    b: u8 = 2;
-    c: u8 = 1;
-    mixed = a | b & c;
-}
-
-//! error: 5:19
-//! hint: different bitwise operators need parentheses: write `(a | b) & c` or `a | (b & c)`

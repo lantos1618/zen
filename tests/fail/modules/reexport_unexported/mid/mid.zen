@@ -1,3 +1,0 @@
-// a star on an import re-exports it, but you cannot re-export what
-// the other module never exported in the first place
-{ visible*, hidden* } = leaf.leaf

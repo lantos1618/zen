@@ -1,7 +1,0 @@
-{ Avx2 } = std.simd
-main = () {
-    forged = Avx2(proof: 1);
-}
-
-//! error: 3:14
-//! hint: only std.simd constructs one

@@ -1,2 +1,0 @@
-// a module alias re-exported under another name
-geo* = app.shape

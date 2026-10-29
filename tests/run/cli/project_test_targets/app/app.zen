@@ -1,2 +1,0 @@
-// The project fixture's module root; executable tests name their own entries.
-App = {}

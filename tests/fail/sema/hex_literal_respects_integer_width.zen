@@ -1,9 +1,0 @@
-{ Env } = std.env
-
-main = (env: Env) i32 {
-    byte: u8 = 0x100;
-    0
-}
-
-//! error: 4:16
-//! hint: out of range

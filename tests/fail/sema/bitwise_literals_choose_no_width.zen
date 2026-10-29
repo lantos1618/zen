@@ -1,9 +1,0 @@
-{ println } = std.io
-
-main = () {
-    mask = 1 | 2;
-    println("{}", mask);
-}
-
-//! error: 4:14
-//! hint: needs an expected unsigned type

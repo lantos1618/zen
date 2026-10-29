@@ -1,0 +1,14 @@
+// Catches: definite assignment checked per block instead of per path, so a binding
+// set on only one branch is accepted and read uninitialized on the other.
+{ println } = std.io
+
+pick = (b: bool) {
+    label :: str;
+    b.match({ true => { label = "set"; }, false => () });
+    println("{}", label);
+}
+
+main = () { pick(true); }
+
+//! error: 8:19
+//! hint: label is read before it is set on some path

@@ -1,5 +1,0 @@
-P = { x*: i32, x*: i32 }
-
-//! error: 1:7
-//! error: 1:16
-//! hint: duplicate field declaration

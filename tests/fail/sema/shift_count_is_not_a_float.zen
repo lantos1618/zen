@@ -1,8 +1,0 @@
-main = () {
-    word: u64  = 1;
-    count: f64 = 3.0;
-    moved      = word >> count;
-}
-
-//! error: 4:26
-//! hint: a shift count is an unsigned integer

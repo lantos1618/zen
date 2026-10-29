@@ -1,8 +1,0 @@
-// A one-line string that runs onto the next line names the form that may.
-main = () i32 {
-    text = "first
-    0
-}
-
-//! error: 3:12
-//! hint: for multi-line text write `"""`

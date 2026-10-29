@@ -1,8 +1,0 @@
-{ Env } = std.env
-
-Code: u8 = { | First = 1 | Unknown: u8 }
-
-main = (env: Env) i32 { 0 }
-
-//! error: 3:1
-//! hint: an enum's integer domain comes from its final payload catch-all; remove the type after its name

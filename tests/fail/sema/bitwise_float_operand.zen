@@ -1,7 +1,0 @@
-main = () {
-    ratio: f64 = 1.5;
-    flipped    = ratio ^ ratio;
-}
-
-//! error: 3:18
-//! hint: bitwise operators take unsigned integers

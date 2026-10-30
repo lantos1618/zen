@@ -1,6 +1,7 @@
 // Catches: an enum .match accepted with a variant missing and no `_`, which would
 // fall through to whatever block happens to follow.
-{ println } = std.io
+{ Res, IoError } = std.core
+{ Env } = std.env
 
 Shape = { Circle: f64 | Square: f64 | Point }
 
@@ -11,7 +12,7 @@ area = (s: Shape) f64 {
     })
 }
 
-main = () { println("{}", area(Shape.Point)); }
+main = (env: Env) Res<IoError> { env.out.println("{}", area(Shape.Point)) }
 
-//! error: 8:5
+//! error: 9:5
 //! hint: match is not exhaustive: Point

@@ -1,14 +1,15 @@
 // Catches: assigning a struct copying a pointer to it instead of its bytes, so writing
 // through the copy changes the original.
-{ println } = std.io
+{ Res, IoError } = std.core
+{ Env } = std.env
 
 Point = { x :: i32, y :: i32 }
 
-main = () {
+main = (env: Env) Res<IoError> {
     a ::= Point(x: 1, y: 2);
     b ::= a;
     b.x = 10;
-    println("{} {} {} {}", a.x, a.y, b.x, b.y);
+    env.out.println("{} {} {} {}", a.x, a.y, b.x, b.y)
 }
 
 //! out: 1 2 10 2

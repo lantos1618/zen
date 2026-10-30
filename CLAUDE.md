@@ -52,7 +52,7 @@ awk 'length > 115' src/**/*.zen                           # prints nothing
 |---|---|---|---|
 | 1 | functions, calls, `i32` arithmetic | `sub(50, 8)` exits 42 | done |
 | 2 | bool, comparisons, `.match`, bindings | max/abs exits 13 | done |
-| 3 | imports, `println` | the hand-written tests that print | next |
+| 3 | imports, `env.out.println`, `Res<IoError>`, `.try()` | tests/run/print | next |
 | 4 | loops, closures, `.then({ .. })`, `h.break` | sum of a range | |
 | 5 | structs: construction, fields, copies | a point's fields | |
 | 6 | enums and `.match` on variants | a shape's area | |

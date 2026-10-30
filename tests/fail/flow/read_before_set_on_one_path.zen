@@ -1,14 +1,15 @@
 // Catches: definite assignment checked per block instead of per path, so a binding
 // set on only one branch is accepted and read uninitialized on the other.
-{ println } = std.io
+{ Res, IoError } = std.core
+{ Env } = std.env
 
-pick = (b: bool) {
+pick = (env: Env, b: bool) Res<IoError> {
     label :: str;
     b.match({ true => { label = "set"; }, false => () });
-    println("{}", label);
+    env.out.println("{}", label)
 }
 
-main = () { pick(true); }
+main = (env: Env) Res<IoError> { pick(env, true) }
 
-//! error: 8:19
+//! error: 9:27
 //! hint: label is read before it is set on some path

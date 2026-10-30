@@ -1783,7 +1783,7 @@ The compiler is useless without the std it compiles itself with. T0 needs only t
 | `std.seq` | `Seq<T>`, `Range<T>`, `loop`, `find`, `map`, `filter` (C.2) |
 | `std.text` | `str`, `String`, `Sink`, formatting of integers and `str` (`{}`, `{name}`) |
 | `std.collections` | `Vec<T>`, `Map<K, V>` (open addressing) |
-| `std.io` | `println`, `Env.out`, `Env.fs.read`/`write`, `Env.args` |
+| `std.io` | `Writer` (`write`, `print`, `println`), `Env.out`, `Env.err`, `Env.fs.read`/`write`, `Env.args` |
 
 The runtime is C, at most 200 lines (Appendix J):
 

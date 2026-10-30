@@ -15,7 +15,7 @@ and a **tier**: **T0** the compiler needs to build itself, **T1** everyday progr
 ## 1. Laws (everything follows from these)
 
 1. **No ambient allocator.** Allocation takes an `Alloc`.
-2. **No ambient authority.** IO, net, pages, threads, spawning: all come from the `Env` that `main` receives. (One exception: `println`.)
+2. **No ambient authority.** IO, net, pages, threads, spawning: all come from the `Env` that `main` receives. Even output: `env.out.println(..)`, never a global.
 3. **Satisfy requirements, never impl storage.** Layout is fixed at declaration.
 4. **Failure stays visible.** Only success lifts into `Res`; `Err` and `None` are always written.
 5. **`Res` is for failures a caller can act on; a trap is for a bug.**
@@ -38,7 +38,7 @@ c :: Circle = Circle(radius: 2.0)
 label :: str;            // declared now, assigned before any read (flow checks)
 
 add  = (a: i32, b: i32) i32 { a + b }       // tail expression is the result
-log  = (msg: str) { println(msg) }           // unit function
+bump = (c :: Counter) { c.n = c.n + 1 }     // unit function: no result type
 add* = (a: i32, b: i32) i32 { a + b }        // exported: types must be written
 ```
 
@@ -182,8 +182,24 @@ main = (env: Env) Res<i32, Error> {
 }
 ```
 
-`main = () {}`, `() i32`, or `(env: Env) Res<i32, E>` (exit with the Ok value; an Err exits 1).
-`println` (from `std.io`) is the one ambient effect. Formats are read at compile time: `{}`, `{name}`, `{{`.
+`main = () {}`, `() i32`, `(env: Env) Res<E>`, or `(env: Env) Res<i32, E>` (exit 0 or with the Ok
+value; an Err is printed and exits 1).
+
+**Output is a `Writer`**, Go's `io.Writer` with errors you can't drop. There is no global `println`.
+
+```zen
+Writer* = {
+    write* = (self :: @Self, bytes: str) Res<IoError>      // all the bytes, or an error
+}
+Writer.print*   = (w :: @Self, fmt: str, args: ...) Res<IoError>     // written once, for every Writer
+Writer.println* = (w :: @Self, fmt: str, args: ...) Res<IoError>     // print, then "\n"
+```
+
+`env.out` and `env.err` are Writers, and so is `String` (memory: it fails only as `AllocError`).
+Formats are read at compile time: `{}` takes the next argument, `{name}` reads a binding, and
+`{{`, `}}` print a brace; a hole without an argument, or an argument without a hole, is a compile
+error at that hole or argument. A stream's error is sticky, as in Go's `bufio.Writer`: after one
+write fails, every later write fails the same way, so a line's last write reports the whole line.
 
 ## 13. Native bindings — *lower, T1*
 
@@ -215,12 +231,13 @@ Param   = { name: str, type: Decl, mutable: bool }
 ```zen
 name* = (self: @Self) str { @meta(self).variant.name }        // an enum value's own name
 
-describe = <T>(v: T) {                                        // a typecase on .kind
+describe = <T>(out: Writer, v: T) Res<IoError> {             // a typecase on .kind
     @meta(v).kind.match({
-        Struct(s) => s.fields.loop((f) { println("{} = {}", f.name, v.at(f)) }),
-        Enum(e)   => println("{} of {}", @meta(v).variant.name, e.variants.len),
-        _         => println("{}", @meta(v).name),
-    })
+        Struct(s) => s.fields.loop((f) { out.println("{} = {}", f.name, v.at(f)).try() }),
+        Enum(e)   => out.println("{} of {}", @meta(v).variant.name, e.variants.len).try(),
+        _         => out.println("{}", @meta(v).name).try(),
+    });
+    Ok
 }
 ```
 

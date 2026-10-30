@@ -1,13 +1,14 @@
 // Catches: a checked `+` lowered as a plain machine add, which wraps silently.
 // MAX itself must still succeed, so a check that fires one too early fails too.
-{ println } = std.io
+{ Res, IoError } = std.core
+{ Env } = std.env
 
 bump = (x: i32) i32 { x + 1 }
 
-main = () {
-    println("{}", bump(2147483646));
-    println("{}", bump(2147483647));
-    println("unreachable");
+main = (env: Env) Res<IoError> {
+    env.out.println("{}", bump(2147483646)).try();
+    env.out.println("{}", bump(2147483647)).try();
+    env.out.println("unreachable")
 }
 
 //! out: 2147483647

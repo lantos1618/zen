@@ -1,0 +1,20 @@
+// Catches: h.break() in a nested loop jumping to the outer loop's exit, so later
+// outer iterations never run. Each outer pass must break its own inner loop at 2.
+{ Range, Res, Ok, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> {
+    Range(0, 3).loop((outer) {
+        Range(0, 10).loop((h, inner) {
+            (inner == 2).match({ true => h.break(), false => env.out.println("{} {}", outer, inner).try() });
+        });
+    });
+    Ok
+}
+
+//! out: 0 0
+//! out: 0 1
+//! out: 1 0
+//! out: 1 1
+//! out: 2 0
+//! out: 2 1

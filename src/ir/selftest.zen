@@ -1,0 +1,168 @@
+// §6.2's sum_to built by hand: validation accepts it and refuses three broken variants,
+// and the interpreter runs it. One check per test.
+
+{ Res, Ok, Err, None, IoError } = std.core
+{ str } = std.text
+{ Suite, Tester, TestError } = std.test
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{
+    Module, Function, Block, Signature, Symbol, Import,
+    Export, ScalarType, Constant, IntegerConstant, Value, Instruction,
+    InstructionRecord, Exit, Set, IntBinary, IntCompare, IntOp,
+    IntPredicate, Overflow, Jump, Branch, Return, ReturnContract,
+    CallingConvention, SymbolKind, Linkage, Definition, StackObject, Global,
+    Id, Register
+} = ir.records
+{ Diagnostic } = ir.diagnostic
+{ validate } = ir.validate
+{ RuntimeValue, Outcome, run } = ir.interp
+{ reg, value_of, i32_const, record, checked_add } = ir.build
+
+// Variant 0: the real sum_to. 1: b0 never sets r1. 2: the branch tests an I32.
+// 3: one instruction id is far past the function's instruction count.
+sum_to* = (a: Alloc, variant: u32) Res<Module, AllocError> {
+    sig_params ::= a.Vec<ScalarType>();
+    sig_params.add(ScalarType.I32).try();
+    sigs ::= a.Vec<Signature>();
+    sigs.add(Signature(
+        parameters: sig_params,
+        result: ReturnContract.Returns(Ok(ScalarType.I32)),
+        calling_convention: CallingConvention.PlatformDefault
+    )).try();
+
+    syms ::= a.Vec<Symbol>();
+    syms.add(Symbol(
+        id: Id<Symbol>(index: 0),
+        kind: SymbolKind.Function,
+        linkage: Linkage.ExternalDefinition,
+        external_name: Ok("sum_to")
+    )).try();
+
+    types ::= a.Vec<ScalarType>();
+    types.add(ScalarType.I32).try();                 // r0: n
+    types.add(ScalarType.I32).try();                 // r1: s
+    types.add(ScalarType.I32).try();                 // r2: i
+    types.add(ScalarType.Bool).try();                // r3: i < n
+    params ::= a.Vec<Id<Register>>();
+    params.add(reg(0)).try();
+
+    b0 ::= a.Vec<InstructionRecord>();
+    first = (variant == 1).match({ true => reg(2), false => reg(1) });      // variant 1 never sets r1
+    b0.add(record(0, Instruction.Set(Set(dst: first, value: i32_const(0))))).try();
+    b0.add(record(1, Instruction.Set(Set(dst: reg(2), value: i32_const(0))))).try();
+    b1 ::= a.Vec<InstructionRecord>();
+    b1.add(record(
+        2,
+        Instruction.IntCompare(IntCompare(
+            dst: reg(3),
+            op: IntPredicate.Less,
+            lhs: value_of(reg(2)),
+            rhs: value_of(reg(0))
+        ))
+    )).try();
+    b2 ::= a.Vec<InstructionRecord>();
+    wild = (variant == 3).match({ true => 1000000, false => 3 });
+    b2.add(record(wild, checked_add(reg(2), value_of(reg(2)), i32_const(1)))).try();
+    b2.add(record(4, checked_add(reg(1), value_of(reg(1)), value_of(reg(2))))).try();
+    b3 ::= a.Vec<InstructionRecord>();
+
+    condition = (variant == 2).match({ true => value_of(reg(2)), false => value_of(reg(3)) });
+    blocks ::= a.Vec<Block>();
+    blocks.add(Block(
+        id: Id<Block>(index: 0),
+        instructions: b0,
+        exit: Exit.Jump(Jump(target: Id<Block>(index: 1)))
+    )).try();
+    blocks.add(Block(
+        id: Id<Block>(index: 1),
+        instructions: b1,
+        exit: Exit.Branch(Branch(
+            condition: condition,
+            yes: Id<Block>(index: 2),
+            no: Id<Block>(index: 3)
+        ))
+    )).try();
+    blocks.add(Block(
+        id: Id<Block>(index: 2),
+        instructions: b2,
+        exit: Exit.Jump(Jump(target: Id<Block>(index: 1)))
+    )).try();
+    blocks.add(Block(
+        id: Id<Block>(index: 3),
+        instructions: b3,
+        exit: Exit.Return(Return(value: Ok(value_of(reg(1)))))
+    )).try();
+
+    functions ::= a.Vec<Function>();
+    functions.add(Function(
+        id: Id<Function>(index: 0), symbol: Id<Symbol>(index: 0), signature: Id<Signature>(index: 0),
+        parameters: params, register_types: types, objects: a.Vec<StackObject>(),
+        entry: Id<Block>(index: 0), blocks: blocks,
+    )).try();
+    exports ::= a.Vec<Export>();
+    exports.add(Export(
+        symbol: Id<Symbol>(index: 0),
+        definition: Definition.Function(Id<Function>(index: 0))
+    )).try();
+
+    Ok(Module(
+        signatures: sigs, symbols: syms, globals: a.Vec<Global>(), imports: a.Vec<Import>(),
+        functions: functions, exports: exports, trap_handler: None,
+    ))
+}
+
+// What validation says of a sum_to variant: "valid", or the diagnostic code's name.
+verdict = (a: Alloc, variant: u32) str {
+    sum_to(a, variant).match({
+        Err(_) => "out of memory",
+        Ok(m)  => validate(a, m).match({ Ok(_) => "valid", Err(d) => d.code.name() }),
+    })
+}
+
+// What running sum_to does with these arguments: "returned <bits>", a trap, or a diagnostic.
+ran = (a: Alloc, args: Vec<RuntimeValue>) str {
+    built = sum_to(a, 0).match({ Ok(m) => validate(a, m).match({ Ok(ir) => Ok(ir), Err(_) => None }), Err(_) => None });
+    built.match({
+        None     => "invalid",
+        Ok(ir)   => run(a, ir, Id<Function>(index: 0), args).match({
+            Err(d)      => d.code.name(),
+            Ok(outcome) => outcome.match({
+                Returned(v)   => v.match({ Ok(rv) => rv.match({ Int(k) => int_text(k.bits), _ => "not an int" }), None => "unit" }),
+                Trapped(code) => code.variant_name(),
+                Fault(f)      => f.variant_name(),
+                ResourceLimit => "ResourceLimit",
+            }),
+        }),
+    })
+}
+
+int_text = (bits: u64) str {
+    bits.match({ 55 => "55", 5050 => "5050", _ => "another number" })
+}
+
+// One I32 argument holding n, or none at all when allocation fails.
+one = (a: Alloc, n: u64) Vec<RuntimeValue> {
+    args ::= a.Vec<RuntimeValue>();
+    args.add(RuntimeValue.Int(IntegerConstant(type: ScalarType.I32, bits: n))).match({ Ok => (), Err(_) => () });
+    args
+}
+
+says = (t: Tester, got: str, wanted: str) Res<TestError> { t.expect(got.eq(wanted)) }
+
+main = (env: Env) Res<i32, IoError> {
+    s ::= Suite(env: env);
+
+    s.run("sum_to validates", (t) { says(t, verdict(t.alloc, 0), "valid") }).try();
+    s.run("r1 read before it is set", (t) { says(t, verdict(t.alloc, 1), "UninitializedRegister") }).try();
+    s.run("a branch on an I32", (t) { says(t, verdict(t.alloc, 2), "TypeMismatch") }).try();
+    s.run("instruction id 1000000", (t) { says(t, verdict(t.alloc, 3), "InvalidId") }).try();
+
+    s.run("sum_to(10) returns 55", (t) { says(t, ran(t.alloc, one(t.alloc, 10)), "55") }).try();
+    s.run("sum_to(100) returns 5050", (t) { says(t, ran(t.alloc, one(t.alloc, 100)), "5050") }).try();
+    s.run("sum_to(70000) traps", (t) { says(t, ran(t.alloc, one(t.alloc, 70000)), "IntegerOverflow") }).try();
+    s.run("sum_to with no arguments", (t) { says(t, ran(t.alloc, t.alloc.Vec<RuntimeValue>()), "ArityMismatch") }).try();
+
+    s.finish()
+}

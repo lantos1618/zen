@@ -1,0 +1,70 @@
+// The lexer on real Zen and on every lexical rule of ZEN_LANGUAGE.md §2: one case per
+// test, each the source text and the kind names of the tokens it must produce.
+
+{ Res, Ok, IoError } = std.core
+{ Alloc } = std.mem
+{ str } = std.text
+{ Env } = std.env
+{ Suite, Tester, TestError } = std.test
+{ Token, lex } = front.parse.lex
+{ Source } = front.parse.source
+
+// A token's kind name; a fault shows its reason instead.
+name = (t: Token) str { t.kind.match({ Fault(f) => f.variant_name(), _ => t.kind.variant_name() }) }
+
+// Whether `text` lexes to exactly the space-separated kind names in `wanted`.
+lexes_to = (a: Alloc, text: str, wanted: str) bool {
+    lex(a, text).match({
+        Err(_)     => false,
+        Ok(tokens) => {
+            words ::= wanted.split(' ');
+            same ::= true;
+            tokens.loop((t) { same = words.next().match({ Ok(w) => w.eq(name(t)), None => false }) && same; });
+            same && words.next().match({ Ok(_) => false, None => true })
+        },
+    })
+}
+
+expect_lex = (t: Tester, text: str, wanted: str) Res<TestError> { t.expect(lexes_to(t.alloc, text, wanted)) }
+
+main = (env: Env) Res<i32, IoError> {
+    s ::= Suite(env: env);
+
+    // ordinary code
+    s.run("a binding", (t) { expect_lex(t, "x ::= 0;", "Name Define Int Semi End") }).try();
+    s.run("an exported function", (t) {
+        expect_lex(t, "add* = (a: i32) i32 { a +% 1 }",
+            "Name Star Assign LParen Name Colon Name RParen Name LBrace Name PlusWrap Int RBrace End")
+    }).try();
+    s.run("a match with @Self", (t) {
+        expect_lex(t, "r.match({ Ok(v) => v, _ => @Self })",
+            "Name Dot Name LParen LBrace Name LParen Name RParen Arrow Name Comma Wildcard Arrow At RBrace RParen End")
+    }).try();
+    s.run("two-byte operators", (t) { expect_lex(t, "a <= b != c << 2 && !d", "Name Le Name NotEqual Name Shl Int And Not Name End") }).try();
+    s.run("a comment to the end of the line", (t) { expect_lex(t, "x // a comment\ny", "Name Name End") }).try();
+    s.run("a float needs a digit after the dot", (t) { expect_lex(t, "1.5 1.x", "Float Int Dot Name End") }).try();
+    s.run("escapes in strings and chars", (t) { expect_lex(t, "\"a\\n\\\"b\" 'c'", "Str Char End") }).try();
+    s.run("empty text", (t) { expect_lex(t, "", "End") }).try();
+
+    // the lexical rules: reject rather than reinterpret
+    s.run("a leading zero is refused", (t) { expect_lex(t, "010", "LeadingZero End") }).try();
+    s.run("a leading zero is refused at two digits", (t) { expect_lex(t, "01", "LeadingZero End") }).try();
+    s.run("0 alone is fine", (t) { expect_lex(t, "0 7", "Int Int End") }).try();
+    s.run("u64 MAX is an Int", (t) { expect_lex(t, "18446744073709551615", "Int End") }).try();
+    s.run("u64 MAX + 1 is too large", (t) { expect_lex(t, "18446744073709551616", "IntegerTooLarge End") }).try();
+    s.run("an unknown escape is one fault", (t) { expect_lex(t, "\"a\\q\" x", "UnknownEscape Name End") }).try();
+    s.run("an unterminated string", (t) { expect_lex(t, "\"abc", "Unterminated End") }).try();
+    s.run("a stray byte", (t) { expect_lex(t, "a $ b", "Name UnexpectedByte Name End") }).try();
+
+    // positions come from the offset, only when asked
+    s.run("offset 7 of three lines is 3:2", (t) {
+        p = Source(text: "ab\ncd\nef").position(7);
+        t.expect(p.line == 3 && p.column == 2)
+    }).try();
+    s.run("offset 0 is 1:1", (t) {
+        p = Source(text: "ab").position(0);
+        t.expect(p.line == 1 && p.column == 1)
+    }).try();
+
+    s.finish()
+}

@@ -25,7 +25,7 @@ tests/       run/<topic>/  fail/<topic>/  run.py  stage0.sh  baseline-*.txt
 tools/       budget.py
 ```
 
-- **One stage per directory.** The numbers are line budgets; `tools/budget.py` fails past them.
+- **One stage per directory.** The numbers are budgets in dense lines. `tools/budget.py` measures them as tokens (each budget × 10), so formatting and comments never change a part's size, and it fails past them. Test files don't count.
 - **Dependencies point one way:** `main → front → ir ← back, c`. `ir` imports nothing from the compiler, and `back` and `c` never import `front`. `std` imports only `std`.
 - **No `util`, `helpers`, `common`, `misc` or `part2`.** A file has one subject you can name.
 - **A folder exists** only when it has more than one file.
@@ -35,6 +35,22 @@ tools/       budget.py
 **Shape**
 - **The pseudocode in COMPILER.md is the code.** Use the same record names and the same function names (`lower`, `alloc`, `write`, `validate`). If they disagree, fix one of them in the same commit.
 - **Closed sets are enums:** token kinds, opcodes, diagnostics, targets, trap codes. Use exhaustive `.match`, never an integer constant per kind.
+- **An enum that needs numbers carries them:** `| IntegerOverflow = 1`, read with `.discriminant()`. Never a hand-written `code()` table beside the enum.
+- **Look in std before writing a helper.** Byte classes (`is_digit`, `is_space`, `is_ident_start`), parsing (`parse_usize`), searching (`find`, `rfind`, `count`) and tests (`std.test`) already exist.
+- **No loose helper functions.** A helper belongs to the type it works on, as a method (`Source.scan`, `Int.add`), or to a named module of related ones (`ir/build.zen`). If the same few lines appear twice, they move there.
+- **Every name says what it does.** `after`, `tmp`, `do_it` are not names; if a name needs a comment to explain it, rename it.
+
+**Layout** (written by hand; the stage-0 `zen fmt` collapses enums and is not used)
+- **One enum variant per line, with a leading bar,** and a short comment where the variant needs one:
+  ```zen
+  Kind* = {
+      | Name
+      | Define        // ::=
+      | Fault: Fault
+  }
+  ```
+- **One match arm per line** when there are more than three, with the arrows aligned.
+- **A call that doesn't fit in about 100 columns** puts one argument per line.
 - **Tables over code.** Templates, instruction descriptors and spellings are data indexed by enum (Appendix H).
 - **Stages return new values.** Nothing mutates its input; no global state.
 - **Refuse early.** The failing path leaves first, and the success path isn't nested.
@@ -78,7 +94,8 @@ A paragraph-long comment usually means a missing name or function.
 
 - **One stage or one std module per change**, gated by `tests/run.py --baseline` and `tools/budget.py`.
 - **A change may add passes and may not lose one.** A budget overrun is a failed change, not a reason to raise the budget.
-- **Before trusting a new check, break its target on purpose and watch it fail.**
+- **Before trusting a new check, break its target on purpose and watch it fail.** If it doesn't fail, the test has a gap: add the boundary case (the lexer's `01` was found this way).
+- **Unit tests use `std.test`:** one `Suite`, one check per `run`, a name that states the rule (`"i32 MIN / -1 traps"`). Inside a test body a `.try()` returns from the enclosing function, so a body is one expression.
 - **No generated code is committed** except the bootstrap seed (Appendix K).
 
 ## 6. Review checklist

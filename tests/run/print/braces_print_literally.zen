@@ -1,0 +1,11 @@
+// Catches: `{{` or `}}` printed as two braces, or a brace that starts no hole (a lone `}`,
+// a `{` at the end) taken as a hole or dropped.
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> {
+    env.out.println("{{}} } {} {", 5).try();
+    Ok
+}
+
+//! out: {} } 5 {

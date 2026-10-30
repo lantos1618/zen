@@ -1,0 +1,82 @@
+// The syntax tree: what parse produces and check reads. Nodes live in one list and
+// refer to their children by position, so the tree is plain data with no pointers.
+
+{ Res, Ok, None, Range, to_usize } = std.core
+{ print, println } = std.io
+{ Vec } = std.collections
+{ str } = std.text
+{ Source } = front.parse.source
+
+NodeKind* = {
+    | Function      // name = (params) result { body }: the name, params, result, body
+    | Param         // name: type: one child, the type
+    | Block         // { statements; tail }: the Let statements, then the tail expression
+    | Let           // name = value;: the name, then the value
+    | Call          // callee(args): the callee, then the arguments
+    | Match         // subject.match(arms): the subject, then the arms
+    | Arm           // pattern => value: two children; a positional body { value }: one
+    | Binary: BinaryOp
+    | Name
+    | Int
+    | True
+    | False
+    | Wildcard      // the pattern _
+}
+
+BinaryOp* = {
+    | Add
+    | Subtract
+    | Multiply
+    | Equal
+    | NotEqual
+    | Less
+    | LessEqual
+    | Greater
+    | GreaterEqual,
+
+    // Higher binds tighter: `a + b * c > d` is `(a + (b * c)) > d`.
+    precedence* = (self: @Self) u8 {
+        self.match({ Multiply => 3, Add => 2, Subtract => 2, _ => 1 })
+    }
+
+    is_comparison* = (self: @Self) bool { self.precedence() == 1 }
+}
+
+// A node's own text is source[start, end). Its children are tree.children[first, first + count).
+Node* = { kind*: NodeKind, start*: u32, end*: u32, first*: u32, count*: u32 }
+
+Tree* = {
+    source*: Source,
+    nodes*: Vec<Node>,
+    children*: Vec<u32>,
+    roots*: Vec<u32>,          // the top-level declarations, in order
+
+    node* = (self: @Self, id: u32) Res<Node> { self.nodes.get(id.to_usize()) }
+
+    // The k-th child of a node.
+    child* = (self: @Self, n: Node, k: u32) Res<Node> {
+        (k < n.count).ensure().try();
+        self.node(self.children.get((n.first + k).to_usize()).try())
+    }
+
+    text* = (self: @Self, n: Node) str { self.source.text.slice(n.start.to_usize(), n.end.to_usize()) }
+
+    // The whole tree, one node per line with its children indented under it.
+    dump* = (self: @Self) {
+        self.roots.loop((r) { self.node(r).match({ Ok(n) => self.dump_node(n, 0), None => () }); });
+    }
+
+    dump_node = (self: @Self, n: Node, depth: u32) {
+        Range(0, depth).loop((i) { print("  "); });
+        n.kind.match({
+            Name      => println("Name {}", self.text(n)),
+            Param     => println("Param {}", self.text(n)),
+            Int       => println("Int {}", self.text(n)),
+            Binary(o) => println("Binary {}", o.variant_name()),
+            _         => println("{}", n.kind.variant_name()),
+        });
+        Range(0, n.count).loop((k) {
+            self.child(n, k).match({ Ok(c) => self.dump_node(c, depth + 1), None => () });
+        });
+    }
+}

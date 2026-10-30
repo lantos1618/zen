@@ -1,0 +1,87 @@
+// COMPILER.md Appendix B.1, rule by rule, on Int directly: one check per test.
+// Negative numbers are written as their encoded bits: i32 -7 is 4294967289 (2^32 - 7).
+
+{ Res, IoError } = std.core
+{ Env } = std.env
+{ Suite, Tester, TestError } = std.test
+{
+    ScalarType, IntegerConstant, IntOp, IntPredicate, Overflow, TrapCode,
+    Id
+} = ir.records
+{ Int } = ir.int
+
+I8: Int = Int(width: 8, signed: true)
+U8: Int = Int(width: 8, signed: false)
+I32: Int = Int(width: 32, signed: true)
+U32: Int = Int(width: 32, signed: false)
+I64: Int = Int(width: 64, signed: true)
+U64: Int = Int(width: 64, signed: false)
+
+// The result is exactly these bits.
+gives = (t: Tester, r: Res<u64, TrapCode>, want: u64) Res<TestError> {
+    t.expect(r.match({ Ok(bits) => bits == want, Err(_) => false }))
+}
+
+// The result is this trap.
+traps = (t: Tester, r: Res<u64, TrapCode>, want: TrapCode) Res<TestError> {
+    t.expect(r.match({ Ok(_) => false, Err(code) => code.discriminant() == want.discriminant() }))
+}
+
+// A shift count of type i32.
+by = (n: u64) IntegerConstant { IntegerConstant(type: ScalarType.I32, bits: n) }
+
+main = (env: Env) Res<i32, IoError> {
+    s ::= Suite(env: env);
+    checked = Overflow.Checked;
+    wrapping = Overflow.Wrapping;
+
+    // checked add traps one past MAX, not at MAX
+    s.run("i32 MAX-1 + 1 = MAX", (t) { gives(t, I32.add(2147483646, 1, checked), 2147483647) }).try();
+    s.run("i32 MAX + 1 traps", (t) { traps(t, I32.add(2147483647, 1, checked), TrapCode.IntegerOverflow) }).try();
+    s.run("u8 255 + 1 traps", (t) { traps(t, U8.add(255, 1, checked), TrapCode.IntegerOverflow) }).try();
+    s.run("u64 MAX + 1 traps", (t) { traps(t, U64.add(18446744073709551615, 1, checked), TrapCode.IntegerOverflow) }).try();
+
+    // wrapping ops wrap at the width
+    s.run("u8 255 +% 1 = 0", (t) { gives(t, U8.add(255, 1, wrapping), 0) }).try();
+    s.run("i32 MAX +% 1 = MIN", (t) { gives(t, I32.add(2147483647, 1, wrapping), 2147483648) }).try();
+    s.run("i8 -128 *% -1 = -128", (t) { gives(t, I8.multiply(128, 255, wrapping), 128) }).try();
+
+    // subtract
+    s.run("u32 0 - 1 traps", (t) { traps(t, U32.subtract(0, 1, checked), TrapCode.IntegerOverflow) }).try();
+    s.run("i8 -128 - 1 traps", (t) { traps(t, I8.subtract(128, 1, checked), TrapCode.IntegerOverflow) }).try();
+    s.run("i8 0 - 1 = -1", (t) { gives(t, I8.subtract(0, 1, checked), 255) }).try();
+
+    // multiply at the i64 edge: -2^63 fits, +2^63 does not
+    s.run("i64 2^32 * 2^31 traps", (t) { traps(t, I64.multiply(4294967296, 2147483648, checked), TrapCode.IntegerOverflow) }).try();
+    s.run("i64 -2^32 * 2^31 = MIN", (t) { gives(t, I64.multiply(18446744069414584320, 2147483648, checked), 9223372036854775808) }).try();
+
+    // signed divide and remainder truncate toward zero
+    s.run("i32 -7 / 2 = -3", (t) { gives(t, I32.divide(4294967289, 2, false), 4294967293) }).try();
+    s.run("i32 -7 % 2 = -1", (t) { gives(t, I32.divide(4294967289, 2, true), 4294967295) }).try();
+    s.run("i32 7 % -2 = 1", (t) { gives(t, I32.divide(7, 4294967294, true), 1) }).try();
+    s.run("i32 -7 / -2 = 3", (t) { gives(t, I32.divide(4294967289, 4294967294, false), 3) }).try();
+
+    // the divide traps
+    s.run("u32 1 / 0 traps", (t) { traps(t, U32.divide(1, 0, false), TrapCode.DivisionByZero) }).try();
+    s.run("i32 MIN / -1 traps", (t) { traps(t, I32.divide(2147483648, 4294967295, false), TrapCode.IntegerOverflow) }).try();
+    s.run("i32 MIN % -1 = 0", (t) { gives(t, I32.divide(2147483648, 4294967295, true), 0) }).try();
+
+    // shift counts lie in [0, width)
+    s.run("i32 << 32 traps", (t) { traps(t, I32.shift(1, by(32), IntOp.ShiftLeft), TrapCode.InvalidShift) }).try();
+    s.run("i32 << -1 traps", (t) { traps(t, I32.shift(1, by(4294967295), IntOp.ShiftLeft), TrapCode.InvalidShift) }).try();
+    s.run("i32 -8 >> 1 = -4 (arithmetic)", (t) { gives(t, I32.shift(4294967288, by(1), IntOp.ShiftRightArithmetic), 4294967292) }).try();
+    s.run("i32 -8 >>> 1 (logical)", (t) { gives(t, I32.shift(4294967288, by(1), IntOp.ShiftRightLogical), 2147483644) }).try();
+
+    // signed and unsigned order differ on the same bits
+    s.run("i32 -1 < 1", (t) { t.expect(I32.compare(IntPredicate.Less, 4294967295, 1)) }).try();
+    s.run("u32 4294967295 < 1 is false", (t) { t.expect(!U32.compare(IntPredicate.Less, 4294967295, 1)) }).try();
+
+    // conversions: checked refuses, wrapping reduces
+    s.run("i32 -1 does not fit u8", (t) { t.expect(!I32.fits_in(U8, 4294967295)) }).try();
+    s.run("i32 255 fits u8", (t) { t.expect(I32.fits_in(U8, 255)) }).try();
+    s.run("u64 2^63 does not fit i64", (t) { t.expect(!U64.fits_in(I64, 9223372036854775808)) }).try();
+    s.run("i32 -1 wraps to u8 255", (t) { t.expect(I32.wrap_to(U8, 4294967295) == 255) }).try();
+    s.run("i8 -1 wraps to i32 -1", (t) { t.expect(I8.wrap_to(I32, 255) == 4294967295) }).try();
+
+    s.finish()
+}

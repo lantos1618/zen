@@ -1,0 +1,16 @@
+// Catches: .consume() not ending the source binding, so a moved value is used again
+// and would be dropped twice.
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+
+Handle = { id: i32 }
+Handle.impl(Drop, { drop = (self :: @Self) {} })
+
+main = (env: Env) Res<IoError> {
+    h = Handle(id: 1);
+    g = h.consume();
+    env.out.println("{}", h.id)
+}
+
+//! error: 12:27
+//! hint: h was consumed

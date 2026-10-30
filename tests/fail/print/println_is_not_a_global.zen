@@ -1,0 +1,7 @@
+// Catches: println accepted as an ambient global. Output goes through the Env you were
+// given (env.out), so code without an Env can't write.
+
+main = () { println("hi") }
+
+//! error: 4:13
+//! hint: unknown name

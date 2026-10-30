@@ -1,0 +1,16 @@
+// Catches: `.try()` that doesn't return early on Err (the next line would print), or a
+// main that ends in Err exiting 0.
+{ Res, Ok, Err, IoError } = std.core
+{ Env } = std.env
+
+fails = (env: Env) Res<IoError> { Err(IoError.Full) }
+
+main = (env: Env) Res<IoError> {
+    env.out.println("before").try();
+    fails(env).try();
+    env.out.println("after").try();
+    Ok
+}
+
+//! out: before
+//! exit: 1

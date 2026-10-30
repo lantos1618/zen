@@ -1,0 +1,266 @@
+// COMPILER.md Appendix C, the part the first programs need: a checked Program becomes an
+// IR Module. One IR function per declaration, in the same position. Parameters are
+// registers 0..n-1, each expression writes a fresh register, and a bool match becomes a
+// Branch into two blocks that each set one result register and jump to a join block.
+
+{ Res, Ok, Err, None, Range, truncate_u32, to_u64, to_usize } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{
+    Module, Function, Block, Signature, Symbol, Import, Export, Global, StackObject,
+    ScalarType, Constant, Value, Instruction, InstructionRecord, Exit, Return, Call, Callee,
+    Jump, Branch, Set, IntCompare, IntPredicate, IntOp, Overflow, ReturnContract,
+    CallingConvention, SymbolKind, Linkage, Id, Register
+} = ir.records
+{ reg, value_of, i32_const, record, int_op } = ir.build
+{ Node, BinaryOp } = front.parse.ast
+{ Program, Decl, Type, Scope, scope } = front.check.check
+
+lower* = (a: Alloc, p: Program) Res<Module, AllocError> {
+    signatures ::= a.Vec<Signature>();
+    symbols ::= a.Vec<Symbol>();
+    functions ::= a.Vec<Function>();
+    p.decls.loop((h, k, d) {
+        id = k.truncate_u32();
+        signatures.add(signature(a, d).try()).try();
+        symbol = Symbol(
+            id: Id<Symbol>(index: id),
+            kind: SymbolKind.Function,
+            linkage: Linkage.Internal,
+            external_name: None,
+        );
+        symbols.add(symbol).try();
+        emitter ::= Emitter(
+            a: a,
+            p: p,
+            d: d,
+            names: scope<Value>(a),
+            types: a.Vec<ScalarType>(),
+            blocks: a.Vec<Block>(),
+            code: a.Vec<InstructionRecord>(),
+            current: 0,
+            instructions: 0,
+        );
+        functions.add(emitter.function(id).try()).try();
+    });
+    Ok(Module(
+        signatures: signatures,
+        symbols: symbols,
+        globals: a.Vec<Global>(),
+        imports: a.Vec<Import>(),
+        functions: functions,
+        exports: a.Vec<Export>(),
+        trap_handler: None,
+    ))
+}
+
+scalar = (t: Type) ScalarType { t.match({ I32 => ScalarType.I32, Bool => ScalarType.Bool }) }
+
+signature = (a: Alloc, d: Decl) Res<Signature, AllocError> {
+    params ::= a.Vec<ScalarType>();
+    d.types.loop((t) { params.add(scalar(t)).try(); });
+    Ok(Signature(
+        parameters: params,
+        result: ReturnContract.Returns(Ok(scalar(d.result))),
+        calling_convention: CallingConvention.PlatformDefault,
+    ))
+}
+
+// Writes one function: one fresh register per value, blocks in the order they're opened.
+Emitter = {
+    a: Alloc,
+    p: Program,
+    d: Decl,
+    names :: Scope<Value>,                  // parameters and bindings -> their values
+    types :: Vec<ScalarType>,               // register -> type
+    blocks :: Vec<Block>,                   // block id -> block; open ones are placeholders
+    code :: Vec<InstructionRecord>,         // the current block's instructions so far
+    current :: u32,                         // the block being written
+    instructions :: u32,                    // instruction ids, dense across the function
+
+    function = (self :: @Self, id: u32) Res<Function, AllocError> {
+        params ::= self.a.Vec<Id<Register>>();
+        self.d.params.loop((h, k, name) {
+            r = self.fresh(scalar(self.d.types.get(k).match({ Ok(t) => t, None => Type.I32 }))).try();
+            params.add(r).try();
+            self.names.bind(name, value_of(r)).try();
+        });
+        self.current = self.open().try();
+        result = self.block(self.child(self.d.node, self.d.node.count - 1)).try();
+        self.close(Exit.Return(Return(value: Ok(result)))).try();
+        Ok(Function(
+            id: Id<Function>(index: id),
+            symbol: Id<Symbol>(index: id),
+            signature: Id<Signature>(index: id),
+            parameters: params,
+            register_types: self.types,
+            objects: self.a.Vec<StackObject>(),
+            entry: Id<Block>(index: 0),
+            blocks: self.blocks,
+        ))
+    }
+
+    // ---- registers, instructions, blocks
+
+    fresh = (self :: @Self, t: ScalarType) Res<Id<Register>, AllocError> {
+        self.types.add(t).try();
+        Ok(reg(self.types.len.truncate_u32() - 1))
+    }
+
+    emit = (self :: @Self, i: Instruction) Res<(), AllocError> {
+        self.code.add(record(self.instructions, i)).try();
+        self.instructions = self.instructions + 1;
+        Ok
+    }
+
+    // A new block id, filled in when the block is closed.
+    open = (self :: @Self) Res<u32, AllocError> {
+        id = self.blocks.len.truncate_u32();
+        placeholder = Block(id: Id<Block>(index: id), instructions: self.a.Vec<InstructionRecord>(), exit: EMPTY);
+        self.blocks.add(placeholder).try();
+        Ok(id)
+    }
+
+    // End the current block with `exit`.
+    close = (self :: @Self, exit: Exit) Res<(), AllocError> {
+        done = Block(id: Id<Block>(index: self.current), instructions: self.code, exit: exit);
+        self.blocks.set(self.current.to_usize(), done);
+        self.code = self.a.Vec<InstructionRecord>();
+        Ok
+    }
+
+    type_of = (self: @Self, v: Value) ScalarType {
+        v.match({
+            Register(r) => self.types.get(r.index.to_usize()).match({ Ok(t) => t, None => ScalarType.I32 }),
+            Constant(c) => c.type(),
+        })
+    }
+
+    child = (self: @Self, n: Node, k: u32) Node { self.p.tree.child(n, k).match({ Ok(c) => c, None => n }) }
+
+    // ---- the tree, already checked
+
+    // Bindings add names; the block's value is its tail's.
+    block = (self :: @Self, b: Node) Res<Value, AllocError> {
+        Range(0, b.count - 1).loop((k) {
+            binding = self.child(b, k);
+            v = self.expression(self.child(binding, 1)).try();
+            self.names.bind(self.p.tree.text(self.child(binding, 0)), v).try();
+        });
+        self.expression(self.child(b, b.count - 1))
+    }
+
+    expression = (self :: @Self, n: Node) Res<Value, AllocError> {
+        text = self.p.tree.text(n);
+        n.kind.match({
+            Int       => Ok(i32_const(text.parse_usize().match({ Ok(v) => v.to_u64(), None => 0 }))),
+            Name      => Ok(self.names.lookup(text).match({ Ok(v) => v, None => i32_const(0) })),
+            True      => Ok(Value.Constant(Constant.Bool(true))),
+            False     => Ok(Value.Constant(Constant.Bool(false))),
+            Binary(o) => self.binary(o, n),
+            Call      => self.call(n),
+            Match     => self.bool_match(n),
+            _         => Ok(i32_const(0)),
+        })
+    }
+
+    binary = (self :: @Self, o: BinaryOp, n: Node) Res<Value, AllocError> {
+        left = self.expression(self.child(n, 0)).try();
+        right = self.expression(self.child(n, 1)).try();
+        o.is_comparison().match({
+            true  => {
+                dst = self.fresh(ScalarType.Bool).try();
+                compare = IntCompare(dst: dst, op: predicate(o), lhs: left, rhs: right);
+                self.emit(Instruction.IntCompare(compare)).try();
+                Ok(value_of(dst))
+            },
+            false => {
+                dst = self.fresh(ScalarType.I32).try();
+                self.emit(int_op(arithmetic(o), dst, left, right)).try();
+                Ok(value_of(dst))
+            },
+        })
+    }
+
+    // Arguments first, in order, then the call into a fresh register.
+    call = (self :: @Self, n: Node) Res<Value, AllocError> {
+        args ::= self.a.Vec<Value>();
+        Range(1, n.count).loop((i) { args.add(self.expression(self.child(n, i)).try()).try(); });
+        k = self.p.find(self.p.tree.text(self.child(n, 0))).match({ Ok(k) => k, None => 0 });
+        result = self.p.decl(k).match({ Ok(target) => scalar(target.result), None => ScalarType.I32 });
+        dst = self.fresh(result).try();
+        callee = Callee.Function(Id<Function>(index: k));
+        self.emit(Instruction.Call(Call(dst: Ok(dst), callee: callee, args: args))).try();
+        Ok(value_of(dst))
+    }
+
+    // Branch on the subject into a true block and a false block; each sets one result
+    // register and jumps to the join block, where the function continues.
+    bool_match = (self :: @Self, n: Node) Res<Value, AllocError> {
+        condition = self.expression(self.child(n, 0)).try();
+        yes = self.open().try();
+        no = self.open().try();
+        join = self.open().try();
+        branch = Branch(condition: condition, yes: Id<Block>(index: yes), no: Id<Block>(index: no));
+        self.close(Exit.Branch(branch)).try();
+        self.current = yes;
+        value = self.expression(self.arm_for(n, true)).try();
+        result = self.fresh(self.type_of(value)).try();
+        self.arm_end(result, value, join).try();
+        self.current = no;
+        other = self.expression(self.arm_for(n, false)).try();
+        self.arm_end(result, other, join).try();
+        self.current = join;
+        Ok(value_of(result))
+    }
+
+    arm_end = (self :: @Self, result: Id<Register>, value: Value, join: u32) Res<(), AllocError> {
+        self.emit(Instruction.Set(Set(dst: result, value: value))).try();
+        self.close(Exit.Jump(Jump(target: Id<Block>(index: join))))
+    }
+
+    // The value of the arm that runs when the subject is `which`: the first or second
+    // positional body, or the first arm whose pattern takes it.
+    arm_for = (self: @Self, n: Node, which: bool) Node {
+        first = self.child(n, 1);
+        (first.count == 1).match({
+            true  => self.child(self.child(n, which.match({ true => 1, false => 2 })), 0),
+            false => {
+                found ::= first;
+                Range(1, n.count).loop((h, k) {
+                    arm = self.child(n, k);
+                    runs = self.child(arm, 0).kind.match({
+                        True     => which,
+                        False    => !which,
+                        Wildcard => true,
+                        _        => false,
+                    });
+                    runs.then(() { found = arm; h.break(); });
+                });
+                self.child(found, 1)
+            },
+        })
+    }
+}
+
+EMPTY: Exit = Exit.Return(Return(value: None))
+
+predicate = (o: BinaryOp) IntPredicate {
+    o.match({
+        Equal        => IntPredicate.Equal,
+        NotEqual     => IntPredicate.NotEqual,
+        Less         => IntPredicate.Less,
+        LessEqual    => IntPredicate.LessEqual,
+        Greater      => IntPredicate.Greater,
+        _            => IntPredicate.GreaterEqual,
+    })
+}
+
+arithmetic = (o: BinaryOp) IntOp {
+    o.match({
+        Subtract => IntOp.Subtract(Overflow.Checked),
+        Multiply => IntOp.Multiply(Overflow.Checked),
+        _        => IntOp.Add(Overflow.Checked),
+    })
+}

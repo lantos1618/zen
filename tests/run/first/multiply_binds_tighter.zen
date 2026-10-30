@@ -1,0 +1,5 @@
+// Catches: operators lowered left to right regardless of precedence (would give 20).
+
+main = () i32 { 2 + 3 * 4 }
+
+//! exit: 14

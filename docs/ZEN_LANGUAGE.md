@@ -15,7 +15,7 @@ and a **tier**: **T0** the compiler needs to build itself, **T1** everyday progr
 ## 1. Laws (everything follows from these)
 
 1. **No ambient allocator.** Allocation takes an `Alloc`.
-2. **No ambient authority.** IO, net, pages, threads, spawning: all come from the `Env` that `main` receives. (One exception: `println`.)
+2. **No ambient authority.** IO, net, pages, threads, spawning: all come from the `Env` that `main` receives. Even output: `env.out.println(..)`, never a global.
 3. **Satisfy requirements, never impl storage.** Layout is fixed at declaration.
 4. **Failure stays visible.** Only success lifts into `Res`; `Err` and `None` are always written.
 5. **`Res` is for failures a caller can act on; a trap is for a bug.**
@@ -38,7 +38,7 @@ c :: Circle = Circle(radius: 2.0)
 label :: str;            // declared now, assigned before any read (flow checks)
 
 add  = (a: i32, b: i32) i32 { a + b }       // tail expression is the result
-log  = (msg: str) { println(msg) }           // unit function
+bump = (c :: Counter) { c.n = c.n + 1 }     // unit function: no result type
 add* = (a: i32, b: i32) i32 { a + b }        // exported: types must be written
 ```
 
@@ -182,8 +182,24 @@ main = (env: Env) Res<i32, Error> {
 }
 ```
 
-`main = () {}`, `() i32`, or `(env: Env) Res<i32, E>` (exit with the Ok value; an Err exits 1).
-`println` (from `std.io`) is the one ambient effect. Formats are read at compile time: `{}`, `{name}`, `{{`.
+`main = () {}`, `() i32`, `(env: Env) Res<E>`, or `(env: Env) Res<i32, E>` (exit 0 or with the Ok
+value; an Err is printed and exits 1).
+
+**Output is a `Writer`**, Go's `io.Writer` with errors you can't drop. There is no global `println`.
+
+```zen
+Writer* = {
+    write* = (self :: @Self, bytes: str) Res<IoError>      // all the bytes, or an error
+}
+Writer.print*   = (w :: @Self, fmt: str, args: ...) Res<IoError>     // written once, for every Writer
+Writer.println* = (w :: @Self, fmt: str, args: ...) Res<IoError>     // print, then "\n"
+```
+
+`env.out` and `env.err` are Writers, and so is `String` (memory: it fails only as `AllocError`).
+Formats are read at compile time: `{}` takes the next argument, `{name}` reads a binding, and
+`{{`, `}}` print a brace; a hole without an argument, or an argument without a hole, is a compile
+error at that hole or argument. A stream's error is sticky, as in Go's `bufio.Writer`: after one
+write fails, every later write fails the same way, so a line's last write reports the whole line.
 
 ## 13. Native bindings — *lower, T1*
 
@@ -195,9 +211,46 @@ Timespec = c.record("time.h", "struct timespec", { tv_sec: c_long, tv_nsec: c_lo
 
 These are explicit declarations checked against the real header. There is no header parsing and no inferred link flags.
 
-## 14. Comptime and `@meta` — *fit + lower, T1*
+## 14. Comptime and `@meta` — *fit + lower, T0 reading, T1 walks, T2 building*
 
-`@meta(n: T).fields().loop((h, field) { .. n.at(field) .. })` walks a type's fields at compile time. `@meta(v).kind` is a typecase.
+`@meta` is the only reflection, and it carries the `@` because only the compiler can answer it. It returns the compiler's own declaration nodes:
+
+```zen
+@meta(T)     // a type      -> its Decl
+@meta(v)     // a value     -> the Decl of v's type; for an enum value, also .variant
+
+Decl    = { name: str, module: str, exported: bool, kind: Kind }
+Kind    = { Primitive: Prim | Struct: { fields: [Field] } | Enum: { variants: [Variant] }
+          | Function: { params: [Param], result: Decl }
+          | Array: { element: Decl, count: usize } | Ptr: Decl | Alias: Decl }
+Field   = { name: str, type: Decl, mutable: bool, has_default: bool, exported: bool }
+Variant = { name: str, index: u32, payload: Res<Decl> }
+Param   = { name: str, type: Decl, mutable: bool }
+```
+
+```zen
+name* = (self: @Self) str { @meta(self).variant.name }        // an enum value's own name
+
+describe = <T>(out: Writer, v: T) Res<IoError> {             // a typecase on .kind
+    @meta(v).kind.match({
+        Struct(s) => s.fields.loop((f) { out.println("{} = {}", f.name, v.at(f)).try() }),
+        Enum(e)   => out.println("{} of {}", @meta(v).variant.name, e.variants.len).try(),
+        _         => out.println("{}", @meta(v).name).try(),
+    });
+    Ok
+}
+```
+
+| Tier | What |
+|---|---|
+| T0 | `.kind` typecase; `.variant` (name, index); field, variant and parameter lists |
+| T1 | walks that read values, `v.at(field)`: derived `Eq`, `Hash`, `Display`, CLI types (§15) |
+| T2 | building new types (`AddFoo(Circle)`), identified by their generating call |
+
+- **Declarations only, never bodies.** A function's parameters and result can be read; its statements can't. Reading or rewriting bodies would be macros, a second language and a larger attack surface.
+- **Compile time only.** Walks are unrolled while checking (COMPILER.md I.4). The one runtime trace: `.variant.name` on a runtime value reads a constant name table the compiler emits per enum.
+- **Nothing reflective without `@`.** There is no `variant_name()` or `type_name()` method; the stage-0 compiler's `variant_name()` is used only until the new compiler builds itself.
+
 Comptime is the language without IO or actors. It may allocate, it is step-limited, and it has no file reads.
 
 ## 15. Command lines are types — *lower, T1*

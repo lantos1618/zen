@@ -1,0 +1,7 @@
+// Catches: arms of different types accepted, so the match's value has no single type.
+
+f = (b: bool) i32 { b.match({ true => 1, false => b }) }
+main = () i32 { f(true) }
+
+//! error: 3:51
+//! hint: every arm needs the same type

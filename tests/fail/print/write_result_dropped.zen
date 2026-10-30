@@ -1,0 +1,12 @@
+// Catches: a write whose Res is thrown away accepted, so a failed write vanishes (Go's
+// fmt.Println). A failing Res is used, `.try()`d, or `.ignore()`d (ZEN_LANGUAGE.md §5).
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> {
+    env.out.println("lost");
+    Ok
+}
+
+//! error: 7:5
+//! hint: this Res is dropped; .try() or .ignore() it

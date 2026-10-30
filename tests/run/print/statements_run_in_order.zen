@@ -1,0 +1,18 @@
+// Catches: a statement dropped, statements run out of order, or a call's success not
+// returning to its caller.
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
+show = (env: Env, n: i32) Res<IoError> { env.out.println("{}", n) }
+twice = (n: i32) i32 { n * 2 }
+
+main = (env: Env) Res<IoError> {
+    show(env, 1).try();
+    x = twice(2);
+    show(env, x).try();
+    show(env, x + 1)
+}
+
+//! out: 1
+//! out: 4
+//! out: 5

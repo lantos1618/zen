@@ -1,0 +1,9 @@
+// Catches: an argument with no hole silently ignored. The error points at the extra
+// argument (stage 0 points at the call).
+{ Res, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> { env.out.println("{}", 5, 6) }
+
+//! error: 6:59
+//! hint: this argument has no hole

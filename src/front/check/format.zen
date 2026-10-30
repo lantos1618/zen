@@ -1,0 +1,64 @@
+// ZEN_LANGUAGE.md §12: a format string, read at compile time. `{}` takes the next
+// argument, `{name}` reads a binding, `{{` and `}}` print one brace; every other byte,
+// a lone brace too, prints as itself. Check reads the pieces to match holes with
+// arguments; lower reads the same pieces to emit the writes.
+
+{ Res, Ok, Range, is_ident_start, is_ident_cont, to_usize, truncate_u32 } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Source } = front.parse.source
+
+// Source offsets [start, end).
+Span* = { start*: u32, end*: u32 }
+
+Piece* = {
+    | Text: Span        // printed as it is
+    | Next: u32         // `{}`, at this offset: the next argument
+    | Named: Span       // `{name}`: the name's span
+}
+
+// The string literal source[start, end), quotes included.
+Format* = {
+    source*: Source,
+    start*: u32,
+    end*: u32,
+
+    at = (self: @Self, i: u32) u8 { self.source.byte(i.to_usize()) }
+
+    pieces* = (self: @Self, a: Alloc) Res<Vec<Piece>, AllocError> {
+        out ::= a.Vec<Piece>();
+        last = self.end - 1;
+        i ::= self.start + 1;
+        text ::= i;                             // where the pending literal text began
+        Range(0, last.to_usize()).loop((h, _) {
+            (i >= last).then(() { h.break() });
+            c = self.at(i);
+            name = self.name_end(i);
+            brace = (c == '{' || c == '}') && self.at(i + 1) == c;     // `{{` or `}}`: keep one
+            hole = c == '{' && self.at(i + 1) == '}';
+            named = name > i;
+            ((hole || named) && text < i).then(() { out.add(Piece.Text(Span(start: text, end: i))).try(); });
+            brace.then(() { out.add(Piece.Text(Span(start: text, end: i + 1))).try(); });
+            hole.then(() { out.add(Piece.Next(i)).try(); });
+            named.then(() { out.add(Piece.Named(Span(start: i + 1, end: name))).try(); });
+            step :: u32 = 1;
+            (brace || hole).then(() { step = 2; });
+            named.then(() { step = name + 1 - i; });
+            i = i + step;
+            (step > 1).then(() { text = i; });
+        });
+        (text < last).then(() { out.add(Piece.Text(Span(start: text, end: last))).try(); });
+        Ok(out)
+    }
+
+    // For `{name}` at i, the offset of the closing `}`; otherwise i.
+    name_end = (self: @Self, i: u32) u32 {
+        (self.at(i) == '{' && is_ident_start(self.at(i + 1))).match({
+            false => i,
+            true  => {
+                j = self.source.scan((i + 1).to_usize(), (c) { is_ident_cont(c) }).truncate_u32();
+                (j < self.end - 1 && self.at(j) == '}').match({ true => j, false => i })
+            },
+        })
+    }
+}

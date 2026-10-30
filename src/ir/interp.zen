@@ -9,16 +9,18 @@
 
 {
     Res, Ok, Err, None, Range, to_usize, to_u64, to_u128, truncate_u64,
-    bit_and, bit_or, bit_xor, shift_left, shift_right
+    bit_and, bit_or, bit_xor, shift_left, shift_right, IoError
 } = std.core
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
-{ str } = std.text
+{ str, str_at, String } = std.text
+{ Console } = std.env
 {
-    Module, Function, Block, ScalarType, IntegerConstant, Value,
+    Module, Function, Block, Import, ScalarType, IntegerConstant, Value,
     Instruction, Exit, Callee, IntOp, Overflow, IntPredicate,
-    TrapCode, Id, Register
+    TrapCode, Id, Register, Symbol
 } = ir.records
+{ Runtime } = ir.runtime
 { DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
 { Int, int } = ir.int
 { Ir } = ir.validate
@@ -31,7 +33,9 @@ RuntimeValue* = {
     | F64: u64
     | NullPointer
     | Function: Id<Function>
-    | NullFunction,
+    | NullFunction
+    | Environment               // main's Env: what the runtime imports write through
+    | Data: DataAddress,
 
     // Whether this value is a well-formed value of type t (integers masked to the width).
     fits_type* = (self: @Self, t: ScalarType) bool {
@@ -43,9 +47,18 @@ RuntimeValue* = {
             NullPointer  => t.match({ Pointer => true, _ => false }),
             Function(_)  => t.match({ FunctionPointer(_) => true, _ => false }),
             NullFunction => t.match({ FunctionPointer(_) => true, _ => false }),
+            Environment  => t.match({ Pointer => true, _ => false }),
+            Data(_)      => t.match({ Pointer => true, _ => false }),
         })
     }
 }
+
+// An address in a global: its symbol, and a byte offset into its initializer.
+DataAddress* = { symbol*: Id<Symbol>, offset*: u64 }
+
+// One output stream as the interpreter keeps it: the line being built, and the sticky
+// failure (0 while writes succeed, else the IoError's discriminant).
+Channel = { line :: String, failed :: u8 }
 
 // B.2: a program fault that is neither a value nor a trap.
 InterpreterFault* = {
@@ -80,6 +93,7 @@ Next = {
 // Run one function of a validated module.
 run* = (
     a    : Alloc,
+    out  : Console,             // where the program's writes go
     ir   : Ir,
     f    : Id<Function>,
     args : Vec<RuntimeValue>
@@ -119,7 +133,10 @@ run* = (
         frames: a.Vec<Vec<RuntimeValue>>(),
         staged: a.Vec<Vec<RuntimeValue>>(),
         steps: 0,
-        depth: 0
+        depth: 0,
+        console: out,
+        out: Channel(line: String(data: a.Vec<u8>()), failed: 0),
+        err: Channel(line: String(data: a.Vec<u8>()), failed: 0),
     );
     machine.call(f, args).match({
         Ok(value) => Ok(Outcome.Returned(value)),
@@ -169,15 +186,19 @@ Machine = {
     staged :: Vec<Vec<RuntimeValue>>,     // call arguments, one buffer per call depth, reused
     steps :: u64,
     depth :: u32,
+    console: Console,
+    out :: Channel,
+    err :: Channel,
 
+    // A defined function runs here; an import is a runtime function the host provides.
     call = (self :: @Self, id: Id<Function>, args: Vec<RuntimeValue>) Res<Res<RuntimeValue>, Stop> {
-        f = self.m.function(id).match({
-            Ok(f) => f,
-            None  => fail<Function>(
-                DiagnosticCode.UnsupportedFeature,
-                "calls to imports"
-            ).try(),
-        });
+        self.m.function(id).match({
+            Ok(f) => self.enter(f, args),
+            None  => self.host(id, args),
+        })
+    }
+
+    enter = (self :: @Self, f: Function, args: Vec<RuntimeValue>) Res<Res<RuntimeValue>, Stop> {
         (self.depth >= Limits.RUN_DEPTH).match({ true => halt<()>(
             Outcome.ResourceLimit
         ).try(), false => () });
@@ -194,6 +215,112 @@ Machine = {
         value      = self.blocks(f, regs).try();
         self.depth = self.depth - 1;
         Ok(value)
+    }
+
+    // ---- the runtime functions (ir/runtime.zen)
+
+    // The import's runtime function, on the stream its second argument names. A stream
+    // that has failed answers its failure without writing.
+    host = (self :: @Self, id: Id<Function>, args: Vec<RuntimeValue>) Res<Res<RuntimeValue>, Stop> {
+        im = self.m.import(id).match({ Ok(im) => im, None => fail<Import>(
+            DiagnosticCode.InvalidId,
+            "a call to no function"
+        ).try() });
+        name = self.m.symbol(im.symbol).match({ Ok(s) => s.external_name, None => None });
+        r = name.match({ Ok(n) => Runtime.find(n), None => None }).match({ Ok(r) => r, None => fail<Runtime>(
+            DiagnosticCode.UnsupportedFeature,
+            "an import the interpreter doesn't provide"
+        ).try() });
+        stream = self.arg(args, 1).bits;
+        status ::= self.channel(stream).failed;
+        (status == 0).then(() {
+            r.match({
+                Write     => { self.write_bytes(stream, self.bytes(args).try()).try(); },
+                WriteI32  => { self.write_i32(stream, self.arg(args, 2).bits).try(); },
+                WriteBool => {
+                    yes = self.truth_of(args, 2);
+                    self.write_bytes(stream, yes.match({ true => "true", false => "false" })).try();
+                },
+            });
+            status = self.channel(stream).failed;
+        });
+        Ok(Ok(RuntimeValue.Int(IntegerConstant(type: ScalarType.U8, bits: status.to_u64()))))
+    }
+
+    arg = (self: @Self, args: Vec<RuntimeValue>, k: usize) IntegerConstant {
+        args.get(k).match({ Ok(v) => v.match({ Int(i) => i, _ => ZERO }), None => ZERO })
+    }
+
+    truth_of = (self: @Self, args: Vec<RuntimeValue>, k: usize) bool {
+        args.get(k).match({ Ok(v) => v.match({ Bool(b) => b, _ => false }), None => false })
+    }
+
+    channel = (self: @Self, stream: u64) Channel { (stream == 2).match({ true => self.err, false => self.out }) }
+
+    // zen_write's bytes: len bytes of a global's initializer, from the address's offset.
+    bytes = (self: @Self, args: Vec<RuntimeValue>) Res<str, Stop> {
+        at = args.get(2).match({ Ok(v) => v.match({ Data(d) => Ok(d), _ => None }), None => None });
+        place = at.match({
+            Ok(d) => d,
+            None  => halt<DataAddress>(Outcome.Fault(InterpreterFault.InvalidPointer)).try(),
+        });
+        data ::= "";
+        self.m.globals.loop((h, g) {
+            (g.symbol.index == place.symbol.index).then(() {
+                g.initializer.get(0).match({
+                    Ok(part) => part.match({ Bytes(b) => { data = str_at(b.ptr(), b.len); }, _ => () }),
+                    None     => (),
+                });
+                h.break();
+            });
+        });
+        from = place.offset.to_usize().match({ Ok(n) => n, None => data.len + 1 });
+        count = self.arg(args, 3).bits.to_usize().match({ Ok(n) => n, None => data.len + 1 });
+        inside = from <= data.len && count <= data.len - from;
+        inside.match({ true => (), false => halt<()>(Outcome.Fault(InterpreterFault.OutOfBoundsAccess)).try() });
+        Ok(data.slice(from, from + count))
+    }
+
+    // An i32 in decimal, with a minus sign when negative.
+    write_i32 = (self :: @Self, stream: u64, bits: u64) Res<(), Stop> {
+        t = int(ScalarType.I32);
+        t.negative(bits).then(() { self.write_bytes(stream, "-").try(); });
+        digits ::= String(data: self.a.Vec<u8>());
+        self.memory(digits.write_usize(t.magnitude(bits).to_usize().match({ Ok(n) => n, None => 0 }))).try();
+        self.write_bytes(stream, digits.view())
+    }
+
+    // Bytes join the stream's line; each newline sends the line to the console.
+    write_bytes = (self :: @Self, stream: u64, bytes: str) Res<(), Stop> {
+        c ::= self.channel(stream);
+        Range(0, bytes.len).loop((i) {
+            b = bytes.get(i).match({ Ok(b) => b, None => 0 });
+            (b == '\n').match({
+                true  => { self.send(stream, c).try(); c.line.clear(); },
+                false => { self.memory(c.line.add(b)).try(); },
+            });
+        });
+        self.keep(stream, c);
+        Ok
+    }
+
+    // The line, to stdout or stderr; a failure sticks to the stream.
+    send = (self :: @Self, stream: u64, c :: Channel) Res<(), Stop> {
+        sent = (stream == 2).match({
+            true  => self.console.errorln("{}", c.line.view()),
+            false => self.console.println("{}", c.line.view()),
+        });
+        // std's IoError as its discriminant in a Res<IoError> (front/check/library.zen)
+        failed = sent.match({
+            Ok     => 0,
+            Err(e) => e.match({ Closed => 1, Full => 2, Invalid => 3, Interrupted => 4 }),
+        });
+        c.failed = failed;
+        Ok
+    }
+
+    keep = (self :: @Self, stream: u64, c: Channel) {
+        (stream == 2).match({ true => { self.err = c; }, false => { self.out = c; } });
     }
 
     // Running out of memory is a resource limit, like steps and depth.
@@ -375,6 +502,14 @@ Machine = {
                 });
             },
 
+            Address(x)    => x.base.match({
+                Symbol(sym) => set(x.dst, RuntimeValue.Data(DataAddress(
+                    symbol: sym,
+                    offset: self.int(regs, x.byte_offset).bits
+                ))),
+                _           => fail<()>(DiagnosticCode.UnsupportedFeature, "stack and register addresses").try(),
+            }),
+
             Call(x)       => {
                 result = self.call(
                     self.callee(regs, x.callee).try(),
@@ -455,3 +590,5 @@ Machine = {
         })
     }
 }
+
+ZERO: IntegerConstant = IntegerConstant(type: ScalarType.U8, bits: 0)

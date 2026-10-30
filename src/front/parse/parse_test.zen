@@ -103,9 +103,10 @@ main = (env: Env) Res<i32, IoError> {
 
     // errors: the first one stops parsing, at its position
     s.run("a binding needs its `;`", (t) { expect_error(t, "f = () i32 { x = 1 x }", 1, 20) }).try();
-    s.run("only .match exists so far", (t) { expect_error(t, "f = (b: bool) i32 { b.then({ 1 }) }", 1, 23) }).try();
+    s.run("a method's arguments need `)`", (t) { expect_error(t, "f = (b: bool) i32 { b.then(1 }", 1, 30) }).try();
     s.run("a missing `)` is reported at the token found instead", (t) { expect_error(t, "f = (a: i32 i32 { a }", 1, 13) }).try();
-    s.run("a missing expression", (t) { expect_error(t, "f = () i32 { }", 1, 14) }).try();
+    s.run("two expressions need a `;` between them", (t) { expect_error(t, "f = () { 1 2 }", 1, 12) }).try();
+    s.run("an import needs its `=`", (t) { expect_error(t, "{ Res } std.core", 1, 9) }).try();
     s.run("a lexical fault stops the parse", (t) { expect_error(t, "f = () i32 { 010 }", 1, 14) }).try();
     s.run("an unclosed block", (t) { expect_error(t, "f = () i32 { 1", 1, 15) }).try();
 

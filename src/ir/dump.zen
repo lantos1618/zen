@@ -66,6 +66,12 @@ instruction = (f: Function, i: Instruction) {
             print(" = IntCompare({}", x.op.variant_name());
             print(", "); value(x.lhs); print(", "); value(x.rhs); print(")");
         },
+        Address(x)    => {
+            register(f, x.dst);
+            x.base.match({ Symbol(s) => print(" = Address(s{}, ", s.index), _ => print(" = Address(?, ") });
+            value(x.byte_offset);
+            print(")");
+        },
         Call(x)       => {
             x.dst.match({ Ok(d) => { register(f, d); print(" = "); }, None => () });
             print("Call(");

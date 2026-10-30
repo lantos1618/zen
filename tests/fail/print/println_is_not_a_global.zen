@@ -1,7 +1,8 @@
-// Catches: println accepted as an ambient global. Output goes through the Env you were
-// given (env.out), so code without an Env can't write.
+// Catches: println accepted as an ambient global, or an unknown call resolved to some
+// other function that happens to fit. Output goes through the Env you were given.
 
-main = () { println("hi") }
+twice = (n: i32) i32 { n * 2 }
+main = () i32 { println(7) }
 
-//! error: 4:13
+//! error: 5:17
 //! hint: unknown name

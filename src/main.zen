@@ -1,6 +1,7 @@
 // zen <file.zen>: compile the file with this compiler and run its `main` on the IR
 // interpreter. The process exits with main's result; an error prints file:line:col and
 // exits 1; a trap exits 134 (ZEN_LANGUAGE.md §8).
+// zen --check <file.zen>: compile only; exit 0, or 1 with the error.
 // zen --dump <file.zen>: print the syntax tree and the IR instead of running.
 
 { Res, Ok, Err, None, IoError, ignore } = std.core
@@ -9,7 +10,7 @@
 { str } = std.text
 { println } = std.io
 { Env, Console } = std.env
-{ Id, Function, ScalarType } = ir.records
+{ Id, Function, ScalarType, IntegerConstant } = ir.records
 { Diagnostic } = ir.diagnostic
 { Ir, validate } = ir.validate
 { dump } = ir.dump
@@ -19,6 +20,7 @@
 { ParseError, parse } = front.parse.parse
 { Tree } = front.parse.ast
 { CheckError, Program, check } = front.check.check
+{ Failure } = front.check.library
 { lower } = front.lower.lower
 
 // Everything that can stop compiling. Each stage's `.try()` widens into it.
@@ -27,23 +29,39 @@ CompileError = ParseError | CheckError | AllocError | Diagnostic
 // What compiling a file produces: its tree, the checked program, and validated IR.
 Compiled = { tree: Tree, program: Program, ir: Ir }
 
+// What `zen` was asked to do with the file.
+Mode = {
+    | Run
+    | Check
+    | Dump,
+
+    // The mode a first argument asks for; anything else is the path, to run.
+    of = (word: str) Mode {
+        word.eq("--check").match({
+            true  => Mode.Check,
+            false => word.eq("--dump").match({ true => Mode.Dump, false => Mode.Run }),
+        })
+    }
+}
+
 main = (env: Env) Res<i32, IoError> {
     a = env.mem.alloc();
     first = env.argv.get(1).match({ Ok(p) => p, None => "" });
-    dumping = first.eq("--dump");
-    path = dumping.match({ true => env.argv.get(2).match({ Ok(p) => p, None => "" }), false => first });
+    mode = Mode.of(first);
+    path = mode.match({ Run => first, _ => env.argv.get(2).match({ Ok(p) => p, None => "" }) });
     (path.len == 0).match({
-        true  => { env.out.errorln("usage: zen [--dump] <file.zen>").try(); Ok(2) },
+        true  => { env.out.errorln("usage: zen [--check | --dump] <file.zen>").try(); Ok(2) },
         false => env.fs.read(a, path).match({
             Err(_)   => { env.out.errorln("{}: can't read this file", path).try(); Ok(1) },
             Ok(text) => {
                 s = Source(text: text.view());
-                code = dumping.match({
-                    true  => compile(a, s.text).match({ Ok(c) => show(c), Err(e) => report(env.out, path, s, e) }),
-                    false => run_main(a, s.text).match({
+                code = mode.match({
+                    Run   => run_main(a, env.out, s.text).match({
                         Ok(o)  => finish(env.out, path, o),
                         Err(e) => report(env.out, path, s, e),
                     }),
+                    Check => compile(a, s.text).match({ Ok(_) => 0, Err(e) => report(env.out, path, s, e) }),
+                    Dump  => compile(a, s.text).match({ Ok(c) => show(c), Err(e) => report(env.out, path, s, e) }),
                 });
                 Ok(code)
             },
@@ -59,11 +77,14 @@ compile = (a: Alloc, text: str) Res<Compiled, CompileError> {
     Ok(Compiled(tree: tree, program: program, ir: ir))
 }
 
-// Compile, then run main on the interpreter.
-run_main = (a: Alloc, text: str) Res<Outcome, CompileError> {
+// Compile, then run main on the interpreter, handing it an Env if it takes one.
+run_main = (a: Alloc, out: Console, text: str) Res<Outcome, CompileError> {
     c = compile(a, text).try();
     entry = c.program.find("main").match({ Ok(k) => k, None => 0 });
-    Ok(run(a, c.ir, Id<Function>(index: entry), a.Vec<RuntimeValue>()).try())
+    args ::= a.Vec<RuntimeValue>();
+    takes_env = c.program.decl(entry).match({ Ok(d) => d.types.len == 1, None => false });
+    takes_env.then(() { args.add(RuntimeValue.Environment).try(); });
+    Ok(run(a, out, c.ir, Id<Function>(index: entry), args).try())
 }
 
 // The tree and the IR, instead of running.
@@ -79,7 +100,7 @@ show = (c: Compiled) i32 {
 // The exit code for how main ended: its i32 result, or 134 after a trap or fault.
 finish = (out: Console, path: str, o: Outcome) i32 {
     o.match({
-        Returned(v)   => exit_code(v),
+        Returned(v)   => exit_code(out, path, v),
         Trapped(code) => { out.errorln("{}: trap: {}", path, code.variant_name()).ignore(); 134 },
         Fault(f)      => { out.errorln("{}: fault: {}", path, f.variant_name()).ignore(); 134 },
         ResourceLimit => { out.errorln("{}: a resource limit was reached", path).ignore(); 1 },
@@ -108,10 +129,25 @@ report = (out: Console, path: str, s: Source, e: CompileError) i32 {
     1
 }
 
-// main's i32 result as a process exit code.
-exit_code = (v: Res<RuntimeValue>) i32 {
-    i32_type = int(ScalarType.I32);
-    bits = v.match({ Ok(rv) => rv.match({ Int(k) => k.bits, _ => 0 }), None => 0 });
-    size = i32_type.magnitude(bits).to_i32().match({ Ok(n) => n, None => 0 });
-    i32_type.negative(bits).match({ true => 0 - size, false => size })
+// main's result as a process exit code: an i32 is the code; a Res<IoError> (a U8 status)
+// is 0 for Ok, or 1 after printing the error; no result is 0.
+exit_code = (out: Console, path: str, v: Res<RuntimeValue>) i32 {
+    k = v.match({ Ok(rv) => rv.match({ Int(k) => k, _ => ZERO }), None => ZERO });
+    k.type.match({
+        U8 => (k.bits == 0).match({
+            true  => 0,
+            false => {
+                name = Failure.from_discriminant(k.bits).match({ Ok(f) => f.variant_name(), None => "?" });
+                out.errorln("{}: error: IoError.{}", path, name).ignore();
+                1
+            },
+        }),
+        _  => {
+            i32_type = int(ScalarType.I32);
+            size = i32_type.magnitude(k.bits).to_i32().match({ Ok(n) => n, None => 0 });
+            i32_type.negative(k.bits).match({ true => 0 - size, false => size })
+        },
+    })
 }
+
+ZERO: IntegerConstant = IntegerConstant(type: ScalarType.I32, bits: 0)

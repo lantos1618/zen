@@ -6,7 +6,7 @@
 { Suite, Tester, TestError } = std.test
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
-{ Env } = std.env
+{ Env, Console } = std.env
 {
     Module, Function, Block, Signature, Symbol, Import,
     Export, ScalarType, Constant, IntegerConstant, Value, Instruction,
@@ -122,11 +122,11 @@ verdict = (a: Alloc, variant: u32) str {
 }
 
 // What running sum_to does with these arguments: "returned <bits>", a trap, or a diagnostic.
-ran = (a: Alloc, args: Vec<RuntimeValue>) str {
+ran = (a: Alloc, out: Console, args: Vec<RuntimeValue>) str {
     built = sum_to(a, 0).match({ Ok(m) => validate(a, m).match({ Ok(ir) => Ok(ir), Err(_) => None }), Err(_) => None });
     built.match({
         None     => "invalid",
-        Ok(ir)   => run(a, ir, Id<Function>(index: 0), args).match({
+        Ok(ir)   => run(a, out, ir, Id<Function>(index: 0), args).match({
             Err(d)      => d.code.name(),
             Ok(outcome) => outcome.match({
                 Returned(v)   => v.match({ Ok(rv) => rv.match({ Int(k) => int_text(k.bits), _ => "not an int" }), None => "unit" }),
@@ -159,10 +159,14 @@ main = (env: Env) Res<i32, IoError> {
     s.run("a branch on an I32", (t) { says(t, verdict(t.alloc, 2), "TypeMismatch") }).try();
     s.run("instruction id 1000000", (t) { says(t, verdict(t.alloc, 3), "InvalidId") }).try();
 
-    s.run("sum_to(10) returns 55", (t) { says(t, ran(t.alloc, one(t.alloc, 10)), "55") }).try();
-    s.run("sum_to(100) returns 5050", (t) { says(t, ran(t.alloc, one(t.alloc, 100)), "5050") }).try();
-    s.run("sum_to(70000) traps", (t) { says(t, ran(t.alloc, one(t.alloc, 70000)), "IntegerOverflow") }).try();
-    s.run("sum_to with no arguments", (t) { says(t, ran(t.alloc, t.alloc.Vec<RuntimeValue>()), "ArityMismatch") }).try();
+    s.run("sum_to(10) returns 55", (t) { says(t, ran(t.alloc, env.out, one(t.alloc, 10)), "55") }).try();
+    s.run("sum_to(100) returns 5050", (t) { says(t, ran(t.alloc, env.out, one(t.alloc, 100)), "5050") }).try();
+    s.run("sum_to(70000) traps", (t) {
+        says(t, ran(t.alloc, env.out, one(t.alloc, 70000)), "IntegerOverflow")
+    }).try();
+    s.run("sum_to with no arguments", (t) {
+        says(t, ran(t.alloc, env.out, t.alloc.Vec<RuntimeValue>()), "ArityMismatch")
+    }).try();
 
     s.finish()
 }

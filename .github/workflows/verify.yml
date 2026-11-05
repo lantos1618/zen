@@ -57,3 +57,34 @@ jobs:
 
       - name: Strict jit corpus
         run: make jitcorpus JIT_SHARDS=2
+
+  native-jit-macos:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Require Apple Silicon
+        run: test "$(uname -m)" = arm64
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build compiler
+        run: make build
+
+      - name: Verify native bytes and executable memory
+        run: python3 tests/quality/jit_native.py --zen ./zen
+
+      - name: Compare native JIT SHA-256 with C
+        run: |
+          set -euo pipefail
+          mkdir -p build/native-jit-macos
+          ./zen build tests/native/bench/sha256 --entry main.zen --backend c -o build/native-jit-macos/sha.c
+          cc -O2 build/native-jit-macos/sha.c -lm -o build/native-jit-macos/sha
+          build/native-jit-macos/sha 1 | tee build/native-jit-macos/expected
+          ./zen build tests/native/bench/sha256 --entry main.zen --backend jit -- 1 | tee build/native-jit-macos/actual
+          diff -u build/native-jit-macos/expected build/native-jit-macos/actual

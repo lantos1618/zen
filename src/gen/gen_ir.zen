@@ -187,6 +187,9 @@ ForeignCall* = {
     header*: str,
     args*: Vec<usize>,
     typed* :: bool = false,
+    // The native library that defines the symbol where the C library does
+    // not (`c_library`); a target without a linker opens it by name.
+    library* :: str = "",
 }
 // A constant a `c.bind` header defines (a macro or enumerator) as the word
 // class of `out`; `fallback` is the written integer it takes where the
@@ -196,6 +199,12 @@ NativeValue* = { out*: usize, header*: str, name*: str, fallback*: Res<i64> }
 
 // `sizeof` a native record, or `offsetof` one of its fields, as a U64.
 NativeMeasure* = { out*: usize, record*: usize, field*: Res<str> }
+
+// std.ct's value_barrier: `source`'s word in `out`, which no renderer or
+// optimizer may see through, so a mask built from a secret stays a mask.
+// `declassify` (declassify_barrier) also marks the word public for tools/ct.
+// Both slots have the same integer class.
+OpaqueValue* = { out*: usize, source*: usize, declassify*: bool }
 
 Instruction* = { Constant: Const
     | Copy: Move
@@ -241,7 +250,8 @@ Instruction* = { Constant: Const
     | NativeConst: NativeValue
     | NativeLayout: NativeMeasure
     // Zero every byte of a native record slot, hidden fields included.
-    | NativeClear: usize }
+    | NativeClear: usize
+    | Opaque: OpaqueValue }
 
 // A terminator that ends the process with Zen's trap report.
 TrapKind* = { Overflow

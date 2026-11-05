@@ -1,0 +1,49 @@
+// Lane-wise edges every backend agrees on: arithmetic wraps per lane, a
+// shift by the lane width or more clears the lane, a rotate counts modulo
+// the lane width, and casts keep the bytes.
+{ splat_u8x16, lanes_u64x2, splat_u64x2, lanes_u32x4, splat_u32x4 } = std.simd
+{ add_wrap, sub_wrap, mul_wrap, shift_left, shift_right } = std.simd
+{ rotate_left, rotate_right, with_lane, lane, cast_u32x4, cast_u8x16 } = std.simd
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+main = (env: Env) Res<i32> {
+    bytes = splat_u8x16(250).add_wrap(splat_u8x16(9));
+    println("u8 wrap: {} {}", bytes.lane(0), bytes.lane(15));
+    low = splat_u8x16(3).sub_wrap(splat_u8x16(5));
+    println("u8 borrow: {}", low.lane(7));
+    big = lanes_u64x2(18446744073709551615, 3).mul_wrap(splat_u64x2(3));
+    println("u64 wrap: {} {}", big.lane(0), big.lane(1));
+    w = lanes_u32x4(1, 2, 2147483648, 4294967295);
+    println(
+        "shl 31: {} {}",
+        w.shift_left(31).lane(0),
+        w.shift_left(31).lane(2)
+    );
+    println(
+        "shl 32: {} shr 40: {}",
+        w.shift_left(32).lane(3),
+        w.shift_right(40).lane(3)
+    );
+    println(
+        "rotl 0: {} rotl 33: {}",
+        w.rotate_left(0).lane(1),
+        w.rotate_left(33).lane(2)
+    );
+    println(
+        "rotr 1: {} rotr 32: {}",
+        w.rotate_right(1).lane(0),
+        w.rotate_right(32).lane(3)
+    );
+    set = w.with_lane(1, 7);
+    println("with_lane: {} {} {}", set.lane(0), set.lane(1), w.lane(1));
+    bytes2 = splat_u32x4(16909060).cast_u8x16();
+    println(
+        "cast: {} {} {}",
+        bytes2.lane(0),
+        bytes2.lane(3),
+        bytes2.cast_u32x4().lane(2)
+    );
+    Ok(0)
+}

@@ -1,0 +1,65 @@
+{ Alloc, AllocError } = std.mem
+{ Res, Ok, Range } = std.core
+{ Program, Func, Scalar, BasicBlock, Instruction, Terminator, Const, ForeignCall, NativeRecord } = gen.gen_ir
+{ Platform } = gen.gen_sys
+{ link } = gen.gen_jit_extern
+{ verify } = gen.gen_verify
+
+check* = (a: Alloc) Res<bool, AllocError> {
+    good ::= true;
+    ["malloc", "free"].loop((name) {
+        Range<usize>(0, 7).loop((case) {
+            slots ::= a.Vec<Scalar>();
+            input  = (case == 3).match({ true => Scalar.I32, false => name.eq(
+                "malloc"
+            ).match({ true => Scalar.U64, false => Scalar.Ptr }) });
+            output = (case == 4).match({ true => Scalar.U64, false => name.eq(
+                "malloc"
+            ).match({ true => Scalar.Ptr, false => Scalar.Unit }) });
+            [input, output, Scalar.I32].loop((ty) { slots.add(ty).try(); });
+            arguments ::= a.Vec<usize>();
+            (case != 5).then(() { arguments.add(0).try(); });
+            code ::= a.Vec<Instruction>();
+            code.add(Instruction.Constant(Const(out: 0, value: 0))).try();
+            code.add(Instruction.Foreign(ForeignCall(
+                out: 1,
+                symbol: name,
+                header: (case == 1).match({ true => "stddef.h", false => "stdlib.h" }),
+                args: arguments,
+                typed: case == 2,
+                library: (case == 6).match({ true => "other", false => "" })
+            ))).try();
+            code.add(Instruction.Constant(Const(out: 2, value: 0))).try();
+            blocks ::= a.Vec<BasicBlock>();
+            blocks.add(BasicBlock(
+                code: code,
+                exit: Terminator.Return(2)
+            )).try();
+            functions ::= a.Vec<Func>();
+            functions.add(Func(
+                name: "heap",
+                parameters: 0,
+                slots: slots,
+                blocks: blocks,
+                result: Scalar.I32
+            )).try();
+            program = Program(
+                functions: functions,
+                entry: 0,
+                natives: a.Vec<NativeRecord>()
+            );
+            good    = good && program.verify(
+                a
+            ).match({ Ok(_) => true, Err(_) => false });
+            [Platform.LinuxArm64, Platform.Darwin].loop((platform) {
+                result = link(a, program, platform).try();
+                good   = good && result.match({
+                    Ready(found) => case == 0 && found.stub == 0 && found.frame == 0,
+                    Refused(_)   => case != 0,
+                    Missing(_)   => false,
+                });
+            });
+        });
+    });
+    Ok(good)
+}

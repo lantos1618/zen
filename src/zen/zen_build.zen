@@ -9,7 +9,7 @@
 { Alloc, AllocError } = std.mem
 { str, String, dup } = std.text
 { Vec, Map } = std.collections
-{ Res, Ok, None, loop, Range, Path } = std.core
+{ Res, Ok, None, loop, Range, Path, without_err } = std.core
 { Env, FsError, fs_message } = std.env
 
 { Ast } = std.ast.ast_arena
@@ -984,9 +984,33 @@ Build* = {
     run_jit = (self :: @Self, generation: Generation, argv: Vec<str>,
                report :: String) Res<usize, AllocError> {
         self.env.out.flush().ignore();
-        generation.run(report, argv).try().match({
+        generation.run(
+            report,
+            argv,
+            (source) { self.host_probe(source) }
+        ).try().match({
             None       => Ok(1),
             Ok(status) => { self.status = Ok(status); Ok(0) },
+        })
+    }
+
+    // The standard output of a gen_probe program built and run with the
+    // host C compiler. Header contents and compiler configuration can change
+    // between runs, so answers are read afresh before interpreting a program.
+    host_probe = (self: @Self, source: str) Res<String> {
+        command = self.alloc.String(
+            "set -e; t=$(mktemp -d); trap 'rm -rf \"$t\"' EXIT; {} -w -x c -o \"$t/probe\" - <<'ZEN_PROBE_EOF'\n{}\nZEN_PROBE_EOF\n\"$t/probe\"",
+            self.env.var("CC").value_or("cc"),
+            source
+        ).without_err().try();
+        done    = self.env.proc.run(
+            self.alloc,
+            "",
+            command.view()
+        ).without_err().try();
+        (done.code == 0).match({
+            true  => Ok(done.out),
+            false => { println("{}", done.err.view()); None },
         })
     }
 

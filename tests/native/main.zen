@@ -318,6 +318,23 @@ Runner = {
                 );
             });
         });
+        // As tests/run.py's LoopbackPeer and TlsLoopbackPeer: the jit
+        // compiles as the program starts, so tests/native/loopback.py
+        // writes its peer's port into the staged entry first.
+        self.jit().then(() {
+            loopback_kind(c.base).when_ok((kind) {
+                command.fmt(
+                    "python3 '{}/tests/native/loopback.py' {} '{}/{}' '{}/{}/{}' -- ",
+                    here,
+                    kind,
+                    here,
+                    dir,
+                    here,
+                    root.view(),
+                    c.entry
+                ).try();
+            });
+        });
         (!self.target.runner.is_empty()).then(
             () { command.fmt("{} ", self.target.runner).try(); }
         );
@@ -727,6 +744,17 @@ refused = (out: str) Res<str> {
 }
 
 max_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }
+
+// The loopback peer tests/run.py stages for a test: "tcp", "tls" or None.
+loopback_kind = (base: str) Res<str> {
+    base.ends_with("net/tcp_connect/main").match({
+        true  => Ok("tcp"),
+        false => base.ends_with("net/tls_connect/main").match({
+            true  => Ok("tls"),
+            false => None,
+        }),
+    })
+}
 
 first_line = (text: str) str {
     text.split_once('\n').match({ Ok(pair) => pair.before, None => text })

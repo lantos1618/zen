@@ -24,14 +24,28 @@
 
 // Lower the program whose `main` is in module `entry`.
 lower* = (
-    alloc   : Alloc,
-    tree    : Ast,
-    check   : Checker,
-    entry   : usize,
+    alloc    : Alloc,
+    tree     : Ast,
+    check    : Checker,
+    entry    : usize,
     // The target links C (see Lowerer.c_calls).
-    c_calls : bool
+    c_calls  : bool,
+    // The target runs machine instructions (see Lowerer.machines).
+    machines : bool
 ) Res<Program, LowerError> {
-    lower_native(alloc, tree, check, entry, c_calls)
+    lower_native(alloc, tree, check, entry, c_calls, machines, false, false)
+}
+
+// Lower for a target that links no C but calls C functions by symbol (the
+// jit). Header constants and native records lower as for C, for the host
+// C compiler to answer (gen_probe) before the program runs.
+lower_hosted* = (
+    alloc : Alloc,
+    tree  : Ast,
+    check : Checker,
+    entry : usize
+) Res<Program, LowerError> {
+    lower_native(alloc, tree, check, entry, false, true, true, true)
 }
 
 Fault* = { span*: Span, what*: str }

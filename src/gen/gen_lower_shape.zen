@@ -302,9 +302,10 @@ behaviour_only* = (s: Struct) bool {
 
 // A `c.record`: the header owns its size, alignment and field offsets, so
 // its layout names the record and the C compiler measures it
-// (`NativeLayout`). Only a target with a C compiler can.
+// (`NativeLayout`). Only a target with a C compiler can, or one whose host
+// C compiler measures it after lowering (gen_probe).
 native_record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
-    lo.c_calls.ensure(unsupported(
+    (lo.c_calls || lo.probe).ensure(unsupported(
         s.name.span,
         "a native C record on a target without C"
     )).try();

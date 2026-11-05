@@ -108,6 +108,7 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<AllocError> {
         },
         NativeLayout(_)      => Ok,
         NativeClear(_)       => Ok,
+        Opaque(value)        => out.add(value.source),
     })
 }
 
@@ -142,6 +143,7 @@ written* = (instruction: Instruction) Res<usize> {
         Machine(call)       => Ok(call.out),
         NativeLayout(value) => Ok(value.out),
         NativeClear(slot)   => Ok(slot),
+        Opaque(value)       => Ok(value.out),
         // Listed one by one, without a default: an instruction added to the
         // IR must say what it writes, or liveness would miss the write.
         PrintValue(_)       => None,

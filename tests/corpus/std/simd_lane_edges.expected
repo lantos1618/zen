@@ -1,0 +1,9 @@
+u8 wrap: 3 3
+u8 borrow: 254
+u64 wrap: 18446744073709551613 9
+shl 31: 2147483648 0
+shl 32: 0 shr 40: 0
+rotl 0: 2 rotl 33: 1
+rotr 1: 2147483648 rotr 32: 4294967295
+with_lane: 1 7 2
+cast: 4 1 16909060

@@ -412,11 +412,35 @@ renderer with no semantic work:
   the program, then runs it in the compiler: every slot is a cell in a mapped
   frame stack, memory is real host memory, and system calls go through
   `std.sys` with the IR's -errno convention. Output buffering, trap reports,
-  exit 134 and the exit hook follow the C runtime. `refused_by_jit` refuses
+  exit 134 and the exit hook follow the C runtime. A `Foreign` call (the C
+  function's symbol, header, argument slots and `library`) is resolved with
+  dlopen/dlsym before the program runs (`gen_jit_extern`) and called through
+  a stub that follows the System V x86-64 ABI. Exact standard-library
+  `malloc` and `free` signatures use typed host calls on every supported JIT
+  platform and require no executable stub. Other hosts refuse general C calls
+  by name. Header constants and native record layouts are answered by the host
+  C compiler: `gen_probe` writes one C program that prints them, the driver
+  builds and runs it with `CC` (or `cc`) in a temporary directory, and the
+  numbers replace `NativeConst`/`NativeLayout`. Answers are refreshed for each
+  run so changed headers or compiler settings cannot reuse a stale layout.
+  A missing host compiler produces a probe diagnostic. `refused_by_jit` refuses
   threads, JavaScript host calls, printing f64 and f64
-  `%` before anything runs. On x86_64-linux the native corpus runner's `jit`
-  target passes 870 of 1136 programs; 265 are refused and 1 needs a fixture
-  that only tests/run.py stages. Before running, the interpreter applies the
+  `%`, 128-bit C arguments or results, and native records requiring more than
+  16-byte alignment before anything runs. The C-call
+  stub is published only after executable-memory protection succeeds.
+  It runs std.simd's `Instruction.Machine`
+  operations lane by lane on 16-aligned blocks, and `CpuHas` always answers
+  absent, so feature-gated code takes its portable path. The lowering's
+  `machines` capability (on for C and the jit, off for asm and JS) decides
+  whether a Machine call is emitted; asm and JS refuse it by name. std.ct's
+  barriers lower to `Instruction.Opaque`: IR-C renders its empty-asm
+  barrier, the jit runs it as an opaque identity, and asm and JS refuse it
+  by name, as they do Secret parameters (`IrFeature.Secrets`). On
+  x86_64-linux the native corpus runner's `jit` target passes 1087 of 1141
+  programs; 53 are refused by name and one is listed in
+  `tests/native/jit-known-failures.txt` (a C library calling back into Zen).
+  The host must provide `arc4random_buf` for the standard entropy API.
+  Before running, the interpreter applies the
   asm backend's `prepare` (with `simplify`), then `gen_jit_decode` encodes each
   function once into 64-byte word steps: frame offsets, block targets, call
   argument tables and parameter sizes are resolved, comparisons are fused with
@@ -436,10 +460,35 @@ renderer with no semantic work:
   slope and its 95% interval. The JS row is Zen's generated JS, which
   emulates 64-bit integers, not hand-written JS; the CPython map row mostly
   measures Python's C dict.
-- **Tier 1:** an in-memory encoder that reuses the asm backend's instruction
-  selection and register allocation, and writes machine code bytes instead of
-  text into `mmap`ed pages (W^X, with `MAP_JIT` plus
-  `pthread_jit_write_protect_np` on Darwin arm64).
+- **Tier 1:** `gen_jit_native` emits x86-64 and AArch64 bytes directly for
+  closed groups of word functions. It supports integer arithmetic, comparisons,
+  casts, 32/64-bit rotations, word loads/stores, explicit traps and direct calls.
+  Unsupported functions stay in the interpreter. The assembly backend's
+  register allocator assigns register, constant and stack homes; the native
+  encoders preserve its callee-saved registers around the two-pointer entry ABI.
+  Unchecked word operations write allocated registers directly where the target
+  permits it. Shared address analysis folds single-use pointer arithmetic into
+  loads and stores, preserving the access's own field offset. A comparison used
+  only by the following branch does not materialize a temporary boolean.
+  Checked arithmetic retains its source-positioned trap path.
+  Effectful groups must have an acyclic call tree of depth at most 128. Pure
+  recursion can refuse at that depth and restart in the interpreter with its
+  unchanged arguments. Native arithmetic and explicit traps carry their original
+  source position and unwind without replaying writes. Only slots referenced by the
+  prepared IR receive storage. A function
+  requires at most 4,080 bytes for its local and outgoing argument area so
+  both encoders can address its frame directly. Saved registers have separate
+  storage; AArch64 stack adjustment also covers a frame that crosses 4 KiB.
+  `gen_jit_memory` owns publication: Linux changes RW pages to RX, while Darwin
+  uses `MAP_JIT`, thread-local write protection and instruction-cache
+  invalidation. A failed publication leaves execution in the interpreter.
+  The native tests exercise both encoders, calling conventions, overflow and
+  protection failures; AArch64 Linux execution and cache publication can also
+  run under QEMU. The `native-jit-macos` CI job checks actual Apple Silicon
+  execution and compares a complete JIT SHA-256 run with C.
+  Sharing instruction selection with the text assembly writers remains work
+  to do, as do native aggregate, floating-point and recursive effectful calls.
+  Those limits must remain visible in benchmarks.
 - **Alternative:** LLVM ORC via zen-llvm. The IR contract is the same, so the
   choice can wait.
 

@@ -1,0 +1,59 @@
+// Relations and machine flags shared by native instruction selectors.
+// Targets own the spelling and bit encoding of each condition.
+Relation* = { Equal | NotEqual | Less | LessEqual | Greater | GreaterEqual,
+    reversed* = (self: @Self) Relation {
+        self.match({
+            Equal        => Relation.Equal,
+            NotEqual     => Relation.NotEqual,
+            Less         => Relation.Greater,
+            LessEqual    => Relation.GreaterEqual,
+            Greater      => Relation.Less,
+            GreaterEqual => Relation.LessEqual,
+        })
+    }
+
+    condition* = (self: @Self, is_signed: bool, swapped: bool) Condition {
+        ordered = swapped.match({ true => self.reversed(), false => self });
+        ordered.match({
+            Equal        => Condition.Equal,
+            NotEqual     => Condition.NotEqual,
+            Less         => is_signed.match({ true => Condition.Less, false => Condition.Below }),
+            LessEqual    => is_signed.match({ true => Condition.LessEqual, false => Condition.BelowEqual }),
+            Greater      => is_signed.match({ true => Condition.Greater, false => Condition.Above }),
+            GreaterEqual => is_signed.match({ true => Condition.GreaterEqual, false => Condition.AboveEqual }),
+        })
+    }
+}
+
+// Below/Above compare unsigned words; Less/Greater compare signed words.
+// Arithmetic selectors choose their architecture's carry/borrow condition
+// explicitly. Unconditional transfers are separate from flag conditions.
+Condition* = { Equal
+    | NotEqual
+    | Less
+    | LessEqual
+    | Greater
+    | GreaterEqual
+    | Below
+    | BelowEqual
+    | Above
+    | AboveEqual
+    | Overflow
+    | NoOverflow,
+    inverse* = (self: @Self) Condition {
+        self.match({
+            Equal        => Condition.NotEqual,
+            NotEqual     => Condition.Equal,
+            Less         => Condition.GreaterEqual,
+            LessEqual    => Condition.Greater,
+            Greater      => Condition.LessEqual,
+            GreaterEqual => Condition.Less,
+            Below        => Condition.AboveEqual,
+            BelowEqual   => Condition.Above,
+            Above        => Condition.BelowEqual,
+            AboveEqual   => Condition.Below,
+            Overflow     => Condition.NoOverflow,
+            NoOverflow   => Condition.Overflow,
+        })
+    }
+}

@@ -76,3 +76,18 @@ Short, current facts that save the next person (or agent) an hour. Delete an ent
 - **Built-in words are tokens.** `true`, `false` and `_` lex as their own kinds, so the parser, checker and lowering never compare text; only the lexer turns words into kinds.
 - **`.then` takes a body, not a value.** `.then(h.break())` would break immediately; the body has to run only when true. The spec allows `.then({ h.break() })`; stage 0 needs `() { .. }`.
 - **Missing in std, for our own:** `is_ok()` on `Res` (today `.match({ Ok(_) => true, None => false })`).
+
+## Slice 3: imports, env.out.println, Res<IoError>, .try()
+
+| Fact | So write |
+|---|---|
+| There is no `return`; `.try()` is the only early exit | pick a branch with `.match({ true => self.a(..), false => self.b(..) })`, each arm a method |
+| A variant named like any std name (`Env`, `Path`, `Err`) is read as that name | `EnvType`, `Module`, `Stderr`: spell it as what it is here |
+| `T.from_discriminant(k)` takes a `u64` and gives `Res<T>` | loop `Range(T.FIRST, T.END)` with `FIRST*: u64` constants on the type, to look a variant up by name |
+| A function on a type needs no `self` | `Library.find(name, module)`: lookups live on the closed set they search |
+| Constants on a type cross modules only with `*` | `FIRST*: u64 = 1` |
+| A Vec<u8> is a str through `str_at(v.ptr(), v.len)` | no copy to print a global's bytes |
+
+- **One exit code can't mean two things.** `tests/fresh.sh` read exit 1 as "refused", so a program whose `main` returns `Err` looked refused. `zen --check` now decides refusal, and the run is separate.
+- **A mutation that's caught for the wrong reason is a gap.** An unknown call resolved to the first function was "caught" only because that function took no arguments; the test now has a one-argument function first.
+- **Formats are pieces, read once.** `Format.pieces()` is shared by check (holes against arguments, errors at the hole) and lower (one write per piece), so the two can't disagree about where a hole is.

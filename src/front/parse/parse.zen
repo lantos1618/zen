@@ -41,7 +41,7 @@ parse* = (a: Alloc, text: str) Res<Tree, ParseError> {
     roots ::= a.Vec<u32>();
     Range(0, Limits.PARSE_ITEMS).loop((h, _) {
         p.peek().kind.is(Kind.End).then(() { h.break() });
-        d = p.declaration().try();
+        d = p.peek().kind.is(Kind.LBrace).match({ true => p.import().try(), false => p.declaration().try() });
         roots.push(d).try();
     });
     Ok(Tree(source: Source(text: text), nodes: p.nodes, children: p.children, roots: roots))
@@ -103,7 +103,31 @@ Parser = {
 
     // ---- the grammar
 
-    // declaration = Name "=" "(" parameters ")" type block
+    // import = "{" Name ("," Name)* ","? "}" "=" Name ("." Name)*
+    import = (self :: @Self) Res<u32, ParseError> {
+        open = self.expect(Kind.LBrace, "`{`").try();
+        names ::= self.a.Vec<u32>();
+        self.comma_list(names, Kind.RBrace, "`,` or `}`", () { self.imported() }).try();
+        self.expect(Kind.Assign, "`=`").try();
+        first = self.expect(Kind.Name, "a module path").try();
+        last ::= first;
+        Range(0, Limits.PARSE_ITEMS).loop((h, _) {
+            (!self.accept(Kind.Dot)).then(() { h.break() });
+            last = self.expect(Kind.Name, "a module name").try();
+        });
+        kids ::= self.a.Vec<u32>();
+        path = self.add(NodeKind.Module, first.start, last.end, self.a.Vec<u32>()).try();
+        kids.push(path).try();
+        names.loop((n) { kids.push(n).try(); });
+        self.add(NodeKind.Import, open.start, last.end, kids)
+    }
+
+    imported = (self :: @Self) Res<u32, ParseError> {
+        name = self.expect(Kind.Name, "a name to import").try();
+        self.leaf(NodeKind.Name, name)
+    }
+
+    // declaration = Name "=" "(" parameters ")" type? block
     declaration = (self :: @Self) Res<u32, ParseError> {
         name = self.expect(Kind.Name, "a declaration name").try();
         self.expect(Kind.Assign, "`=`").try();
@@ -112,8 +136,10 @@ Parser = {
         named = self.leaf(NodeKind.Name, name).try();
         kids.push(named).try();
         self.parameters(kids).try();
-        result = self.type_name().try();
-        kids.push(result).try();
+        (!self.peek().kind.is(Kind.LBrace)).then(() {
+            result = self.type_name().try();
+            kids.push(result).try();
+        });
         body = self.block().try();
         kids.push(body).try();
         self.add(NodeKind.Function, name.start, self.span(body).end, kids)
@@ -148,26 +174,46 @@ Parser = {
         self.add(NodeKind.Param, name.start, name.end, kids)
     }
 
-    // type = Name
+    // type = Name ("<" type ">")?
     type_name = (self :: @Self) Res<u32, ParseError> {
         t = self.expect(Kind.Name, "a type").try();
-        self.leaf(NodeKind.Name, t)
+        kids ::= self.a.Vec<u32>();
+        self.accept(Kind.Lt).then(() {
+            argument = self.type_name().try();
+            kids.push(argument).try();
+            self.expect(Kind.Gt, "`>`").try();
+        });
+        self.add(NodeKind.Name, t.start, t.end, kids)
     }
 
-    // block = "{" statement* expression "}"
+    // block = "{" (statement | expression ";")* expression? "}"
     block = (self :: @Self) Res<u32, ParseError> {
         open = self.expect(Kind.LBrace, "`{`").try();
         kids ::= self.a.Vec<u32>();
         Range(0, Limits.PARSE_ITEMS).loop((h, _) {
+            self.peek().kind.is(Kind.RBrace).then(() { h.break() });
             binding = self.peek().kind.is(Kind.Name) && self.ahead(1).kind.is(Kind.Assign);
-            (!binding).then(() { h.break() });
-            s = self.statement().try();
-            kids.push(s).try();
+            binding.then(() {
+                s = self.statement().try();
+                kids.push(s).try();
+            });
+            (!binding).then(() {
+                e = self.expression().try();
+                ends = !self.accept(Kind.Semi);
+                kept = ends.match({ true => e, false => self.wrap(NodeKind.Do, e).try() });
+                kids.push(kept).try();
+                ends.then(() { h.break() });
+            });
         });
-        e = self.expression().try();
-        kids.push(e).try();
-        close = self.expect(Kind.RBrace, "`}`").try();
+        close = self.expect(Kind.RBrace, "`;` or `}`").try();
         self.add(NodeKind.Block, open.start, close.end, kids)
+    }
+
+    // A node of `kind` with one child, spanning it.
+    wrap = (self :: @Self, kind: NodeKind, id: u32) Res<u32, ParseError> {
+        one ::= self.a.Vec<u32>();
+        one.push(id).try();
+        self.add(kind, self.span(id).start, self.span(id).end, one)
     }
 
     // statement = Name "=" expression ";"
@@ -217,7 +263,7 @@ Parser = {
         self.add(NodeKind.Binary(op), self.span(left).start, self.span(right).end, kids)
     }
 
-    // primary = atom ("." "match" "(" groups ")")*
+    // primary = atom ("." method)*
     primary = (self :: @Self) Res<u32, ParseError> {
         e ::= self.atom().try();
         Range(0, Limits.PARSE_ITEMS).loop((h, _) {
@@ -227,13 +273,34 @@ Parser = {
         Ok(e)
     }
 
-    // Only `.match` exists so far.
+    // method = "match" "(" groups ")" | Name "(" arguments ")" | Name, after the "."
     method = (self :: @Self, subject: u32) Res<u32, ParseError> {
-        name = self.expect(Kind.Name, "a method name").try();
-        self.word(name).eq("match").ensure(unexpected(name, "`match`, the only method so far")).try();
-        self.expect(Kind.LParen, "`(`").try();
+        name = self.expect(Kind.Name, "a field or method name").try();
         kids ::= self.a.Vec<u32>();
         kids.push(subject).try();
+        self.word(name).eq("match").match({
+            true  => self.matching(subject, kids),
+            false => self.access(subject, name, kids),
+        })
+    }
+
+    // subject.name or subject.name(arguments), after the name
+    access = (self :: @Self, subject: u32, name: Token, kids :: Vec<u32>) Res<u32, ParseError> {
+        named = self.leaf(NodeKind.Name, name).try();
+        kids.push(named).try();
+        start = self.span(subject).start;
+        self.accept(Kind.LParen).match({
+            false => self.add(NodeKind.Field, start, name.end, kids),
+            true  => {
+                close = self.comma_list(kids, Kind.RParen, "`,` or `)`", () { self.expression() }).try();
+                self.add(NodeKind.Method, start, close.end, kids)
+            },
+        })
+    }
+
+    // The groups of subject.match( groups ), after the "match".
+    matching = (self :: @Self, subject: u32, kids :: Vec<u32>) Res<u32, ParseError> {
+        self.expect(Kind.LParen, "`(`").try();
         Range(0, Limits.PARSE_ITEMS).loop((h, _) {
             self.group(kids).try();
             (!self.accept(Kind.Comma)).then(() { h.break() });
@@ -280,6 +347,7 @@ Parser = {
         t = self.peek();
         t.kind.match({
             Int    => { self.at = self.at + 1; self.leaf(NodeKind.Int, t) },
+            Str    => { self.at = self.at + 1; self.leaf(NodeKind.Str, t) },
             Name   => { self.at = self.at + 1; self.name_or_call(t) },
             True   => { self.at = self.at + 1; self.leaf(NodeKind.True, t) },
             False  => { self.at = self.at + 1; self.leaf(NodeKind.False, t) },

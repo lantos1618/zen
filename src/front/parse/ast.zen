@@ -8,16 +8,22 @@
 { Source } = front.parse.source
 
 NodeKind* = {
-    | Function      // name = (params) result { body }: the name, params, result, body
+    | Import        // { names } = module: the module, then the names
+    | Module        // std.io: a module path, read as one span
+    | Function      // name = (params) result { body }: the name, params, result if written, body
     | Param         // name: type: one child, the type
-    | Block         // { statements; tail }: the Let statements, then the tail expression
+    | Block         // { statements tail }: Let and Do statements, then the tail if there is one
     | Let           // name = value;: the name, then the value
+    | Do            // value;: one child, run for its effect
     | Call          // callee(args): the callee, then the arguments
+    | Field         // subject.name: the subject, then the name
+    | Method        // subject.name(args): the subject, the name, then the arguments
     | Match         // subject.match(arms): the subject, then the arms
     | Arm           // pattern => value: two children; a positional body { value }: one
     | Binary: BinaryOp
-    | Name
+    | Name          // a type name may have one child, its argument: Res<IoError>
     | Int
+    | Str
     | True
     | False
     | Wildcard      // the pattern _
@@ -72,6 +78,8 @@ Tree* = {
             Name      => println("Name {}", self.text(n)),
             Param     => println("Param {}", self.text(n)),
             Int       => println("Int {}", self.text(n)),
+            Str       => println("Str {}", self.text(n)),
+            Module    => println("Module {}", self.text(n)),
             Binary(o) => println("Binary {}", o.variant_name()),
             _         => println("{}", n.kind.variant_name()),
         });

@@ -1,12 +1,15 @@
-// ZEN_LANGUAGE.md §3–§5, the part the first programs need. Every name resolves; values
-// are i32 or bool; calls match their function; a bool match covers true and false and its
-// arms agree; `main` exists. The result, a Program, is what lowering reads.
+// ZEN_LANGUAGE.md §3–§5 and §12, the part the first programs need. Every name resolves;
+// calls match their function; a bool match covers true and false and its arms agree; a
+// format's holes match its arguments; a Res<IoError> is never dropped; `main` exists. The
+// result, a Program, is what lowering reads.
 
 { Res, Ok, Err, None, Range, Eq, ensure, ok_or, to_usize, to_u64, to_i32, truncate_u32 } = std.core
 { Alloc, AllocError } = std.mem
 { Vec, Map } = std.collections
 { str } = std.text
 { Tree, Node, NodeKind, BinaryOp } = front.parse.ast
+{ Format, Piece, Span } = front.check.format
+{ Library, Failure, Stream } = front.check.library
 
 // What is wrong, and where: "wrong number of arguments".
 CheckError* = { at*: u32, message*: str }
@@ -14,6 +17,11 @@ CheckError* = { at*: u32, message*: str }
 Type* = {
     | I32 = 1
     | Bool = 2
+    | Unit = 3          // no value: a function without a result type, a statement
+    | Environment = 4   // Env, main's capabilities
+    | Status = 5        // Res<IoError>: Ok, or an IoError
+    | IoFailure = 6     // an IoError value
+    | Writer = 7        // env.out or env.err
 }
 
 Type.impl(Eq, { eq = (self: @Self, other: @Self) bool { self.discriminant() == other.discriminant() } })
@@ -50,23 +58,31 @@ Decl* = { node*: Node, name*: str, params*: Vec<str>, types*: Vec<Type>, result*
 Program* = {
     tree*: Tree,
     decls*: Vec<Decl>,
-    index: Map<str, u32>,        // name -> position in decls
+    index: Map<str, u32>,           // name -> position in decls
+    imports: Map<str, Library>,     // imported name -> what it is
 
     find* = (self: @Self, name: str) Res<u32> { self.index.get(name) }
     decl* = (self: @Self, k: u32) Res<Decl> { self.decls.get(k.to_usize()) }
+    imported* = (self: @Self, name: str) Res<Library> { self.imports.get(name) }
 }
 
 check* = (a: Alloc, tree: Tree) Res<Program, CheckError> {
-    c = Checker(a: a, tree: tree);
-    p = c.collect().try();
-    p.decls.loop((d) { c.function(p, d).try(); });
-    p.find("main").ok_or(CheckError(at: 0, message: "a program needs `main`")).try();
+    p = Checker(a: a, tree: tree, result: Type.Unit).collect().try();
+    p.decls.loop((d) { Checker(a: a, tree: tree, result: d.result).function(p, d).try(); });
+    k = p.find("main").ok_or(CheckError(at: 0, message: "a program needs `main`")).try();
+    main = p.decl(k).ok_or(CheckError(at: 0, message: "a program needs `main`")).try();
+    env = main.types.get(0).match({ Ok(t) => t == Type.Environment, None => false });
+    takes = main.types.len == 0 || main.types.len == 1 && env;
+    gives = main.result == Type.I32 || main.result == Type.Unit || main.result == Type.Status;
+    forms = "main is () i32, () or (env: Env) Res<IoError>";
+    (takes && gives).ensure(CheckError(at: main.node.start, message: forms)).try();
     Ok(p)
 }
 
 Checker = {
     a: Alloc,
     tree: Tree,
+    result: Type,           // the result type of the function being checked
 
     at = (self: @Self, n: Node, message: str) CheckError { CheckError(at: n.start, message: message) }
 
@@ -78,38 +94,91 @@ Checker = {
         self.tree.child(n, k).ok_or(self.at(n, "a malformed tree"))
     }
 
-    // The type a type name stands for.
-    type_named = (self: @Self, n: Node) Res<Type, CheckError> {
-        name = self.tree.text(n);
-        name.eq("i32").match({
-            true  => Ok(Type.I32),
-            false => name.eq("bool").match({ true => Ok(Type.Bool), false => Err(self.at(n, "unknown type")) }),
-        })
+    root = (self: @Self, r: u32) Res<Node, CheckError> {
+        self.tree.node(r).ok_or(CheckError(at: 0, message: "a malformed tree"))
     }
 
-    // Every declaration's name, parameters and result type; a name declared twice is an error.
+    // ---- declarations
+
+    // Imports first, so any declaration may use what they name; then each function's
+    // signature. A name declared twice is an error.
     collect = (self: @Self) Res<Program, CheckError> {
+        imports ::= self.a.Map<str, Library>();
+        self.tree.roots.loop((r) {
+            n = self.root(r).try();
+            n.kind.match({ Import => { self.import(imports, n).try(); }, _ => () });
+        });
         decls ::= self.a.Vec<Decl>();
         index ::= self.a.Map<str, u32>();
         self.tree.roots.loop((r) {
-            n = self.tree.node(r).ok_or(CheckError(at: 0, message: "a malformed tree")).try();
-            name = self.tree.text(self.child(n, 0).try());
-            first = index.get(name).match({ Ok(_) => false, None => true });
-            first.ensure(self.at(n, "this name is already declared")).try();
-            params ::= self.a.Vec<str>();
-            types ::= self.a.Vec<Type>();
-            Range(1, n.count - 2).loop((k) {
-                p = self.child(n, k).try();
-                self.memory(params.add(self.tree.text(p))).try();
-                t = self.type_named(self.child(p, 0).try()).try();
-                self.memory(types.add(t)).try();
-            });
-            result = self.type_named(self.child(n, n.count - 2).try()).try();
-            self.memory(index.set(name, decls.len.truncate_u32())).try();
-            self.memory(decls.add(Decl(node: n, name: name, params: params, types: types, result: result))).try();
+            n = self.root(r).try();
+            n.kind.match({ Function => {
+                d = self.declare(imports, n).try();
+                index.get(d.name).match({ Ok(_) => false, None => true })
+                    .ensure(self.at(n, "this name is already declared")).try();
+                self.memory(index.set(d.name, decls.len.truncate_u32())).try();
+                self.memory(decls.add(d)).try();
+            }, _ => () });
         });
-        Ok(Program(tree: self.tree, decls: decls, index: index))
+        Ok(Program(tree: self.tree, decls: decls, index: index, imports: imports))
     }
+
+    // { names } = module: each name is one the module has.
+    import = (self: @Self, imports :: Map<str, Library>, n: Node) Res<(), CheckError> {
+        module = self.tree.text(self.child(n, 0).try());
+        Range(1, n.count).loop((k) {
+            named = self.child(n, k).try();
+            name = self.tree.text(named);
+            l = Library.find(name, module).ok_or(self.at(named, "this module has no such name")).try();
+            self.memory(imports.set(name, l)).try();
+        });
+        Ok
+    }
+
+    // name = (params) result? { body }: the result is written when the child before the
+    // body is a type name, not a parameter or the function's own name.
+    declare = (self: @Self, imports: Map<str, Library>, n: Node) Res<Decl, CheckError> {
+        before = self.child(n, n.count - 2).try();
+        written = n.count > 2 && before.kind.match({ Name => true, _ => false });
+        last = written.match({ true => n.count - 2, false => n.count - 1 });
+        params ::= self.a.Vec<str>();
+        types ::= self.a.Vec<Type>();
+        Range(1, last).loop((k) {
+            p = self.child(n, k).try();
+            self.memory(params.add(self.tree.text(p))).try();
+            t = self.type_named(imports, self.child(p, 0).try()).try();
+            self.memory(types.add(t)).try();
+        });
+        result = written.match({ true => self.type_named(imports, before).try(), false => Type.Unit });
+        name = self.tree.text(self.child(n, 0).try());
+        Ok(Decl(node: n, name: name, params: params, types: types, result: result))
+    }
+
+    // i32, bool, or an imported Env or Res<IoError>.
+    type_named = (self: @Self, imports: Map<str, Library>, n: Node) Res<Type, CheckError> {
+        name = self.tree.text(n);
+        name.eq("i32").match({
+            true  => Ok(Type.I32),
+            false => name.eq("bool").match({ true => Ok(Type.Bool), false => self.std_type(imports, n) }),
+        })
+    }
+
+    std_type = (self: @Self, imports: Map<str, Library>, n: Node) Res<Type, CheckError> {
+        l = imports.get(self.tree.text(n)).ok_or(self.at(n, "unknown type")).try();
+        (l == Library.EnvType).then(() { (n.count == 0).ensure(self.at(n, "Env takes no argument")).try(); });
+        ((l == Library.EnvType) || (l == Library.ResType)).ensure(self.at(n, "not a type")).try();
+        (l == Library.EnvType).match({ true => Ok(Type.Environment), false => self.status_type(imports, n) })
+    }
+
+    status_type = (self: @Self, imports: Map<str, Library>, n: Node) Res<Type, CheckError> {
+        argument = self.child(n, 0).try();
+        failure = imports.get(self.tree.text(argument))
+            .match({ Ok(l) => (l == Library.IoErrorType), None => false });
+        failure.ensure(self.at(argument, "only Res<IoError> so far")).try();
+        Ok(Type.Status)
+    }
+
+    // ---- bodies
 
     // The body's type is the declared result type.
     function = (self: @Self, p: Program, d: Decl) Res<(), CheckError> {
@@ -123,25 +192,44 @@ Checker = {
         (t == d.result).ensure(self.at(body, "the body's type is not the declared result type"))
     }
 
-    // Each binding adds a name; the block's type is its tail's.
+    // Statements run in order; a block's type is its tail's, or Unit without one.
     block = (self: @Self, p: Program, names :: Scope<Type>, b: Node) Res<Type, CheckError> {
-        Range(0, b.count - 1).loop((k) {
-            binding = self.child(b, k).try();
-            t = self.expression(p, names, self.child(binding, 1).try()).try();
-            self.memory(names.bind(self.tree.text(self.child(binding, 0).try()), t)).try();
+        t ::= Type.Unit;
+        Range(0, b.count).loop((k) {
+            s = self.child(b, k).try();
+            s.kind.match({
+                Let => { self.binding(p, names, s).try(); t = Type.Unit; },
+                Do  => { self.statement(p, names, s).try(); t = Type.Unit; },
+                _   => { t = self.expression(p, names, s).try(); },
+            });
         });
-        self.expression(p, names, self.child(b, b.count - 1).try())
+        Ok(t)
+    }
+
+    // name = value; adds a name.
+    binding = (self: @Self, p: Program, names :: Scope<Type>, s: Node) Res<(), CheckError> {
+        t = self.expression(p, names, self.child(s, 1).try()).try();
+        self.memory(names.bind(self.tree.text(self.child(s, 0).try()), t))
+    }
+
+    // value; runs for its effect, and a failure can't be dropped this way.
+    statement = (self: @Self, p: Program, names: Scope<Type>, s: Node) Res<(), CheckError> {
+        t = self.expression(p, names, self.child(s, 0).try()).try();
+        (!(t == Type.Status)).ensure(self.at(s, "this Res is dropped; .try() or .ignore() it"))
     }
 
     expression = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
         n.kind.match({
             Int       => self.int_literal(n),
-            Name      => self.name(names, n),
+            Name      => self.name(p, names, n),
             True      => Ok(Type.Bool),
             False     => Ok(Type.Bool),
             Binary(o) => self.binary(p, names, o, n),
             Call      => self.call(p, names, n),
             Match     => self.bool_match(p, names, n),
+            Field     => self.field(p, names, n),
+            Method    => self.method(p, names, n),
+            Str       => Err(self.at(n, "a string is only a format so far")),
             _         => Err(self.at(n, "not an expression")),
         })
     }
@@ -155,9 +243,16 @@ Checker = {
         Ok(Type.I32)
     }
 
-    // A name is a parameter or a binding.
-    name = (self: @Self, names: Scope<Type>, n: Node) Res<Type, CheckError> {
-        names.lookup(self.tree.text(n)).ok_or(self.at(n, "unknown name"))
+    // A name is a parameter, a binding, or the imported Ok.
+    name = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
+        text = self.tree.text(n);
+        names.lookup(text).match({
+            Ok(t) => Ok(t),
+            None  => {
+                ok = p.imported(text).match({ Ok(l) => (l == Library.OkValue), None => false });
+                ok.match({ true => Ok(Type.Status), false => Err(self.at(n, "unknown name")) })
+            },
+        })
     }
 
     // Arithmetic and ordering need i32; == and != need two values of one type.
@@ -171,11 +266,17 @@ Checker = {
         Ok(o.is_comparison().match({ true => Type.Bool, false => Type.I32 }))
     }
 
-    // The callee is a declared function, and each argument has its parameter's type.
+    // Err(an IoError), or a declared function with each argument of its parameter's type.
     call = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
+        text = self.tree.text(self.child(n, 0).try());
+        err = p.imported(text).match({ Ok(l) => (l == Library.ErrCall), None => false });
+        err.match({ true => self.failure(p, names, n), false => self.function_call(p, names, n) })
+    }
+
+    function_call = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
         callee = self.child(n, 0).try();
-        k = p.find(self.tree.text(callee)).ok_or(self.at(callee, "unknown function")).try();
-        target = p.decl(k).ok_or(self.at(callee, "unknown function")).try();
+        k = p.find(self.tree.text(callee)).ok_or(self.at(callee, "unknown name")).try();
+        target = p.decl(k).ok_or(self.at(callee, "unknown name")).try();
         (n.count - 1 == target.params.len.truncate_u32()).ensure(self.at(n, "wrong number of arguments")).try();
         Range(1, n.count).loop((i) {
             arg = self.child(n, i).try();
@@ -184,6 +285,106 @@ Checker = {
             (given == want).ensure(self.at(arg, "wrong argument type")).try();
         });
         Ok(target.result)
+    }
+
+    // Err(e), where e is an IoError.
+    failure = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
+        (n.count == 2).ensure(self.at(n, "Err takes one IoError")).try();
+        e = self.child(n, 1).try();
+        (self.expression(p, names, e).try() == Type.IoFailure).ensure(self.at(e, "Err takes an IoError")).try();
+        Ok(Type.Status)
+    }
+
+    // IoError.<variant>, or env.out and env.err.
+    field = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
+        subject = self.child(n, 0).try();
+        named = self.child(n, 1).try();
+        failures = subject.kind.match({ Name => true, _ => false })
+            && names.lookup(self.tree.text(subject)).match({ Ok(_) => false, None => true })
+            && p.imported(self.tree.text(subject)).match({ Ok(l) => (l == Library.IoErrorType), None => false });
+        failures.match({ true => self.failure_value(named), false => self.stream(p, names, subject, named) })
+    }
+
+    failure_value = (self: @Self, named: Node) Res<Type, CheckError> {
+        Failure.find(self.tree.text(named)).ok_or(self.at(named, "IoError has no such variant")).try();
+        Ok(Type.IoFailure)
+    }
+
+    stream = (self: @Self, p: Program, names: Scope<Type>, subject: Node, named: Node) Res<Type, CheckError> {
+        holder = self.expression(p, names, subject).try();
+        stream = Stream.find(self.tree.text(named)).match({ Ok(_) => true, None => false });
+        streams = holder == Type.Environment && stream;
+        streams.ensure(self.at(named, "no such field")).try();
+        Ok(Type.Writer)
+    }
+
+    // writer.println(..), status.try(), status.ignore().
+    method = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
+        receiver = self.expression(p, names, self.child(n, 0).try()).try();
+        named = self.child(n, 1).try();
+        (receiver == Type.Writer).match({
+            true  => self.writer_method(p, names, n, named),
+            false => self.status_method(receiver, n, named),
+        })
+    }
+
+    writer_method = (self: @Self, p: Program, names: Scope<Type>, n: Node, named: Node) Res<Type, CheckError> {
+        self.tree.text(named).eq("println").ensure(self.at(named, "no such method")).try();
+        self.println(p, names, n)
+    }
+
+    // .try() returns the failure from this function; .ignore() drops it on purpose.
+    status_method = (self: @Self, receiver: Type, n: Node, named: Node) Res<Type, CheckError> {
+        ignoring = self.tree.text(named).eq("ignore");
+        trying = self.tree.text(named).eq("try");
+        (receiver == Type.Status && n.count == 2 && (ignoring || trying))
+            .ensure(self.at(named, "no such method")).try();
+        (ignoring || self.result == Type.Status)
+            .ensure(self.at(named, ".try() needs this function to return Res<IoError>")).try();
+        Ok(Type.Unit)
+    }
+
+    // writer.println(format, args): each `{}` takes the next argument, each `{name}` reads a
+    // binding, and every argument fills exactly one hole.
+    println = (self: @Self, p: Program, names: Scope<Type>, n: Node) Res<Type, CheckError> {
+        format = self.child(n, 2).try();
+        format.kind.match({ Str => true, _ => false })
+            .ensure(self.at(format, "a format is a string literal")).try();
+        self.tree.text(format).find('\\').match({ Ok(_) => false, None => true })
+            .ensure(self.at(format, "escapes in a format come with str")).try();
+        pieces = self.pieces(format).try();
+        next :: u32 = 3;
+        pieces.loop((piece) {
+            piece.match({
+                Text(_)  => (),
+                Next(at) => {
+                    arg = self.tree.child(n, next)
+                        .ok_or(CheckError(at: at, message: "this hole has no argument")).try();
+                    self.printable(self.expression(p, names, arg).try(), arg.start).try();
+                    next = next + 1;
+                },
+                Named(s) => {
+                    t = names.lookup(self.spelled(s))
+                        .ok_or(CheckError(at: s.start, message: "unknown name")).try();
+                    self.printable(t, s.start).try();
+                },
+            });
+        });
+        self.tree.child(n, next).match({
+            Ok(extra) => Err(self.at(extra, "this argument has no hole")),
+            None      => Ok(Type.Status),
+        })
+    }
+
+    pieces = (self: @Self, format: Node) Res<Vec<Piece>, CheckError> {
+        f = Format(source: self.tree.source, start: format.start, end: format.end);
+        f.pieces(self.a).match({ Ok(v) => Ok(v), Err(_) => Err(CheckError(at: 0, message: "out of memory")) })
+    }
+
+    spelled = (self: @Self, s: Span) str { self.tree.source.text.slice(s.start.to_usize(), s.end.to_usize()) }
+
+    printable = (self: @Self, t: Type, at: u32) Res<(), CheckError> {
+        (t == Type.I32 || t == Type.Bool).ensure(CheckError(at: at, message: "only i32 and bool print so far"))
     }
 
     // A bool match: two positional bodies, or arms that cover true and false (or `_`).

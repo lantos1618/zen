@@ -1,0 +1,83 @@
+// What a program can name from std so far, before our own std exists (COMPILER.md L).
+// Each is a closed set: what may be imported, how a write fails, where it goes.
+//
+// Stage 0 reads a variant called `Env` as std's Env, so these variants are spelled
+// differently from the names they stand for; `name()` gives the name in source.
+
+{ Res, Ok, None, Range, Eq } = std.core
+{ str } = std.text
+
+Library* = {
+    | ResType = 1
+    | OkValue = 2
+    | ErrCall = 3
+    | IoErrorType = 4
+    | EnvType = 5,
+
+    FIRST: u64 = 1
+    END: u64 = 6
+
+    name* = (self: @Self) str {
+        self.match({
+            ResType     => "Res",
+            OkValue     => "Ok",
+            ErrCall     => "Err",
+            IoErrorType => "IoError",
+            EnvType     => "Env",
+        })
+    }
+
+    module* = (self: @Self) str { self.match({ EnvType => "std.env", _ => "std.core" }) }
+
+    // What `{ name } = module` imports, if module has it.
+    find* = (name: str, module: str) Res<Library> {
+        found :: Res<Library> = None;
+        Range(Library.FIRST, Library.END).loop((h, k) {
+            Library.from_discriminant(k).match({
+                Ok(l) => (l.name().eq(name) && l.module().eq(module)).then(() { found = Ok(l); h.break(); }),
+                None  => (),
+            });
+        });
+        found
+    }
+}
+
+Library.impl(Eq, { eq = (self: @Self, other: @Self) bool { self.discriminant() == other.discriminant() } })
+
+// std.core's IoError, by its discriminants: why a write failed. A Res<IoError> is 0 for
+// Ok and the discriminant for an Err.
+Failure* = {
+    | Closed = 1
+    | Full = 2
+    | Invalid = 3
+    | Interrupted = 4,
+
+    FIRST: u64 = 1
+    END: u64 = 5
+
+    // IoError.<name>, if there is one.
+    find* = (name: str) Res<Failure> {
+        found :: Res<Failure> = None;
+        Range(Failure.FIRST, Failure.END).loop((h, k) {
+            Failure.from_discriminant(k).match({
+                Ok(f) => f.variant_name().eq(name).then(() { found = Ok(f); h.break(); }),
+                None  => (),
+            });
+        });
+        found
+    }
+}
+
+// The Writers an Env holds, by the stream number the runtime writes to.
+Stream* = {
+    | Stdout = 1        // env.out
+    | Stderr = 2,       // env.err
+
+    // env.<field>, if it is a stream.
+    find* = (field: str) Res<Stream> {
+        field.eq("out").match({
+            true  => Ok(Stream.Stdout),
+            false => field.eq("err").match({ true => Ok(Stream.Stderr), false => None }),
+        })
+    }
+}

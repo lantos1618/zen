@@ -1,0 +1,47 @@
+// COMPILER.md L: the runtime functions lowered code imports, found by external name.
+// Each writes to one stream of an Env and answers 0, or the failing IoError's
+// discriminant. Failures are sticky, as in Go's bufio.Writer: once a write to a stream
+// fails, every later write to it fails the same way, so a line's last write reports it.
+
+{ Res, Ok, None, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ ScalarType } = ir.records
+
+Runtime* = {
+    | Write = 1         // zen_write(env, stream: U8, bytes: Pointer, len: U64) U8
+    | WriteI32 = 2      // zen_write_i32(env, stream: U8, value: I32) U8, in decimal
+    | WriteBool = 3,    // zen_write_bool(env, stream: U8, value: Bool) U8, as true or false
+
+    FIRST*: u64 = 1
+    END*: u64 = 4
+
+    external_name* = (self: @Self) str {
+        self.match({ Write => "zen_write", WriteI32 => "zen_write_i32", WriteBool => "zen_write_bool" })
+    }
+
+    parameters* = (self: @Self, a: Alloc) Res<Vec<ScalarType>, AllocError> {
+        types ::= a.Vec<ScalarType>();
+        types.add(ScalarType.Pointer).try();
+        types.add(ScalarType.U8).try();
+        self.match({
+            Write     => { types.add(ScalarType.Pointer).try(); types.add(ScalarType.U64).try(); },
+            WriteI32  => { types.add(ScalarType.I32).try(); },
+            WriteBool => { types.add(ScalarType.Bool).try(); },
+        });
+        Ok(types)
+    }
+
+    // The runtime function an import's external name is, if any.
+    find* = (name: str) Res<Runtime> {
+        found :: Res<Runtime> = None;
+        Range(Runtime.FIRST, Runtime.END).loop((h, k) {
+            Runtime.from_discriminant(k).match({
+                Ok(r) => r.external_name().eq(name).then(() { found = Ok(r); h.break(); }),
+                None  => (),
+            });
+        });
+        found
+    }
+}

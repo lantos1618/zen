@@ -251,6 +251,52 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(client.symbols(left), ["reopened"])
         self.assertEqual(client.symbols(right), ["right"])
 
+    def test_null_rootUri_falls_back_to_workspaceFolders(self):
+        # rootUri is deprecated in LSP in favour of workspaceFolders, and a
+        # client may send rootUri: null with workspaceFolders populated — VS
+        # Code over a remote connection does so when no folder is locked onto
+        # the client. The server must derive its workspace from
+        # workspaceFolders[0].uri (a vscode-remote URI strips to its path)
+        # instead of running with an empty workspace that suppresses
+        # diagnostics.
+        remote = "vscode-remote://ssh-remote%2Bhost" + str(self.root)
+        client = self.client(initialize=False)
+        response = client.request("initialize", {
+            "rootUri": None,
+            "workspaceFolders": [{"uri": remote, "name": "project"}],
+        })
+        self.assertNotIn("error", response)
+        self.assertIn("capabilities", response["result"])
+        client.send("initialized")
+        uri = (self.root / "buffer.zen").as_uri()
+        text = "bad* = () i32 { missing }\n"
+        (self.root / "buffer.zen").write_text(text)
+        client.open(uri, text)
+        client.symbols(uri)
+        self.assertTrue(client.diagnostics[uri],
+                        "diagnostics publish against a workspaceFolders-derived workspace")
+
+    def test_null_rootUri_with_sourceRoots_initializes_through_workspaceFolders(self):
+        # With zen.sourceRoots configured, an empty workspace used to make
+        # initialize fail outright with -32602. The workspaceFolders fallback
+        # supplies the workspace the source-root validation requires, so a
+        # client that sends no rootUri initializes cleanly.
+        remote = "vscode-remote://ssh-remote%2Bhost" + str(self.root)
+        client = self.client(initialize=False)
+        response = client.request("initialize", {
+            "rootUri": None,
+            "workspaceFolders": [{"uri": remote, "name": "project"}],
+            "initializationOptions": {
+                "sourceRoots": [{"path": "scripts/usage.zen", "root": "src"}],
+            },
+        })
+        self.assertNotIn("error", response)
+        self.assertIn("capabilities", response["result"])
+        client.send("initialized")
+        client.request("shutdown")
+        client.send("exit")
+        self.assertEqual(client.process.wait(timeout=5), 0)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

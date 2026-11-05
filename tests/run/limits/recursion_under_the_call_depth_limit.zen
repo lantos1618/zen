@@ -1,0 +1,6 @@
+// Catches: a call depth limit so low that ordinary recursion stops early.
+
+down = (n: i32) i32 { (n == 0).match({ true => 7, false => down(n - 1) }) }
+main = () i32 { down(200) }
+
+//! exit: 7

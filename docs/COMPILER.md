@@ -1740,6 +1740,7 @@ The compiler's attack surface is every input it reads: source, the build manifes
 | Token or string literal length | 1 MiB |
 | Parser nesting depth (an explicit counter, not the host stack) | 256 |
 | Inlining depth (C.2) and generic instance depth (I.2) | 64 |
+| Interpreter call depth (Appendix B; each call nests the host stack) | 256 |
 | Generic instances per program | 100,000 |
 | Comptime steps / memory per evaluation | 10^8 steps / 256 MiB |
 | IR function size, frame size | §F: 1 MiB, 4080 bytes before probing |

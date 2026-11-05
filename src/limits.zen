@@ -5,5 +5,6 @@ Limits* = {
     PARSE_DEPTH*: u32 = 256,            // nested expressions
     PARSE_ITEMS*: usize = 1000000,      // declarations, parameters, arguments, arms in one list
     RUN_STEPS*: u64 = 100000000,        // interpreter instructions per run
-    RUN_DEPTH*: u32 = 1000,             // interpreter call depth
+    RUN_DEPTH*: u32 = 256,              // interpreter call depth; each call nests the host stack,
+                                        // so this must stay well under the 8 MiB main stack
 }

@@ -201,10 +201,7 @@ Server* = {
     initialized = (self :: @Self, request: Decoded,
                    turn :: RequestTurn) Res<AllocError> {
         self.members.invalidate();
-        self.workspace = path_of(
-            self.a,
-            request.string_at(request.params(), "rootUri")
-        ).try();
+        self.workspace = path_of(self.a, workspace_uri(request)).try();
         loop(() { self.workspace.len > 1 && self.workspace.ends_with(
             "/"
         ) }, (h) {
@@ -769,6 +766,27 @@ serve* = (s :: Server, input: str, out :: String) Res<AllocError> {
         });
     });
     s.settled(s.a, out)
+}
+
+// `rootUri` is deprecated in LSP in favour of `workspaceFolders`, and a
+// client may send `rootUri: null` with `workspaceFolders` populated — VS Code
+// over a remote connection does so when no workspace folder is locked onto
+// the client, and any client may drop the deprecated field entirely. Fall
+// back to the first workspace folder's `uri` so the server still derives a
+// real workspace instead of running — or, with `sourceRoots` configured,
+// failing to initialize with `-32602` — on an empty one.
+workspace_uri = (request: Decoded) str {
+    root = request.string_at(request.params(), "rootUri");
+    root.is_empty().match({
+        false => root,
+        true  => request.field(request.params(), "workspaceFolders").match({
+            None      => "",
+            Ok(value) => request.item_at(value, 0).match({
+                None      => "",
+                Ok(first) => request.string_at(first, "uri"),
+            }),
+        }),
+    })
 }
 
 // A mapping is bounded to this workspace; separators cannot smuggle an

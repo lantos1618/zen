@@ -18,6 +18,11 @@ Native = c.bind("probe.h", {
     fixture_alarm = (milliseconds: i32) i32
     fixture_signal_count = () i32
     fixture_check = (value: i32, line: i32) ()
+    fixture_block_open = () i32
+    fixture_block_fd = (index: i32) i32
+    fixture_block_fill = () i32
+    fixture_block_half_close = () i32
+    fixture_block_finish = () ()
 })
 check = (value: bool, line: i32) { Native.fixture_check(
     value.match({true => 1, false => 0}),
@@ -121,6 +126,19 @@ main = (env: Env) Res<AllocError | ReadinessError> {
     // EOF/HUP remains readable so caller can observe the terminal condition.
     check(ready_count(readiness.wait(1000).try()) > 0, 34);
     check(readiness.ready_slot(0).try() == 37, 35);
+    readiness.remove(fd).try();
+    // EOF under Write interest: a peer half-close (FIN) must still wake wait
+    // even when the local send buffer is full and EPOLLOUT is not pending.
+    // The peer only shuts down its write side; the watched socket reads EOF.
+    check(Native.fixture_block_open() == 1, 46);
+    block = Native.fixture_block_fd(0);
+    readiness.add(block, 88, Interest.Write).try();
+    check(Native.fixture_block_fill() == 1, 47);
+    check(Native.fixture_block_half_close() == 1, 48);
+    check(ready_count(readiness.wait(1000).try()) > 0, 49);
+    check(readiness.ready_slot(0).try() == 88, 50);
+    readiness.remove(block).try();
+    Native.fixture_block_finish();
     readiness.close(); readiness.close();
     check(Native.fixture_open(fd) == 1, 36);
     check(Native.fixture_fd_count() == before - 1, 37);
@@ -140,6 +158,6 @@ main = (env: Env) Res<AllocError | ReadinessError> {
     check(Native.fixture_fd_count() == before - 1, 43);
     Native.fixture_finish();
     println(
-        "PASS readiness read/write, identity, level triggering, timeout, interruption, modify/remove, EOF, invalid fd and close cleanup"
+        "PASS readiness read/write, identity, level triggering, timeout, interruption, modify/remove, EOF under read and write interest, invalid fd and close cleanup"
     );
 }

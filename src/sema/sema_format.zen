@@ -1,0 +1,189 @@
+// Formatting is checked in the caller's scope before any backend runs.
+// The shared scanner supplies the grammar; source spans retain literal offsets.
+
+{ Call, Expr, ExprId, Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Pos, Span } = std.source
+{ str } = std.text
+{ fmt_at } = std.text.text_fmt
+{ text_block_at } = std.lex
+{ Res, Ok, None, loop } = std.core
+{ Checker, CheckedCall, Ctx } = sema.sema_check
+{ DeclId } = sema.sema_id
+{ Def, decl_at } = sema.sema_def
+{ SemaFault, NameFault } = sema.sema_diag
+
+Output = { ConsoleOutput | BufferOutput }
+FormatUse = { first: usize, output: Output }
+
+check_format* = (c :: Checker, call: Call, checked: CheckedCall, ctx: Ctx)
+                Res<AllocError> {
+    format_use(c, checked).when_ok((use) {
+        call.args.get(use.first).when_ok((arg) {
+            literal = c.tree.expr_at(arg.value);
+            literal.kind.match({
+                Literal(value) => value.kind.match({
+                    Str => FormatSite(call: call, literal: literal, raw: value.text, use: use).check(c, ctx).try(),
+                    _   => (),
+                }),
+                _              => (),
+            });
+        });
+    });
+    Ok
+}
+
+format_use = (c: Checker, checked: CheckedCall) Res<FormatUse> {
+    checked.declaration.match({
+        Ok(id) => c.printer_of(id).match({
+            Ok(_) => Ok(FormatUse(first: 0, output: Output.ConsoleOutput)),
+            None  => c.tree.decl_at(id).match({
+                Ok(decl) => decl.kind.match({
+                    Function(f) => declared_use(c, checked, id, f),
+                    _           => None,
+                }),
+                None     => None,
+            }),
+        }),
+        None   => checked.member_provider.match({
+            Ok(ty) => c.types.at(ty).match({
+                Named(n) => checked.member.match({
+                    Ok(f) => declared_use(c, checked, n.decl, f),
+                    None  => None,
+                }),
+                _        => None,
+            }),
+            None   => None,
+        }),
+    })
+}
+
+declared_use = (c: Checker, checked: CheckedCall, owner: DeclId, f: Function)
+               Res<FormatUse> {
+    f.body.match({ Ok(_) => false, None => true }).ensure().try();
+    module = c.world.module_name(owner);
+    output = module.match({
+        "std.text.text_string" => f.name.text.is_in(["fmt", "String"]).match({
+            true => Ok(Output.BufferOutput), false => None,
+        }),
+        "std.text.text_fmt"    => f.name.text.eq("fmt").match({
+            true => Ok(Output.BufferOutput), false => None,
+        }),
+        "std.env.env"          => f.name.text.is_in([
+            "println", "error", "errorln"
+        ]).match({
+            true => Ok(Output.ConsoleOutput), false => None,
+        }),
+        _                      => None,
+    }).try();
+    first  = checked.signature.match({
+        Ok(sig) => sig.receiver.match({ Ok(_) => 0, None => 1 }),
+        None    => 1,
+    });
+    Ok(FormatUse(first: first, output: output))
+}
+
+FormatSite = {
+    call: Call,
+    literal: Expr,
+    raw: str,
+    use: FormatUse,
+
+    check = (self: @Self, c :: Checker, ctx: Ctx) Res<AllocError> {
+        end = self.raw.len - 1;
+        at   :: usize = 1;
+        used :: usize = self.use.first + 1;
+        loop(() { at < end }, (h) {
+            step = self.raw.fmt_at(at, end);
+            span = self.span(at, step.next);
+            step.what.match({
+                Byte        => (),
+                Pair        => (),
+                Hole        => {
+                    self.call.args.get(used).match({
+                        None    => c.refuse(
+                            span,
+                            SemaFault.FormatMissingArgument
+                        ).try(),
+                        Ok(arg) => self.check_value(c, arg.value).try(),
+                    });
+                    used = used + 1;
+                },
+                Named(name) => c.lookup(name).match({
+                    Ok(binding) => self.use.output.match({
+                        BufferOutput  => c.prim_name(binding.ty).eq("float").then(() {
+                            c.refuse(span, SemaFault.FormatFloat).try();
+                        }),
+                        ConsoleOutput => (),
+                    }),
+                    None        => {
+                        defs ::= c.alloc.Vec<Def>();
+                        c.world.defs_of(ctx.module, name, defs).try();
+                        (defs.len == 0).then(() {
+                            c.refuse(
+                                span,
+                                SemaFault.FormatName(NameFault(name: name))
+                            ).try();
+                        });
+                    },
+                }),
+                NoName      => c.refuse(
+                    span,
+                    SemaFault.InvalidFormatHole
+                ).try(),
+            });
+            at = step.what.match({
+                Byte => at + (self.raw[at] == '\\').match({ true => 2, false => 1 }),
+                _    => step.next,
+            });
+        });
+        (used < self.call.args.len).then(() {
+            self.call.args.get(used).when_ok((arg) {
+                c.refuse(arg.span, SemaFault.FormatSurplusArgument).try();
+            });
+        });
+        Ok
+    }
+
+    check_value = (self: @Self, c :: Checker, id: ExprId) Res<AllocError> {
+        self.use.output.match({
+            ConsoleOutput => (),
+            BufferOutput  => c.expr_memo.get(id).when_ok((ty) {
+                c.prim_name(ty).eq("float").then(() {
+                    c.refuse(
+                        c.tree.expr_at(id).span,
+                        SemaFault.FormatFloat
+                    ).try();
+                });
+            }),
+        });
+        Ok
+    }
+
+    span = (self: @Self, start: usize, end: usize) Span {
+        Span(
+            file: self.literal.span.file,
+            start: self.position(start),
+            end: self.position(end)
+        )
+    }
+
+    position = (self: @Self, offset: usize) Pos {
+        block = self.literal.kind.match({ Literal(l) => l.block, _ => None });
+        block.match({
+            None    => Pos(
+                line: self.literal.span.start.line,
+                col: self.literal.span.start.col + offset
+            ),
+            Ok(raw) => {
+                at = raw.text_block_at(offset);
+                Pos(line: self.literal.span.start.line + at.line,
+                    col: (at.line == 0).match({
+                        true  => self.literal.span.start.col + at.col,
+                        false => 1 + at.col,
+                    }))
+            },
+        })
+    }
+}

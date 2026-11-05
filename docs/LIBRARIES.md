@@ -103,6 +103,14 @@ and atomic filesystem publication need independent lifecycle and portability
 contracts before being added to std; the former agentfleet `proc.c` patch must
 not be applied over the current Zen-owned process implementation.
 
+A future replacement must bound queued message count and byte count, reject
+oversized input before copying it, and resume admission after draining. Its
+cancellation contract must identify the owner of each child process, socket,
+temporary directory and output buffer, including cleanup after partial failure.
+These are acceptance requirements, not currently provided RPC APIs. The old
+queue saturation/drain regression is useful evidence for those requirements;
+the former native helper names are not a compatibility surface to restore.
+
 ## Bounded binary cursors
 
 `std.bytes.ByteReader` and `ByteWriter` borrow a caller-owned `Ptr<u8>` and

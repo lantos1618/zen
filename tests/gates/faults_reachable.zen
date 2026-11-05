@@ -88,7 +88,11 @@ no_files = () Res<i32, AllocError> {
 run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
     a ::= check(env, alloc, SEMA_FAULT, SEMA_FILE).try();
 
-    bad = a.missing + a.stale;
+    scanner_ok = scanner_contract();
+    (!scanner_ok).then(
+        () { println("faults: qualified variant scanner failed its controls"); }
+    );
+    bad = a.missing + a.stale + scanner_ok.match({ true => 0, false => 1 });
     (bad > 0).match({
         true  => Ok(1),
         false => {
@@ -152,7 +156,7 @@ weigh = (env: Env, alloc: Alloc, enum: str, decl: str, names: Vec<str>)
     built_n :: usize = 0;
     owed_n  :: usize = 0;
     names.loop((h, name) {
-        built = constructed(env, alloc, name, decl);
+        built = constructed(env, alloc, name, decl).try();
         built.then(() { built_n = built_n + 1; });
         owed(name).match({
             // in the ledger: constructing it means the debt is paid and the
@@ -220,43 +224,47 @@ variants_of = (a: Alloc, enum: str, path: str, text: str)
     Ok(out);
 }
 
-// Is `name` built anywhere outside its own declaring file? `Name(` with a
-// non-identifier byte in front, which is what the Python's `\bName\s*\(` came
-// to; the space before `(` is not allowed here because the formatter never
-// writes one and a constructor call is what is being looked for.
-constructed = (env: Env, alloc: Alloc, name: str, decl: str) bool {
+// A qualified variant reference may construct a payload case or a nullary
+// case. Unrelated types with the same member name do not satisfy this check.
+constructed = (env: Env, alloc: Alloc, name: str, decl: str)
+              Res<bool, AllocError> {
+    qualified = alloc.String("{}.{}", SEMA_FAULT, name).try();
     found ::= false;
     Range(1, env.argv.len).loop((h, i) {
         rel = arg(env, i);
         (found == false && rel.eq(decl) == false).then(() {
             env.fs.read(alloc, rel).match({
                 Err(e)   => (),
-                Ok(text) => calls(text.view(), name).then(() { found = true; }),
+                Ok(text) => references(text.view(), qualified.view()).then(() { found = true; }),
             });
         });
     });
-    found
+    Ok(found)
 }
 
-calls = (text: str, name: str) bool {
+references = (text: str, name: str) bool {
     hit ::= false;
-    // `+ 1` for the `(` that has to follow the name
-    (text.len > name.len).then(() {
-        Range(0, text.len - name.len).loop((h, i) {
-            at_call(text, name, i).then(() { hit = true; });
+    (name.len > 0 && text.len >= name.len).then(() {
+        Range(0, text.len - name.len + 1).loop((h, i) {
+            at_reference(text, name, i).then(() { hit = true; });
         });
     });
     hit
 }
 
-at_call = (text: str, name: str, i: usize) bool {
-    open_at = i + name.len;
-    (open_at < text.len).match({
-        false => false,
-        true  => text.index(open_at) == '('
-                 && boundary_before(text, i)
-                 && matches_at(text, name, i),
-    })
+at_reference = (text: str, name: str, i: usize) bool {
+    end = i + name.len;
+    boundary_before(text, i) && matches_at(text, name, i)
+        && (end == text.len || !is_ident(text.index(end)))
+}
+
+scanner_contract = () bool {
+    references("SemaFault.NullaryProbe", "SemaFault.NullaryProbe")
+        && references("(SemaFault.NullaryProbe)", "SemaFault.NullaryProbe")
+        && references("SemaFault.PayloadProbe(value)", "SemaFault.PayloadProbe")
+        && !references("Other.NullaryProbe()", "SemaFault.NullaryProbe")
+        && !references("OtherSemaFault.NullaryProbe", "SemaFault.NullaryProbe")
+        && !references("SemaFault.NullaryProbeExtra", "SemaFault.NullaryProbe")
 }
 
 // A word boundary: the byte before the name may not continue an identifier,

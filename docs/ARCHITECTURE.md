@@ -62,6 +62,17 @@ runtime helpers in `gen_c_floor.zen` for C). Every backend renders the one
 lowering; C is the bootstrap path, so its files should not be treated as
 general-purpose standard-library code.
 
+Backend retirement preserves observable contracts, including operations that
+only matter before a process exits. Explicit stdout flush must publish pending
+bytes before a subsequent input wait. A build workspace lock must remain held
+by a spawned compiler after its parent exits. End-of-process output comparisons
+and successful self-compilation do not prove either behavior;
+`tests/quality/build_selfhost.py` exercises both through real processes.
+
+Standard formatting syntax and opaque-pointer validity are semantic checks. Their
+diagnostics belong before lowering so every bad source site can be reported,
+with the original literal position, independently of the selected backend.
+
 ## Standard library and capability boundaries
 
 `src/std/` contains both reusable language facilities and runtime capabilities.

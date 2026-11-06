@@ -367,6 +367,16 @@ width* = (ty: Scalar) usize {
     })
 }
 
+// A unit value, or a Zen record with no fields, takes no storage. A native
+// record's size belongs to its header, so it is never empty here.
+empty* = (ty: Scalar) bool {
+    ty.match({
+        Unit     => true,
+        Block(l) => l.size == 0 && l.native == 0,
+        _        => false,
+    })
+}
+
 signed* = (ty: Scalar) bool {
     ty.match({ I8 => true, I16 => true, I32 => true, I64 => true, _ => false })
 }

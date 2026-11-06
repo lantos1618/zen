@@ -9,7 +9,7 @@
 { str } = std.text
 { Program, Func, Scalar, Instruction, Terminator, Op, Marshal } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, Binary } = gen.gen_ir
-{ same, word, integer, signed, float, width } = gen.gen_ir
+{ same, word, integer, signed, float, width, empty } = gen.gen_ir
 { arity } = gen.gen_sys
 { MachineCall, vector_bytes, lane_bytes } = gen.gen_ir_machine
 
@@ -289,7 +289,7 @@ Check = {
             },
             StoreValue(value)    => {
                 stored = self.slot(value.value).try();
-                (width(stored) > 0).ensure(self.fault(IrReason.EmptyStore)).try();
+                (!empty(stored)).ensure(self.fault(IrReason.EmptyStore)).try();
                 self.expect(value.base, Scalar.Ptr)
             },
             CopyBytes(value)     => {

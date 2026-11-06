@@ -33,7 +33,7 @@
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, SysValue, NativeValue, Secrecy, Reach } = gen.gen_ir
 { SysConstant } = gen.gen_sys
-{ word, integer, float, same, width } = gen.gen_ir
+{ word, integer, float, same, width, empty } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
 { to_bound, bound_of, handle_for_place, resolve } = gen.gen_lower_member
@@ -249,7 +249,7 @@ Lowerer* = {
     // store would land past the end of the record that holds it.
     add* = (self :: @Self, instruction: Instruction) Res<LowerError> {
         empty = instruction.match({
-            StoreValue(s) => width(self.slots.get(s.value).value_or(Scalar.Ptr)) == 0,
+            StoreValue(s) => empty(self.slots.get(s.value).value_or(Scalar.Ptr)),
             _             => false,
         });
         empty.match({

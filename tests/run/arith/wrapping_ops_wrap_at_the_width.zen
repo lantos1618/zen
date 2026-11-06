@@ -1,0 +1,18 @@
+// Catches: wrapping operators computed at a wider width and never truncated, so
+// u8 255 +% 1 prints 256 instead of 0, or a narrow signed result is not sign-extended.
+{ Res, IoError } = std.core
+{ Env } = std.env
+
+add_u8 = (a: u8, b: u8) u8 { a +% b }
+mul_i8 = (a: i8, b: i8) i8 { a *% b }
+sub_u16 = (a: u16, b: u16) u16 { a -% b }
+
+main = (env: Env) Res<IoError> {
+    env.out.println("{}", add_u8(255, 1)).try();
+    env.out.println("{}", mul_i8(-128, -1)).try();
+    env.out.println("{}", sub_u16(0, 1))
+}
+
+//! out: 0
+//! out: -128
+//! out: 65535

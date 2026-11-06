@@ -1740,6 +1740,7 @@ The compiler's attack surface is every input it reads: source, the build manifes
 | Token or string literal length | 1 MiB |
 | Parser nesting depth (an explicit counter, not the host stack) | 256 |
 | Inlining depth (C.2) and generic instance depth (I.2) | 64 |
+| Interpreter call depth (Appendix B; each call nests the host stack) | 256 |
 | Generic instances per program | 100,000 |
 | Comptime steps / memory per evaluation | 10^8 steps / 256 MiB |
 | IR function size, frame size | §F: 1 MiB, 4080 bytes before probing |
@@ -1783,7 +1784,7 @@ The compiler is useless without the std it compiles itself with. T0 needs only t
 | `std.seq` | `Seq<T>`, `Range<T>`, `loop`, `find`, `map`, `filter` (C.2) |
 | `std.text` | `str`, `String`, `Sink`, formatting of integers and `str` (`{}`, `{name}`) |
 | `std.collections` | `Vec<T>`, `Map<K, V>` (open addressing) |
-| `std.io` | `println`, `Env.out`, `Env.fs.read`/`write`, `Env.args` |
+| `std.io` | `Writer` (`write`, `print`, `println`), `Env.out`, `Env.err`, `Env.fs.read`/`write`, `Env.args` |
 
 The runtime is C, at most 200 lines (Appendix J):
 

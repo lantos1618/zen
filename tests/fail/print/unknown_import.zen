@@ -1,0 +1,8 @@
+// Catches: an import of a name the module does not have accepted, so a typo only fails
+// (or calls the wrong thing) where it is used.
+{ printline } = std.io
+
+main = () { 0 }
+
+//! error: 3:3
+//! hint: std.io has no `printline`

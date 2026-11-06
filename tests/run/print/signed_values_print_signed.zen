@@ -1,0 +1,11 @@
+// Catches: an i32 printed as its unsigned bits, a lost minus sign, or the minimum value
+// overflowing when its magnitude is taken.
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> {
+    env.out.println("{} {} {} {}", 0, 0 - 7, 0 - 2147483647 - 1, 2147483647).try();
+    Ok
+}
+
+//! out: 0 -7 -2147483648 2147483647

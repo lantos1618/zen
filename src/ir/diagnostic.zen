@@ -1,0 +1,55 @@
+// COMPILER.md E.1. A diagnostic stops compilation; a trap is a program result.
+
+{ Res, Err } = std.core
+{ str } = std.text
+{
+    Id, Function, Block, Instruction
+} = ir.records
+
+DiagnosticCode* = {
+    | UnknownName
+    | DuplicateName
+    | PrivateImport
+    | InvalidRecursiveType
+    | InvalidId
+    | DuplicateId
+    | TypeMismatch
+    | ArityMismatch
+    | MissingExit
+    | InvalidSuccessor
+    | DuplicateSwitchCase
+    | UninitializedRegister
+    | InvalidConstant
+    | InvalidAlignment
+    | InvalidLayout
+    | InvalidSymbol
+    | InvalidInstructionForm
+    | InvalidReturnContract
+    | UnsupportedTarget
+    | UnsupportedFeature
+    | MissingLowering
+    | ResourceLimit
+    | ExternalToolFailure,
+
+    // The variant's own name, so it can never drift from the enum.
+    name* = (self: @Self) str { self.variant_name() }
+}
+
+DiagnosticStage* = {
+    | Source
+    | IR
+    | Target
+    | Selection
+    | Allocation
+    | Assembly
+    | Toolchain
+}
+
+Diagnostic* = {
+    code*: DiagnosticCode,
+    stage*: DiagnosticStage,
+    function*: Res<Id<Function>>,
+    block*: Res<Id<Block>>,
+    instruction*: Res<Id<Instruction>>,
+    message*: str,
+}

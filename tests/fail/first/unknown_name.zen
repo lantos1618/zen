@@ -1,0 +1,6 @@
+// Catches: a name that is neither a parameter nor declared, accepted and read as 0.
+
+main = () i32 { x }
+
+//! error: 3:17
+//! hint: unknown name

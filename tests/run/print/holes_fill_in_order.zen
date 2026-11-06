@@ -1,0 +1,11 @@
+// Catches: holes filled with the arguments in the wrong order, the literal text between
+// holes dropped or repeated, or a bool printed as a number.
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> {
+    env.out.println("{} < {}, so {}", 1, 2, 1 < 2).try();
+    Ok
+}
+
+//! out: 1 < 2, so true

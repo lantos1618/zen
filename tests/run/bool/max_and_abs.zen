@@ -1,0 +1,8 @@
+// The slice's target program: comparisons, both .match forms, a binding, calls.
+// Catches: a match whose branches are swapped (max would return the smaller value).
+
+max = (a: i32, b: i32) i32 { (a > b).match({ true => a, false => b }) }
+abs = (x: i32) i32 { (x < 0).match({ 0 - x }, { x }) }
+main = () i32 { m = max(3, 9); m + abs(0 - 4) }
+
+//! exit: 13

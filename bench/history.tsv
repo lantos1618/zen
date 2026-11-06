@@ -1,0 +1,2 @@
+date	commit	tokens	lines	run_ours	fail_ours	run_stage0	fail_stage0	units_passed	units_failed	build_s	binary_kb
+2026-10-29	0798fd87e	29663	2839	7 / 13	6 / 10	10 / 13	10 / 10	74	0	2.8	1920

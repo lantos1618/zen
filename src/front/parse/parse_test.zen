@@ -1,0 +1,113 @@
+// The parser on the first programs: one case per test, each the source text and the tree
+// in pre-order. A node shows as its text when it is a Name or Int, as its operator when
+// it is Binary, and as its kind otherwise.
+
+{ Res, Ok, Err, None, Range, IoError } = std.core
+{ Alloc } = std.mem
+{ str, Split } = std.text
+{ Env } = std.env
+{ Suite, Tester, TestError } = std.test
+{ Tree, Node } = front.parse.ast
+{ parse } = front.parse.parse
+{ Source } = front.parse.source
+
+word = (t: Tree, n: Node) str {
+    n.kind.match({
+        Name      => t.text(n),
+        Int       => t.text(n),
+        Binary(o) => o.variant_name(),
+        _         => n.kind.variant_name(),
+    })
+}
+
+// Compare a subtree, in pre-order, with the next expected words.
+same_tree = (t: Tree, n: Node, words :: Split) bool {
+    here = words.next().match({ Ok(w) => w.eq(word(t, n)), None => false });
+    kids ::= here;
+    Range(0, n.count).loop((h, k) {
+        child = t.child(n, k).match({ Ok(c) => c, None => n });
+        kids = kids && same_tree(t, child, words);
+    });
+    kids
+}
+
+parses_to = (a: Alloc, text: str, wanted: str) bool {
+    parse(a, text).match({
+        Err(_)   => false,
+        Ok(tree) => {
+            words ::= wanted.split(' ');
+            same ::= true;
+            tree.roots.loop((r) { same = same && tree.node(r).match({ Ok(n) => same_tree(tree, n, words), None => false }); });
+            same && words.next().match({ Ok(_) => false, None => true })
+        },
+    })
+}
+
+// Parsing fails at this line and column.
+fails_at = (a: Alloc, text: str, line: u32, column: u32) bool {
+    parse(a, text).match({
+        Ok(_)  => false,
+        Err(e) => e.match({
+            Syntax(s)   => Source(text: text).position(s.at).match({ p => p.line == line && p.column == column }),
+            OutOfMemory => false,
+        }),
+    })
+}
+
+expect_tree = (t: Tester, text: str, wanted: str) Res<TestError> { t.expect(parses_to(t.alloc, text, wanted)) }
+expect_error = (t: Tester, text: str, line: u32, column: u32) Res<TestError> { t.expect(fails_at(t.alloc, text, line, column)) }
+
+main = (env: Env) Res<i32, IoError> {
+    s ::= Suite(env: env);
+
+    s.run("a function with a tail expression", (t) {
+        expect_tree(t, "main = () i32 { 42 }", "Function main i32 Block 42")
+    }).try();
+    s.run("parameters and an addition", (t) {
+        expect_tree(t, "add = (a: i32, b: i32) i32 { a + b }", "Function add Param i32 Param i32 i32 Block Add a b")
+    }).try();
+    s.run("a call with arguments", (t) {
+        expect_tree(t, "main = () i32 { add(40, 2) }", "Function main i32 Block Call add 40 2")
+    }).try();
+    s.run("two declarations", (t) {
+        expect_tree(t, "f = () i32 { 1 } g = () i32 { 2 }", "Function f i32 Block 1 Function g i32 Block 2")
+    }).try();
+    s.run("* binds tighter than +", (t) {
+        expect_tree(t, "f = () i32 { 1 + 2 * 3 }", "Function f i32 Block Add 1 Multiply 2 3")
+    }).try();
+    s.run("- groups to the left", (t) {
+        expect_tree(t, "f = () i32 { 9 - 4 - 1 }", "Function f i32 Block Subtract Subtract 9 4 1")
+    }).try();
+    s.run("parentheses group first", (t) {
+        expect_tree(t, "f = () i32 { (1 + 2) * 3 }", "Function f i32 Block Multiply Add 1 2 3")
+    }).try();
+
+    // bindings, comparisons, .match
+    s.run("bindings before the tail", (t) {
+        expect_tree(t, "f = () i32 { x = 1; y = x + 2; y }", "Function f i32 Block Let x 1 Let y Add x 2 y")
+    }).try();
+    s.run("a comparison binds looser than +", (t) {
+        expect_tree(t, "f = (a: i32) bool { a + 1 > 2 }", "Function f Param i32 bool Block Greater Add a 1 2")
+    }).try();
+    s.run("a match with arms", (t) {
+        expect_tree(t, "f = (b: bool) i32 { b.match({ true => 1, false => 2 }) }",
+            "Function f Param bool i32 Block Match b Arm True 1 Arm False 2")
+    }).try();
+    s.run("a match with positional bodies", (t) {
+        expect_tree(t, "f = (b: bool) i32 { b.match({ 1 }, { 2 }) }", "Function f Param bool i32 Block Match b Arm 1 Arm 2")
+    }).try();
+    s.run("a match on a parenthesized comparison", (t) {
+        expect_tree(t, "f = (a: i32) i32 { (a < 0).match({ 0 - a }, { a }) }",
+            "Function f Param i32 i32 Block Match Less a 0 Arm Subtract 0 a Arm a")
+    }).try();
+
+    // errors: the first one stops parsing, at its position
+    s.run("a binding needs its `;`", (t) { expect_error(t, "f = () i32 { x = 1 x }", 1, 20) }).try();
+    s.run("only .match exists so far", (t) { expect_error(t, "f = (b: bool) i32 { b.then({ 1 }) }", 1, 23) }).try();
+    s.run("a missing `)` is reported at the token found instead", (t) { expect_error(t, "f = (a: i32 i32 { a }", 1, 13) }).try();
+    s.run("a missing expression", (t) { expect_error(t, "f = () i32 { }", 1, 14) }).try();
+    s.run("a lexical fault stops the parse", (t) { expect_error(t, "f = () i32 { 010 }", 1, 14) }).try();
+    s.run("an unclosed block", (t) { expect_error(t, "f = () i32 { 1", 1, 15) }).try();
+
+    s.finish()
+}

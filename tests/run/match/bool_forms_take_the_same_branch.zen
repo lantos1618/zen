@@ -1,0 +1,15 @@
+// Catches: one of the bool .match spellings lowering its arms the wrong way round,
+// e.g. positional ({ yes }, { no }) bodies swapped. Each form is run for true and false.
+{ Res, IoError } = std.core
+{ Env } = std.env
+
+arms = (b: bool) str { b.match({ true => "yes", false => "no" }) }
+positional = (b: bool) str { b.match({ "yes" }, { "no" }) }
+
+main = (env: Env) Res<IoError> {
+    env.out.println("{} {}", arms(true), arms(false)).try();
+    env.out.println("{} {}", positional(true), positional(false))
+}
+
+//! out: yes no
+//! out: yes no

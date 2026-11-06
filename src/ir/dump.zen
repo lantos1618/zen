@@ -1,0 +1,102 @@
+// A module as text, in COMPILER.md §6's notation: one instruction per line, then the
+// block's exit. What `zen --dump` prints, and what a person reads to check lowering.
+
+{ Res, Ok, None, Range } = std.core
+{ print, println } = std.io
+{ Module, Function, Value, Instruction, Exit, Callee, IntOp, Id, Register } = ir.records
+
+dump* = (m: Module) {
+    m.functions.loop((f) { function(m, f); });
+}
+
+function = (m: Module, f: Function) {
+    print("function f{} (", f.id.index);
+    f.parameters.loop((h, k, r) {
+        (k > 0).then(() { print(", "); });
+        register(f, r);
+    });
+    print(")");
+    m.signature(f.signature).match({
+        Ok(s) => s.result.match({
+            Returns(r) => r.match({ Ok(t) => println(" -> {}", t.variant_name()), None => println("") }),
+            Never      => println(" -> Never"),
+        }),
+        None  => println(""),
+    });
+    f.blocks.loop((b) {
+        println("  b{}:", b.id.index);
+        b.instructions.loop((rec) {
+            print("    ");
+            instruction(f, rec.instruction);
+            println("");
+        });
+        print("    ");
+        exit(b.exit);
+        println("");
+    });
+}
+
+// A register with its type: r2: Bool.
+register = (f: Function, r: Id<Register>) {
+    print("r{}: {}", r.index, f.register_type(r).match({ Ok(t) => t.variant_name(), None => "?" }));
+}
+
+value = (v: Value) {
+    v.match({
+        Register(r) => print("r{}", r.index),
+        Constant(c) => c.match({
+            Integer(k) => print("{} {}", k.type.variant_name(), k.bits),
+            Bool(b)    => print("{}", b.match({ true => "true", false => "false" })),
+            _          => print("{}", c.variant_name()),
+        }),
+    })
+}
+
+instruction = (f: Function, i: Instruction) {
+    i.match({
+        Set(x)        => { register(f, x.dst); print(" = "); value(x.value); },
+        IntBinary(x)  => {
+            register(f, x.dst);
+            print(" = IntBinary(");
+            op(x.op);
+            print(", "); value(x.lhs); print(", "); value(x.rhs); print(")");
+        },
+        IntCompare(x) => {
+            register(f, x.dst);
+            print(" = IntCompare({}", x.op.variant_name());
+            print(", "); value(x.lhs); print(", "); value(x.rhs); print(")");
+        },
+        Call(x)       => {
+            x.dst.match({ Ok(d) => { register(f, d); print(" = "); }, None => () });
+            print("Call(");
+            callee(x.callee);
+            x.args.loop((v) { print(", "); value(v); });
+            print(")");
+        },
+        _             => print("{}", i.variant_name()),
+    })
+}
+
+// The operation with its overflow mode: Add(Checked), Multiply(Wrapping).
+op = (o: IntOp) {
+    o.match({
+        Add(m)      => print("Add({})", m.variant_name()),
+        Subtract(m) => print("Subtract({})", m.variant_name()),
+        Multiply(m) => print("Multiply({})", m.variant_name()),
+        _           => print("{}", o.variant_name()),
+    })
+}
+
+callee = (c: Callee) {
+    c.match({ Function(f) => print("f{}", f.index), Register(r) => print("r{}", r.index) })
+}
+
+exit = (e: Exit) {
+    e.match({
+        Jump(x)   => print("Jump(b{})", x.target.index),
+        Branch(x) => { print("Branch("); value(x.condition); print(", b{}, b{})", x.yes.index, x.no.index); },
+        Return(x) => { print("Return("); x.value.match({ Ok(v) => value(v), None => () }); print(")"); },
+        Trap(x)   => print("Trap({})", x.code.variant_name()),
+        _         => print("{}", e.variant_name()),
+    })
+}

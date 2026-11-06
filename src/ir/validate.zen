@@ -1,0 +1,717 @@
+// COMPILER.md §1.2 and §1.4: the only way to get an `Ir`. Each rule is one line: a
+// condition, and the diagnostic when it fails. Every check is linear in the module,
+// except definite initialization, which iterates to a fixpoint.
+
+{
+    Res, Ok, Err, None, Range, ensure, to_usize, to_u64, truncate_u32,
+    bit_and, bit_or, shift_left, shift_right
+} = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str } = std.text
+{
+    Module, Function, Block, Signature, Symbol, Global,
+    Import, Export, ScalarType, Constant, Value, Instruction,
+    Exit, Callee, ConvertOp, MemoryAccess, Id, Register,
+    Set, Select, IntBinary, IntCompare, FloatCompare, Convert, Address, Load, Store, Call, SwitchCase
+} = ir.records
+{ DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
+
+Code = DiagnosticCode
+{ each_use, each_exit_use, each_def, each_successor } = ir.uses
+
+// A validated, frozen module. Only `validate` makes one.
+Ir* = {
+    module: Module,
+
+    view* = (self: @Self) Module { self.module }
+}
+
+validate* = (a: Alloc, m: Module) Res<Ir, Diagnostic> {
+    v ::= Validator(
+        m: m,
+        a: a,
+        owners: a.Vec<Owner>(),
+        in_function: None,
+        in_block: None,
+        at_instruction: None,
+    );
+    v.check_module().try();
+    Ok(Ir(module: m))
+}
+
+// What defines a symbol. Built once, so every symbol lookup is one index.
+Owner = {
+    | Free
+    | Function: Id<Function>
+    | Global: Id<Global>
+    | Import: Id<Function>
+}
+
+Validator = {
+    m: Module,
+    a: Alloc,
+    owners :: Vec<Owner>,
+    in_function :: Res<Id<Function>>,       // where the check is; every diagnostic says so
+    in_block :: Res<Id<Block>>,
+    at_instruction :: Res<Id<Instruction>>,
+
+    // The diagnostic for a broken rule, at the current place.
+    why = (self: @Self, code: DiagnosticCode, message: str) Diagnostic {
+        Diagnostic(
+            code: code,
+            stage: DiagnosticStage.IR,
+            function: self.in_function,
+            block: self.in_block,
+            instruction: self.at_instruction,
+            message: message,
+        )
+    }
+
+    // A lookup that must succeed.
+    found = <T>(self: @Self, r: Res<T>, message: str) Res<T, Diagnostic> {
+        r.match({ Ok(x) => Ok(x), None => Err(self.why(Code.InvalidId, message)) })
+    }
+
+    memory = (self: @Self, r: Res<AllocError>) Res<(), Diagnostic> {
+        r.match({ Ok => Ok, Err(_) => Err(self.why(Code.ResourceLimit, "out of memory during validation")) })
+    }
+
+    // The most common rule: two types are the same.
+    same = (self: @Self, a: ScalarType, b: ScalarType, message: str) Res<(), Diagnostic> {
+        a.same(b).ensure(self.why(Code.TypeMismatch, message))
+    }
+
+    // ---- lookups
+
+    signature = (self: @Self, s: Id<Signature>) Res<Signature, Diagnostic> {
+        self.found(self.m.signature(s), "unknown signature")
+    }
+    signature_of = (self: @Self, f: Id<Function>) Res<Id<Signature>, Diagnostic> {
+        self.found(self.m.signature_of(f), "unknown function")
+    }
+    symbol = (self: @Self, s: Id<Symbol>) Res<Symbol, Diagnostic> {
+        self.found(self.m.symbol(s), "unknown symbol")
+    }
+    reg = (self: @Self, f: Function, r: Id<Register>) Res<ScalarType, Diagnostic> {
+        self.found(f.register_type(r), "unknown register")
+    }
+    owner = (self: @Self, s: Id<Symbol>) Res<Owner, Diagnostic> {
+        self.found(self.owners.get(s.index.to_usize()), "unknown symbol")
+    }
+
+    // The type of a value; a constant is also checked.
+    val = (self: @Self, f: Function, v: Value) Res<ScalarType, Diagnostic> {
+        v.match({
+            Register(r) => self.reg(f, r),
+            Constant(c) => { self.check_constant(c).try(); Ok(c.type()) },
+        })
+    }
+
+    // The signature of the function a symbol names.
+    function_signature = (self: @Self, s: Id<Symbol>) Res<Id<Signature>, Diagnostic> {
+        self.signature_of(self.function_of_symbol(s).try())
+    }
+
+    function_of_symbol = (self: @Self, s: Id<Symbol>) Res<Id<Function>, Diagnostic> {
+        self.owner(s).try().match({
+            Function(f) => Ok(f),
+            Import(f)   => Ok(f),
+            _           => Err(self.why(Code.InvalidSymbol, "a function symbol names no function")),
+        })
+    }
+
+    // ---- the module
+
+    check_module = (self :: @Self) Res<(), Diagnostic> {
+        self.m.signatures.loop((s) { self.check_signature(s).try(); });
+        self.check_symbols().try();
+        self.check_owners().try();
+        self.m.imports.loop((h, i, im) { self.check_import(i, im).try(); });
+        self.m.globals.loop((g) { self.check_global(g).try(); });
+        self.m.exports.loop((e) { self.check_export(e).try(); });
+        self.m.functions.loop((h, i, f) {
+            self.in_function = Ok(f.id);
+            self.check_function(i, f).try();
+            self.in_function = None;
+        });
+        self.m.trap_handler.match({ Ok(h) => self.check_trap_handler(h).try(), None => () });
+        Ok
+    }
+
+    check_type = (self: @Self, t: ScalarType) Res<(), Diagnostic> {
+        t.match({ FunctionPointer(s) => { self.signature(s).try(); }, _ => () });
+        Ok
+    }
+
+    check_signature = (self: @Self, s: Signature) Res<(), Diagnostic> {
+        s.parameters.loop((t) { self.check_type(t).try(); });
+        s.result.match({
+            Returns(r) => r.match({ Ok(t) => self.check_type(t).try(), None => () }),
+            Never      => (),
+        });
+        Ok
+    }
+
+    check_symbols = (self: @Self) Res<(), Diagnostic> {
+        names ::= self.a.Map<str, u32>();
+        self.m.symbols.loop((h, i, s) {
+            (s.id.index.to_usize() == i)
+                .ensure(self.why(Code.InvalidId, "symbol ids equal their position")).try();
+            external = s.is_external();
+            s.external_name.match({
+                Ok(name) => {
+                    external
+                        .ensure(self.why(Code.InvalidSymbol, "internal symbols have no external name")).try();
+                    name.is_identifier()
+                        .ensure(self.why(Code.InvalidSymbol, "an external name is an identifier")).try();
+                    unseen = names.get(name).match({ Ok(_) => false, None => true });
+                    unseen.ensure(self.why(Code.DuplicateName, "external names are unique")).try();
+                    self.memory(names.set(name, s.id.index)).try();
+                },
+                None     => (!external)
+                    .ensure(self.why(Code.InvalidSymbol, "an external symbol needs a name")).try(),
+            });
+        });
+        Ok
+    }
+
+    // One definition per symbol, and every ExternalDefinition symbol has one.
+    check_owners = (self :: @Self) Res<(), Diagnostic> {
+        self.m.symbols.loop((s) {
+            added = self.owners.add(Owner.Free);
+            self.memory(added).try();
+        });
+        self.m.functions.loop((f) { self.own(f.symbol, Owner.Function(f.id)).try(); });
+        self.m.globals.loop((h, i, g) {
+            self.own(g.symbol, Owner.Global(Id<Global>(index: i.truncate_u32()))).try();
+        });
+        self.m.imports.loop((im) { self.own(im.symbol, Owner.Import(im.function)).try(); });
+        self.m.symbols.loop((s) {
+            defined = self.owner(s.id).try().match({ Free => false, _ => true });
+            (defined || !s.must_be_defined())
+                .ensure(self.why(Code.InvalidSymbol, "an ExternalDefinition symbol is defined here")).try();
+        });
+        Ok
+    }
+
+    own = (self :: @Self, s: Id<Symbol>, owner: Owner) Res<(), Diagnostic> {
+        free = self.owner(s).try().match({ Free => true, _ => false });
+        free.ensure(self.why(Code.DuplicateName, "a symbol is defined once")).try();
+        self.owners.set(s.index.to_usize(), owner);
+        Ok
+    }
+
+    check_import = (self: @Self, i: usize, im: Import) Res<(), Diagnostic> {
+        in_order = im.function.index.to_usize() == self.m.functions.len + i;
+        in_order.ensure(self.why(Code.InvalidId, "import ids follow the defined functions, in order")).try();
+        sym = self.symbol(im.symbol).try();
+        imported = sym.is_imported() && sym.is_function();
+        imported.ensure(self.why(Code.InvalidSymbol, "an import names an external function symbol")).try();
+        self.signature(im.signature).try();
+        Ok
+    }
+
+    check_global = (self: @Self, g: Global) Res<(), Diagnostic> {
+        sym = self.symbol(g.symbol).try();
+        data = !sym.is_function() && !sym.is_imported();
+        data.ensure(self.why(Code.InvalidSymbol, "a global is a data symbol defined here")).try();
+        is_power_of_two(g.alignment.to_u64())
+            .ensure(self.why(Code.InvalidAlignment, "a global's alignment is a power of two")).try();
+        total :: u64 = 0;
+        g.initializer.loop((part) {
+            part.match({ Address(p) => self.check_address_part(p.symbol, p.type).try(), _ => () });
+            size = part.size();
+            fits = size <= g.size && total <= g.size - size;          // no overflow
+            fits.ensure(self.why(Code.InvalidLayout, "initializer parts add up to the global's size")).try();
+            total = total + size;
+        });
+        (total == g.size)
+            .ensure(self.why(Code.InvalidLayout, "initializer parts add up to the global's size")).try();
+        Ok
+    }
+
+    // An address part's type matches its symbol: a Pointer to data, a FunctionPointer to a function.
+    check_address_part = (self: @Self, s: Id<Symbol>, t: ScalarType) Res<(), Diagnostic> {
+        self.check_type(t).try();
+        wanted = self.symbol(s).try().kind.match({
+            Data     => ScalarType.Pointer,
+            Function => ScalarType.FunctionPointer(self.function_signature(s).try()),
+        });
+        self.same(t, wanted, "an address part's type matches its symbol")
+    }
+
+    check_export = (self: @Self, e: Export) Res<(), Diagnostic> {
+        sym = self.symbol(e.symbol).try();
+        sym.must_be_defined()
+            .ensure(self.why(Code.InvalidSymbol, "an export binds an ExternalDefinition symbol")).try();
+        bound = self.owner(e.symbol).try();
+        same = e.definition.match({
+            Function(f) => bound.match({ Function(o) => o.index == f.index, _ => false }),
+            Global(g)   => bound.match({ Global(o) => o.index == g.index, _ => false }),
+        });
+        same.ensure(self.why(Code.InvalidSymbol, "an export's definition is bound to its symbol"))
+    }
+
+    check_trap_handler = (self: @Self, h: Id<Function>) Res<(), Diagnostic> {
+        is_import = self.m.import(h).match({ Ok(_) => true, None => false });
+        is_import.ensure(self.why(Code.InvalidSymbol, "the trap handler is an import")).try();
+        sig = self.signature(self.signature_of(h).try()).try();
+        u32_first = sig.parameters.get(0).match({ Ok(t) => t.same(ScalarType.U32), None => false });
+        (sig.is_never() && sig.parameters.len == 1 && u32_first)
+            .ensure(self.why(Code.TypeMismatch, "the trap handler is (U32) -> Never"))
+    }
+
+    // ---- functions
+
+    check_function = (self :: @Self, i: usize, f: Function) Res<(), Diagnostic> {
+        (f.id.index.to_usize() == i)
+            .ensure(self.why(Code.InvalidId, "function ids equal their position")).try();
+        sym = self.symbol(f.symbol).try();
+        defined = sym.is_function() && !sym.is_imported();
+        defined.ensure(self.why(Code.InvalidSymbol, "a function is a function symbol defined here")).try();
+        sig = self.signature(f.signature).try();
+        f.register_types.loop((t) { self.check_type(t).try(); });
+        (f.parameters.len == sig.parameters.len)
+            .ensure(self.why(Code.ArityMismatch, "parameters match the signature")).try();
+        f.parameters.loop((h, k, r) {
+            want = self.found(sig.parameters.get(k), "parameter").try();
+            self.same(self.reg(f, r).try(), want, "parameter types match the signature").try();
+        });
+        f.objects.loop((h, k, o) {
+            (o.id.index.to_usize() == k)
+                .ensure(self.why(Code.InvalidId, "stack object ids equal their position")).try();
+            (o.size > 0 && is_power_of_two(o.alignment.to_u64()))
+                .ensure(self.why(Code.InvalidLayout, "stack objects are sized and power-of-two aligned")).try();
+        });
+        self.found(f.block(f.entry), "the entry block exists").try();
+        self.check_blocks(f, sig).try();
+        self.check_definite_initialization(f)
+    }
+
+    // Each block's id, its instructions (ids dense across the function) and its exit.
+    check_blocks = (self :: @Self, f: Function, sig: Signature) Res<(), Diagnostic> {
+        count :: usize = 0;
+        f.blocks.loop((b) { count = count + b.instructions.len; });
+        seen ::= self.a.Vec<bool>();
+        Range(0, count).loop((i) { self.memory(seen.add(false)).try(); });
+        f.blocks.loop((h, k, b) {
+            self.in_block = Ok(b.id);
+            (b.id.index.to_usize() == k)
+                .ensure(self.why(Code.InvalidId, "block ids equal their position")).try();
+            b.instructions.loop((rec) {
+                self.at_instruction = Ok(rec.id);
+                id = rec.id.index.to_usize();
+                (id < count)
+                    .ensure(self.why(Code.InvalidId, "instruction ids are dense: 0..n-1")).try();
+                (!self.found(seen.get(id), "instruction").try())
+                    .ensure(self.why(Code.DuplicateId, "instruction ids are unique")).try();
+                seen.set(id, true);
+                self.check_instruction(f, rec.instruction).try();
+            });
+            self.at_instruction = None;
+            self.check_exit(f, sig, b.exit).try();
+        });
+        self.in_block = None;
+        Ok
+    }
+
+    check_constant = (self: @Self, c: Constant) Res<(), Diagnostic> {
+        c.match({
+            Integer(k)             => {
+                k.type.is_integer()
+                    .ensure(self.why(Code.InvalidConstant, "an integer constant has an integer type")).try();
+                w = k.type.width();
+                (w == 64 || k.bits.shift_right(w.to_usize()) == 0)
+                    .ensure(self.why(Code.InvalidConstant, "integer bits fit the width")).try();
+            },
+            NullFunctionPointer(s) => { self.signature(s).try(); },
+            _                      => (),
+        });
+        Ok
+    }
+
+    // ---- instructions: one rule each
+
+    check_instruction = (self: @Self, f: Function, i: Instruction) Res<(), Diagnostic> {
+        i.match({
+            Set(x)            => self.check_set(f, x),
+            Select(x)         => self.check_select(f, x),
+            IntBinary(x)      => self.check_int_binary(f, x),
+            FloatBinary(x)    => self.check_float(f, x.dst, x.lhs, Ok(x.rhs)),
+            FloatNegate(x)    => self.check_float(f, x.dst, x.value, None),
+            IntCompare(x)     => self.check_int_compare(f, x),
+            PointerCompare(x) => self.check_compare(f, x.dst, x.lhs, x.rhs, ScalarType.Pointer),
+            FloatCompare(x)   => self.check_float_compare(f, x),
+            Convert(x)        => self.check_convert(f, x),
+            Address(x)        => self.check_address(f, x),
+            Load(x)           => self.check_load(f, x),
+            Store(x)          => self.check_store(f, x),
+            Call(x)           => self.check_call(f, x),
+        })
+    }
+
+    check_set = (self: @Self, f: Function, x: Set) Res<(), Diagnostic> {
+        self.same(self.reg(f, x.dst).try(), self.val(f, x.value).try(), "Set needs equal types")
+    }
+
+    check_select = (self: @Self, f: Function, x: Select) Res<(), Diagnostic> {
+        self.same(self.val(f, x.condition).try(), ScalarType.Bool, "a Select condition is Bool").try();
+        t = self.reg(f, x.dst).try();
+        self.same(t, self.val(f, x.yes).try(), "Select needs equal types").try();
+        self.same(t, self.val(f, x.no).try(), "Select needs equal types")
+    }
+
+    // lhs, rhs and dst share one integer type; a shift count may be any integer type.
+    check_int_binary = (self: @Self, f: Function, x: IntBinary) Res<(), Diagnostic> {
+        t = self.reg(f, x.dst).try();
+        t.is_integer().ensure(self.why(Code.TypeMismatch, "IntBinary works on integers")).try();
+        self.same(t, self.val(f, x.lhs).try(), "IntBinary needs equal types").try();
+        r = self.val(f, x.rhs).try();
+        x.op.is_shift().match({
+            true  => r.is_integer().ensure(self.why(Code.TypeMismatch, "a shift count is an integer")),
+            false => self.same(t, r, "IntBinary needs equal types"),
+        })
+    }
+
+    // FloatBinary (two inputs) and FloatNegate (one): equal float types.
+    check_float = (self: @Self, f: Function, dst: Id<Register>, a: Value, b: Res<Value>) Res<(), Diagnostic> {
+        t = self.reg(f, dst).try();
+        t.is_float().ensure(self.why(Code.TypeMismatch, "float operations work on floats")).try();
+        self.same(t, self.val(f, a).try(), "float operations need equal types").try();
+        b.match({
+            Ok(v) => self.same(t, self.val(f, v).try(), "float operations need equal types"),
+            None  => Ok,
+        })
+    }
+
+    // Integers in any order; Bool and FunctionPointer only for Equal and NotEqual.
+    check_int_compare = (self: @Self, f: Function, x: IntCompare) Res<(), Diagnostic> {
+        t = self.val(f, x.lhs).try();
+        comparable = t.match({ Bool => true, FunctionPointer(_) => true, _ => false });
+        allowed = t.is_integer() || comparable && x.op.is_equality();
+        allowed.ensure(self.why(Code.TypeMismatch, "IntCompare needs integers, or equality")).try();
+        self.check_compare(f, x.dst, x.lhs, x.rhs, t)
+    }
+
+    check_float_compare = (self: @Self, f: Function, x: FloatCompare) Res<(), Diagnostic> {
+        t = self.val(f, x.lhs).try();
+        t.is_float().ensure(self.why(Code.TypeMismatch, "FloatCompare works on floats")).try();
+        self.check_compare(f, x.dst, x.lhs, x.rhs, t)
+    }
+
+    // Both inputs have type `t`, and the result is Bool.
+    check_compare = (
+        self: @Self, f: Function, dst: Id<Register>, a: Value, b: Value, t: ScalarType
+    ) Res<(), Diagnostic> {
+        self.same(self.val(f, a).try(), t, "a compare's inputs have one type").try();
+        self.same(self.val(f, b).try(), t, "a compare's inputs have one type").try();
+        self.same(self.reg(f, dst).try(), ScalarType.Bool, "a compare writes Bool")
+    }
+
+    check_convert = (self: @Self, f: Function, x: Convert) Res<(), Diagnostic> {
+        from = self.val(f, x.value).try();
+        to = self.reg(f, x.dst).try();
+        int_float = from.is_integer() && to.is_float() || from.is_float() && to.is_integer();
+        legal = x.op.match({
+            IntegerChecked        => from.is_integer() && to.is_integer(),
+            IntegerWrapping       => from.is_integer() && to.is_integer(),
+            IntegerToFloat        => from.is_integer() && to.is_float(),
+            FloatToIntegerChecked => from.is_float() && to.is_integer(),
+            FloatWidth            => from.is_float() && to.is_float() && !from.same(to),
+            BoolToInteger         => from.same(ScalarType.Bool) && to.is_integer(),
+            PointerToInteger      => from.same(ScalarType.Pointer) && to.same(ScalarType.U64),
+            Bitcast               => from.width() == to.width() && int_float,
+        });
+        legal.ensure(self.why(Code.TypeMismatch, "illegal conversion pair"))
+    }
+
+    // A data base gives a Pointer; a function symbol gives its FunctionPointer at offset 0.
+    check_address = (self: @Self, f: Function, x: Address) Res<(), Diagnostic> {
+        self.val(f, x.byte_offset).try().is_integer()
+            .ensure(self.why(Code.TypeMismatch, "an address offset is an integer")).try();
+        t = self.reg(f, x.dst).try();
+        x.base.match({
+            Register(r)    => self.same(self.reg(f, r).try(), ScalarType.Pointer, "a base is a Pointer").try(),
+            StackObject(o) => { self.found(f.object(o), "unknown stack object").try(); },
+            Symbol(s)      => (),
+        });
+        function = x.base.match({
+            Symbol(s) => self.symbol(s).try().is_function().then(() { s }),
+            _         => None,
+        });
+        function.match({
+            None    => self.same(t, ScalarType.Pointer, "a data address is a Pointer"),
+            Ok(s)   => {
+                sig = self.function_signature(s).try();
+                self.same(t, ScalarType.FunctionPointer(sig), "a function's address is its FunctionPointer").try();
+                zero = x.byte_offset.match({
+                    Constant(c) => c.match({ Integer(k) => k.bits == 0, _ => false }),
+                    Register(_) => false,
+                });
+                zero.ensure(self.why(Code.InvalidInstructionForm, "a function address has offset 0"))
+            },
+        })
+    }
+
+    check_load = (self: @Self, f: Function, x: Load) Res<(), Diagnostic> {
+        self.reg(f, x.dst).try();
+        self.check_access(f, x.address, x.memory)
+    }
+
+    check_store = (self: @Self, f: Function, x: Store) Res<(), Diagnostic> {
+        self.val(f, x.value).try();
+        self.check_access(f, x.address, x.memory)
+    }
+
+    // Load and Store: a Pointer address and a power-of-two alignment.
+    check_access = (self: @Self, f: Function, address: Value, memory: MemoryAccess) Res<(), Diagnostic> {
+        self.same(self.val(f, address).try(), ScalarType.Pointer, "a memory address is a Pointer").try();
+        is_power_of_two(memory.alignment.to_u64())
+            .ensure(self.why(Code.InvalidAlignment, "alignment is a power of two"))
+    }
+
+    check_call = (self: @Self, f: Function, x: Call) Res<(), Diagnostic> {
+        sig = self.callee_signature(f, x.callee, x.args).try();
+        (!sig.is_never())
+            .ensure(self.why(Code.InvalidReturnContract, "a Never callee needs CallNever")).try();
+        result = sig.result.match({ Returns(r) => r, Never => None });
+        result.match({
+            Ok(t) => x.dst.match({
+                Ok(d) => self.same(self.reg(f, d).try(), t, "the call result type matches"),
+                None  => Ok,
+            }),
+            None  => x.dst.match({ Ok(_) => false, None => true })
+                .ensure(self.why(Code.TypeMismatch, "a unit call has no destination")),
+        })
+    }
+
+    // A direct callee's signature, or an indirect callee's FunctionPointer signature.
+    callee_signature_id = (self: @Self, f: Function, callee: Callee) Res<Id<Signature>, Diagnostic> {
+        callee.match({
+            Function(id) => self.signature_of(id),
+            Register(r)  => self.reg(f, r).try().match({
+                FunctionPointer(s) => Ok(s),
+                _                  => Err(self.why(Code.TypeMismatch, "an indirect callee is a FunctionPointer")),
+            }),
+        })
+    }
+
+    // The callee's signature, after checking the arguments against it.
+    callee_signature = (self: @Self, f: Function, callee: Callee, args: Vec<Value>) Res<Signature, Diagnostic> {
+        sig = self.signature(self.callee_signature_id(f, callee).try()).try();
+        (args.len == sig.parameters.len)
+            .ensure(self.why(Code.ArityMismatch, "argument count matches the signature")).try();
+        args.loop((h, k, v) {
+            want = self.found(sig.parameters.get(k), "parameter").try();
+            self.same(self.val(f, v).try(), want, "argument types match the signature").try();
+        });
+        Ok(sig)
+    }
+
+    // ---- exits
+
+    check_exit = (self: @Self, f: Function, sig: Signature, e: Exit) Res<(), Diagnostic> {
+        each_successor(e, (b) { self.found(f.block(b), "a successor block exists").try(); });
+        e.match({
+            Branch(x)    => self.same(self.val(f, x.condition).try(), ScalarType.Bool, "conditions are Bool"),
+            Switch(x)    => self.check_switch(f, self.val(f, x.value).try(), x.cases),
+            Return(x)    => self.check_return(f, sig, x.value),
+            CallNever(x) => self.callee_signature(f, x.callee, x.args).try().is_never()
+                .ensure(self.why(Code.InvalidReturnContract, "CallNever needs a Never callee")),
+            Trap(x)      => x.code.match({
+                Explicit(n) => (n >= 65536)
+                    .ensure(self.why(Code.InvalidConstant, "an explicit trap code is at least 65536")),
+                _           => Ok,
+            }),
+            Jump(_)      => Ok,
+        })
+    }
+
+    check_switch = (self: @Self, f: Function, t: ScalarType, cases: Vec<SwitchCase>) Res<(), Diagnostic> {
+        t.is_integer().ensure(self.why(Code.TypeMismatch, "a switch selector is an integer")).try();
+        values ::= self.a.Vec<u64>();
+        cases.loop((c) {
+            self.same(t, self.val(f, Value.Constant(c.value)).try(), "a case has the selector's type").try();
+            self.memory(values.add(c.value.match({ Integer(k) => k.bits, _ => 0 }))).try();
+        });
+        distinct = all_distinct(self.a, values).match({ Ok(d) => d, Err(_) => false });
+        distinct.ensure(self.why(Code.DuplicateSwitchCase, "switch cases are unique"))
+    }
+
+    check_return = (self: @Self, f: Function, sig: Signature, value: Res<Value>) Res<(), Diagnostic> {
+        (!sig.is_never())
+            .ensure(self.why(Code.InvalidReturnContract, "a Never function cannot return")).try();
+        wanted = sig.result.match({ Returns(r) => r, Never => None });
+        wanted.match({
+            Ok(t) => value.match({
+                Ok(v) => self.same(self.val(f, v).try(), t, "the return value matches the signature"),
+                None  => Err(self.why(Code.InvalidReturnContract, "this function returns a value")),
+            }),
+            None  => value.match({ Ok(_) => false, None => true })
+                .ensure(self.why(Code.InvalidReturnContract, "this function returns nothing")),
+        })
+    }
+
+    // ---- §1.4 definite initialization
+
+    // Forward dataflow over reachable blocks: OUT[b] = IN[b] + defs(b), IN[b] = the
+    // intersection of OUT over b's predecessors (the entry's also holds the parameters).
+    // Then every read must be in the set at that point.
+    check_definite_initialization = (self :: @Self, f: Function) Res<(), Diagnostic> {
+        live = self.reachable(f).try();
+        words = (f.register_types.len + 63) / 64;
+        ins ::= self.sets(f.blocks.len, words).try();
+        outs ::= self.sets(f.blocks.len, words).try();
+        next ::= self.sets(1, words).try();
+        outs.fill(FULL);
+        Range(0, f.blocks.len + 2).loop((h, round) {
+            meet_predecessors(f, live, outs, ins);
+            changed ::= false;
+            f.blocks.loop((h2, k, b) {
+                live.get(k).match({ Ok(true) => (), _ => h2.next() });
+                next.copy(0, ins, k);
+                b.instructions.loop((rec) { each_def(rec.instruction, (r) { next.add(0, r); }); });
+                (outs.equal(k, next, 0)).match({ true => (), false => { changed = true; } });
+                outs.copy(k, next, 0);
+            });
+            changed.match({ false => h.break(), true => () });
+        });
+        meet_predecessors(f, live, outs, ins);
+        f.blocks.loop((h, k, b) {
+            live.get(k).match({ Ok(true) => (), _ => h.next() });
+            self.in_block = Ok(b.id);
+            next.copy(0, ins, k);
+            b.instructions.loop((rec) {
+                self.at_instruction = Ok(rec.id);
+                each_use(rec.instruction, (r) { self.check_initialized(next, r).try(); });
+                each_def(rec.instruction, (r) { next.add(0, r); });
+            });
+            self.at_instruction = None;
+            each_exit_use(b.exit, (r) { self.check_initialized(next, r).try(); });
+        });
+        self.in_block = None;
+        Ok
+    }
+
+    check_initialized = (self: @Self, set: Sets, r: Id<Register>) Res<(), Diagnostic> {
+        set.has(0, r).ensure(self.why(Code.UninitializedRegister, "a register is read before it is set"))
+    }
+
+    sets = (self: @Self, count: usize, words: usize) Res<Sets, Diagnostic> {
+        bits ::= self.a.Vec<u64>();
+        self.memory(bits.reserve(count * words)).try();
+        Range(0, count * words).loop((i) { self.memory(bits.add(0)).try(); });
+        Ok(Sets(words: words, bits: bits))
+    }
+
+    reachable = (self: @Self, f: Function) Res<Vec<bool>, Diagnostic> {
+        seen ::= self.a.Vec<bool>();
+        f.blocks.loop((b) { self.memory(seen.add(false)).try(); });
+        stack ::= self.a.Vec<Id<Block>>();
+        self.memory(stack.add(f.entry)).try();
+        seen.set(f.entry.index.to_usize(), true);
+        Range(0, f.blocks.len + 1).loop((h, _) {
+            (stack.len == 0).then(() { h.break() });
+            b = self.found(stack.take(stack.len - 1), "block").try();
+            each_successor(self.found(f.block(b), "block").try().exit, (s) {
+                first = seen.get(s.index.to_usize()).match({ Ok(true) => false, _ => true });
+                first.then(() { seen.set(s.index.to_usize(), true); self.memory(stack.add(s)).try(); });
+            });
+        });
+        Ok(seen)
+    }
+}
+
+// IN[b] = the intersection of OUT[p] over b's live predecessors. The entry block also
+// has a synthetic predecessor holding exactly the parameters (§1.4).
+meet_predecessors = (f: Function, live: Vec<bool>, outs: Sets, ins :: Sets) {
+    ins.fill(FULL);
+    entry = f.entry.index.to_usize();
+    ins.clear(entry);
+    f.parameters.loop((r) { ins.add(entry, r); });
+    f.blocks.loop((h, p, pred) {
+        live.get(p).match({ Ok(true) => (), _ => h.next() });
+        each_successor(pred.exit, (s) { ins.meet(s.index.to_usize(), outs, p); });
+    });
+}
+
+FULL: u64 = 18446744073709551615
+ONE: u64 = 1
+
+// One register set per block, as bits: `words` u64s per set.
+Sets = {
+    words: usize,
+    bits :: Vec<u64>,
+
+    word = (self: @Self, set: usize, w: usize) u64 {
+        self.bits.get(set * self.words + w).match({ Ok(x) => x, None => 0 })
+    }
+    put = (self :: @Self, set: usize, w: usize, x: u64) {
+        self.bits.set(set * self.words + w, x);
+    }
+
+    has = (self: @Self, set: usize, r: Id<Register>) bool {
+        self.word(set, (r.index / 64).to_usize()).shift_right((r.index % 64).to_usize()).bit_and(1) == 1
+    }
+
+    add = (self :: @Self, set: usize, r: Id<Register>) {
+        w = (r.index / 64).to_usize();
+        self.put(set, w, self.word(set, w).bit_or(ONE.shift_left((r.index % 64).to_usize())));
+    }
+
+    fill = (self :: @Self, x: u64) {
+        Range(0, self.bits.len).loop((i) { self.bits.set(i, x); });
+    }
+
+    clear = (self :: @Self, set: usize) {
+        Range(0, self.words).loop((w) { self.put(set, w, 0); });
+    }
+
+    // Set `to` becomes a copy of `from`'s set `set`.
+    copy = (self :: @Self, to: usize, from: Sets, set: usize) {
+        Range(0, self.words).loop((w) { self.put(to, w, from.word(set, w)); });
+    }
+
+    // Set `to` keeps only what `from`'s set `set` also holds.
+    meet = (self :: @Self, to: usize, from: Sets, set: usize) {
+        Range(0, self.words).loop((w) { self.put(to, w, self.word(to, w).bit_and(from.word(set, w))); });
+    }
+
+    equal = (self: @Self, a: usize, other: Sets, b: usize) bool {
+        same ::= true;
+        Range(0, self.words).loop((h, w) {
+            (self.word(a, w) != other.word(b, w)).then(() { same = false; h.break(); });
+        });
+        same
+    }
+}
+
+is_power_of_two = (n: u64) bool { n != 0 && n.bit_and(n - 1) == 0 }
+
+GOLDEN: u64 = 11400714819323198485
+
+// Whether no value repeats: an open-addressing set, linear in the count.
+all_distinct = (a: Alloc, values: Vec<u64>) Res<bool, AllocError> {
+    size :: u64 = 2;
+    Range(0, 64).loop((h, i) {
+        (size >= (values.len * 2).to_u64()).then(() { h.break() });
+        size = size * 2;
+    });
+    slots ::= a.Vec<u64>();
+    used ::= a.Vec<bool>();
+    Range(0, size).loop((i) { slots.add(0).try(); used.add(false).try(); });
+    distinct ::= true;
+    values.loop((h, v) {
+        i ::= (v *% GOLDEN) % size;
+        Range(0, size).loop((h2, step) {
+            slot = i.to_usize().match({ Ok(x) => x, None => 0 });
+            taken = used.get(slot).match({ Ok(b) => b, None => false });
+            (!taken).then(() { used.set(slot, true); slots.set(slot, v); h2.break(); });
+            (slots.get(slot).match({ Ok(x) => x, None => 0 }) == v).then(() { distinct = false; h2.break(); });
+            i = (i + 1) % size;
+        });
+        distinct.match({ false => h.break(), true => () });
+    });
+    Ok(distinct)
+}

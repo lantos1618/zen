@@ -4,8 +4,8 @@
 # ZEN0_STD  its standard library      (default ~/zen/jit-land/src/std)
 set -eu
 test=$1 exe=$2
-zen=${ZEN0:-$HOME/zen/zen/zen}
-std=${ZEN0_STD:-$HOME/zen/jit-land/src/std}
+zen=${ZEN0:-$HOME/zen/stage0/zen}
+std=${ZEN0_STD:-$HOME/zen/stage0/std}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

@@ -1,0 +1,18 @@
+// Catches: signed `/` and `%` rounding toward negative infinity (floor) instead of
+// toward zero, or a remainder that takes the divisor's sign instead of the dividend's.
+{ Res, IoError } = std.core
+{ Env } = std.env
+
+show = (env: Env, a: i32, b: i32) Res<IoError> { env.out.println("{} {}", a / b, a % b) }
+
+main = (env: Env) Res<IoError> {
+    show(env, 7, 2).try();
+    show(env, -7, 2).try();
+    show(env, 7, -2).try();
+    show(env, -7, -2)
+}
+
+//! out: 3 1
+//! out: -3 -1
+//! out: -3 1
+//! out: 3 -1

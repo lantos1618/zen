@@ -1,0 +1,457 @@
+// COMPILER.md Appendix B: the reference interpreter. It is the oracle every route is
+// compared against, and the comptime engine (I.4).
+//
+// Integers are kept encoded in u64: two's complement, masked to their width. Every
+// overflow is computed, never trapped on by the host.
+//
+// A trap or a failure travels on the error channel as a `Stop`, so `.try()` returns
+// early from any depth: a trap in a nested call unwinds to `run` with no checks between.
+
+{
+    Res, Ok, Err, None, Range, to_usize, to_u64, to_u128, truncate_u64,
+    bit_and, bit_or, bit_xor, shift_left, shift_right
+} = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{
+    Module, Function, Block, ScalarType, IntegerConstant, Value,
+    Instruction, Exit, Callee, IntOp, Overflow, IntPredicate,
+    TrapCode, Id, Register
+} = ir.records
+{ DiagnosticCode, DiagnosticStage, Diagnostic } = ir.diagnostic
+{ Int, int } = ir.int
+{ Ir } = ir.validate
+{ Limits } = limits
+
+RuntimeValue* = {
+    | Int: IntegerConstant
+    | Bool: bool
+    | F32: u32
+    | F64: u64
+    | NullPointer
+    | Function: Id<Function>
+    | NullFunction,
+
+    // Whether this value is a well-formed value of type t (integers masked to the width).
+    fits_type* = (self: @Self, t: ScalarType) bool {
+        self.match({
+            Int(k)       => k.type.same(t) && k.bits.bit_and(int(t).mask()) == k.bits,
+            Bool(_)      => t.match({ Bool => true, _ => false }),
+            F32(_)       => t.match({ F32 => true, _ => false }),
+            F64(_)       => t.match({ F64 => true, _ => false }),
+            NullPointer  => t.match({ Pointer => true, _ => false }),
+            Function(_)  => t.match({ FunctionPointer(_) => true, _ => false }),
+            NullFunction => t.match({ FunctionPointer(_) => true, _ => false }),
+        })
+    }
+}
+
+// B.2: a program fault that is neither a value nor a trap.
+InterpreterFault* = {
+    | DeadAllocation
+    | OutOfBoundsAccess
+    | Misaligned
+    | PermissionDenied
+    | UninitializedMemory
+    | InvalidPointer
+    | ImportContractViolation
+}
+
+Outcome* = {
+    | Returned: Res<RuntimeValue>
+    | Trapped: TrapCode
+    | Fault: InterpreterFault
+    | ResourceLimit
+}
+
+// Why execution stopped early: an outcome to report (a trap, a limit), or a diagnostic.
+Stop = {
+    | Halt: Outcome
+    | Fail: Diagnostic
+}
+
+Next = {
+    | Go: Id<Block>
+    | Done: Res<RuntimeValue>
+}
+
+
+// Run one function of a validated module.
+run* = (
+    a    : Alloc,
+    ir   : Ir,
+    f    : Id<Function>,
+    args : Vec<RuntimeValue>
+) Res<Outcome, Diagnostic> {
+    m        = ir.view();
+    function = m.function(f).match({
+        Ok(function) => function,
+        None         => diagnostic<Function>(
+            DiagnosticCode.UnsupportedFeature,
+            "running an import"
+        ).try(),
+    });
+    (args.len == function.parameters.len).match({
+        true  => (),
+        false => diagnostic<()>(
+            DiagnosticCode.ArityMismatch,
+            "argument count differs from the signature"
+        ).try(),
+    });
+    function.parameters.loop((h, k, r) {
+        t  = function.register_type(
+            r
+        ).match({ Ok(t) => t, None => ScalarType.Bool });
+        ok = args.get(k).match({ Ok(v) => v.fits_type(t), None => false });
+        ok.match({
+            true  => (),
+            false => diagnostic<()>(
+                DiagnosticCode.TypeMismatch,
+                "an argument does not fit its parameter"
+            ).try(),
+        });
+    });
+
+    machine ::= Machine(
+        m: m,
+        a: a,
+        frames: a.Vec<Vec<RuntimeValue>>(),
+        staged: a.Vec<Vec<RuntimeValue>>(),
+        steps: 0,
+        depth: 0
+    );
+    machine.call(f, args).match({
+        Ok(value) => Ok(Outcome.Returned(value)),
+        Err(stop) => stop.match({
+            Halt(outcome) => Ok(outcome),
+            Fail(d)       => Err(d),
+        }),
+    })
+}
+
+diagnostic = <T>(code: DiagnosticCode, what: str) Res<T, Diagnostic> {
+    Err(Diagnostic(
+        code: code,
+        stage: DiagnosticStage.IR,
+        function: None,
+        block: None,
+        instruction: None,
+        message: what,
+    ))
+}
+
+fail = <T>(code: DiagnosticCode, what: str) Res<T, Stop> {
+    diagnostic<T>(code, what).match({
+        Ok(x)  => Ok(x),
+        Err(d) => Err(Stop.Fail(d)),
+    })
+}
+
+halt = <T>(outcome: Outcome) Res<T, Stop> { Err(Stop.Halt(outcome)) }
+
+trapped = <T>(code: TrapCode) Res<T, Stop> { halt<T>(Outcome.Trapped(code)) }
+
+// An integer result in the interpreter: the bits, or a Stop carrying the trap.
+arith = (r: Res<u64, TrapCode>) Res<u64, Stop> {
+    r.match({
+        Ok(bits) => Ok(bits),
+        Err(code) => trapped<u64>(code),
+    })
+}
+
+// ---- the machine
+
+Machine = {
+    m: Module,
+    a: Alloc,
+    frames :: Vec<Vec<RuntimeValue>>,     // registers, one buffer per call depth, reused
+    staged :: Vec<Vec<RuntimeValue>>,     // call arguments, one buffer per call depth, reused
+    steps :: u64,
+    depth :: u32,
+
+    call = (self :: @Self, id: Id<Function>, args: Vec<RuntimeValue>) Res<Res<RuntimeValue>, Stop> {
+        f = self.m.function(id).match({
+            Ok(f) => f,
+            None  => fail<Function>(
+                DiagnosticCode.UnsupportedFeature,
+                "calls to imports"
+            ).try(),
+        });
+        (self.depth >= Limits.RUN_DEPTH).match({ true => halt<()>(
+            Outcome.ResourceLimit
+        ).try(), false => () });
+
+        regs ::= self.buffer(self.frames, f.register_types.len).try();
+        f.parameters.loop((h, k, r) {
+            regs.set(
+                r.index.to_usize(),
+                args.get(k).match({ Ok(v) => v, None => RuntimeValue.Bool(false) })
+            );
+        });
+
+        self.depth = self.depth + 1;
+        value      = self.blocks(f, regs).try();
+        self.depth = self.depth - 1;
+        Ok(value)
+    }
+
+    // Running out of memory is a resource limit, like steps and depth.
+    memory = (self: @Self, r: Res<AllocError>) Res<(), Stop> {
+        r.match({
+            Ok     => Ok,
+            Err(_) => halt<()>(Outcome.ResourceLimit),
+        })
+    }
+
+    // The buffer for the current call depth: cleared, then n values long.
+    // A depth's buffer is free again once the call at that depth has returned.
+    buffer = (self :: @Self, pool :: Vec<Vec<RuntimeValue>>, n: usize) Res<Vec<RuntimeValue>, Stop> {
+        d = self.depth.to_usize();
+        Range(pool.len, d + 1).loop((i) { self.memory(pool.add(self.a.Vec<RuntimeValue>())).try(); });
+        v ::= pool.get(d).match({ Ok(v) => v, None => halt<Vec<RuntimeValue>>(Outcome.ResourceLimit).try() });
+        v.clear();
+        self.memory(v.reserve(n)).try();
+        Range(0, n).loop((i) { self.memory(v.add(RuntimeValue.Bool(false))).try(); });
+        pool.set(d, v);
+        Ok(v)
+    }
+
+    // Runs blocks until a Return; every other way out is a Stop.
+    blocks = (self :: @Self, f: Function, regs :: Vec<RuntimeValue>) Res<Res<RuntimeValue>, Stop> {
+        at       ::= f.entry;
+        returned :: Res<RuntimeValue> = None;
+        done     ::= false;
+        Range(0, Limits.RUN_STEPS).loop((h, _) {
+            b = f.block(at).match({
+                Ok(b) => b,
+                None  => fail<Block>(
+                    DiagnosticCode.InvalidSuccessor,
+                    "a missing block"
+                ).try(),
+            });
+            b.instructions.loop((rec) {
+                self.steps = self.steps + 1;
+                (self.steps > Limits.RUN_STEPS).match({ true => halt<()>(
+                    Outcome.ResourceLimit
+                ).try(), false => () });
+                self.execute(f, regs, rec.instruction).try();
+            });
+            self.exit(regs, b.exit).try().match({
+                Go(next) => { at = next; },
+                Done(v)  => { returned = v; done = true; h.break(); },
+            });
+        });
+        done.match({
+            true  => Ok(returned),
+            false => halt<Res<RuntimeValue>>(Outcome.ResourceLimit),
+        })
+    }
+
+    value = (self: @Self, regs: Vec<RuntimeValue>, v: Value) RuntimeValue {
+        v.match({
+            Register(r) => regs.get(r.index.to_usize()).match({ Ok(x) => x, None => RuntimeValue.Bool(false) }),
+            Constant(c) => c.match({
+                Bool(b)                => RuntimeValue.Bool(b),
+                Integer(k)             => RuntimeValue.Int(k),
+                F32Bits(b)             => RuntimeValue.F32(b),
+                F64Bits(b)             => RuntimeValue.F64(b),
+                NullPointer            => RuntimeValue.NullPointer,
+                NullFunctionPointer(_) => RuntimeValue.NullFunction,
+            }),
+        })
+    }
+
+    int = (self: @Self, regs: Vec<RuntimeValue>, v: Value) IntegerConstant {
+        self.value(regs, v).match({
+            Int(k) => k,
+            _      => IntegerConstant(type: ScalarType.U64, bits: 0),
+        })
+    }
+
+    truth = (self: @Self, regs: Vec<RuntimeValue>, v: Value) bool {
+        self.value(regs, v).match({ Bool(b) => b, _ => false })
+    }
+
+    // Inputs are read before the destination is written, so `r = r + 1` reads the old r.
+    execute = (self :: @Self, f: Function, regs :: Vec<RuntimeValue>, i: Instruction) Res<(), Stop> {
+        set = (r: Id<Register>, v: RuntimeValue) { regs.set(
+            r.index.to_usize(),
+            v
+        ); }
+        integer = (t: ScalarType, bits: u64) RuntimeValue { RuntimeValue.Int(IntegerConstant(
+            type: t,
+            bits: bits
+        )) }
+
+        i.match({
+            Set(x)        => set(x.dst, self.value(regs, x.value)),
+
+            Select(x)     => set(x.dst, self.truth(regs, x.condition).match({
+                true  => self.value(regs, x.yes),
+                false => self.value(regs, x.no),
+            })),
+
+            IntBinary(x)  => {
+                l    = self.int(regs, x.lhs);
+                r    = self.int(regs, x.rhs);
+                t    = int(l.type);
+                bits = x.op.match({
+                    Add(mode)      => arith(t.add(l.bits, r.bits, mode)).try(),
+                    Subtract(mode) => arith(t.subtract(l.bits, r.bits, mode)).try(),
+                    Multiply(mode) => arith(t.multiply(l.bits, r.bits, mode)).try(),
+                    Divide         => arith(t.divide(l.bits, r.bits, false)).try(),
+                    Remainder      => arith(t.divide(l.bits, r.bits, true)).try(),
+                    And            => l.bits.bit_and(r.bits),
+                    Or             => l.bits.bit_or(r.bits),
+                    Xor            => l.bits.bit_xor(r.bits),
+                    _              => arith(t.shift(l.bits, r, x.op)).try(),
+                });
+                set(x.dst, integer(l.type, bits));
+            },
+
+            IntCompare(x) => {
+                equal  = x.op.match({ Equal => true, _ => false });
+                r      = self.value(regs, x.rhs);
+                result = self.value(regs, x.lhs).match({
+                    Int(a)       => int(a.type).compare(
+                        x.op,
+                        a.bits,
+                        r.match({ Int(b) => b.bits, _ => 0 })
+                    ),
+                    Bool(a)      => (a == r.match({ Bool(b) => b, _ => false })) == equal,
+                    Function(a)  => r.match({ Function(b) => a.index == b.index, _ => false }) == equal,
+                    NullFunction => r.match({ NullFunction => true, _ => false }) == equal,
+                    _            => false,     // validation keeps floats and data pointers out of IntCompare
+                });
+                set(x.dst, RuntimeValue.Bool(result));
+            },
+
+            Convert(x)    => {
+                to = f.register_type(
+                    x.dst
+                ).match({ Ok(t) => t, None => ScalarType.U64 });
+                x.op.match({
+                    BoolToInteger   => set(
+                        x.dst,
+                        integer(
+                            to,
+                            self.truth(
+                                regs,
+                                x.value
+                            ).match({ true => 1, false => 0 })
+                        )
+                    ),
+                    IntegerWrapping => {
+                        k = self.int(regs, x.value);
+                        set(
+                            x.dst,
+                            integer(
+                                to,
+                                int(k.type).wrap_to(int(to), k.bits)
+                            )
+                        );
+                    },
+                    IntegerChecked  => {
+                        k = self.int(regs, x.value);
+                        int(k.type).fits_in(int(to), k.bits).match({
+                            true  => (),
+                            false => trapped<()>(
+                                TrapCode.InvalidConversion
+                            ).try(),
+                        });
+                        set(
+                            x.dst,
+                            integer(
+                                to,
+                                int(k.type).wrap_to(int(to), k.bits)
+                            )
+                        );
+                    },
+                    _               => fail<()>(
+                        DiagnosticCode.UnsupportedFeature,
+                        "float and pointer conversions"
+                    ).try(),
+                });
+            },
+
+            Call(x)       => {
+                result = self.call(
+                    self.callee(regs, x.callee).try(),
+                    self.arguments(regs, x.args).try()
+                ).try();
+                x.dst.match({
+                    Ok(d) => result.match({ Ok(v) => set(d, v), None => () }),
+                    None  => (),
+                });
+            },
+
+            _             => fail<()>(
+                DiagnosticCode.UnsupportedFeature,
+                "float and memory instructions"
+            ).try(),
+        });
+        Ok
+    }
+
+    arguments = (self :: @Self, regs: Vec<RuntimeValue>, args: Vec<Value>) Res<Vec<RuntimeValue>, Stop> {
+        values ::= self.buffer(self.staged, args.len).try();
+        args.loop((h, k, v) { values.set(k, self.value(regs, v)); });
+        Ok(values)
+    }
+
+    callee = (self: @Self, regs: Vec<RuntimeValue>, c: Callee) Res<Id<Function>, Stop> {
+        c.match({
+            Function(id) => Ok(id),
+            Register(r)  => self.value(regs, Value.Register(r)).match({
+                Function(id) => Ok(id),
+                _            => halt<Id<Function>>(Outcome.Fault(
+                    InterpreterFault.InvalidPointer
+                )),
+            }),
+        })
+    }
+
+    // Where control goes next: another block, or out with the returned value.
+    // A Trap is a Stop.
+    exit = (self :: @Self, regs :: Vec<RuntimeValue>, e: Exit) Res<Next, Stop> {
+        e.match({
+            Jump(x)      => Ok(Next.Go(x.target)),
+
+            Branch(x)    => Ok(Next.Go(
+                self.truth(
+                    regs,
+                    x.condition
+                ).match({ true => x.yes, false => x.no })
+            )),
+
+            Switch(x)    => {
+                k = self.int(regs, x.value);
+                target ::= x.default;
+                x.cases.loop((h, c) {
+                    hit = c.value.match({ Integer(v) => v.bits == k.bits, _ => false });
+                    hit.match({ true => { target = c.target; h.break(); }, false => () });
+                });
+                Ok(Next.Go(target))
+            },
+
+            Return(x)    => Ok(Next.Done(x.value.match({
+                Ok(v) => Ok(self.value(regs, v)),
+                None  => None,
+            }))),
+
+            Trap(x)      => trapped<Next>(x.code),
+
+            CallNever(x) => {
+                self.call(
+                    self.callee(regs, x.callee).try(),
+                    self.arguments(regs, x.args).try()
+                ).try();
+                fail<Next>(
+                    DiagnosticCode.InvalidReturnContract,
+                    "a Never function returned"
+                )
+            },
+        })
+    }
+}

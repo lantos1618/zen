@@ -1,0 +1,13 @@
+// Catches: `i32 + usize` accepted with the left operand's type, which silently
+// truncates the right one. The language refuses it and names both conversions.
+{ Res, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> {
+    a: i32 = 1;
+    b: usize = 2;
+    env.out.println("{}", a + b)
+}
+
+//! error: 9:31
+//! hint: i32 + usize: write b.to_i32() or a.to_usize()

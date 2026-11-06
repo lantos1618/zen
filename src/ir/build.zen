@@ -1,0 +1,23 @@
+// Short constructors for IR values and records: what builders, tests and transforms
+// write, so each spells a register, a constant or an instruction one way.
+
+{ Res, Ok } = std.core
+{
+    ScalarType, Constant, IntegerConstant, Value, Instruction, InstructionRecord,
+    IntBinary, IntOp, Overflow, Id, Register
+} = ir.records
+
+reg* = (i: u32) Id<Register> { Id<Register>(index: i) }
+
+// The value held in a register.
+value_of* = (r: Id<Register>) Value { Value.Register(r) }
+
+i32_const* = (n: u64) Value { Value.Constant(Constant.Integer(IntegerConstant(type: ScalarType.I32, bits: n))) }
+
+record* = (id: u32, i: Instruction) InstructionRecord { InstructionRecord(id: Id<Instruction>(index: id), instruction: i) }
+
+int_op* = (op: IntOp, dst: Id<Register>, lhs: Value, rhs: Value) Instruction {
+    Instruction.IntBinary(IntBinary(dst: dst, op: op, lhs: lhs, rhs: rhs))
+}
+
+checked_add* = (dst: Id<Register>, lhs: Value, rhs: Value) Instruction { int_op(IntOp.Add(Overflow.Checked), dst, lhs, rhs) }

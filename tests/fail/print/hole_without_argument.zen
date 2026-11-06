@@ -1,0 +1,9 @@
+// Catches: a hole with no argument accepted, which would print whatever is in the slot.
+// The error points at the unfilled hole (stage 0 points at the call).
+{ Res, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> { env.out.println("{} and {}", 5) }
+
+//! error: 6:58
+//! hint: this hole has no argument

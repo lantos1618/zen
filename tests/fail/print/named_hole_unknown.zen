@@ -1,0 +1,9 @@
+// Catches: a named hole that names no binding accepted. The error points at the name
+// inside the format string.
+{ Res, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> { env.out.println("x = {x}", 5) }
+
+//! error: 6:56
+//! hint: unknown name

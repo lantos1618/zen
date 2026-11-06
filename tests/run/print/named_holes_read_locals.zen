@@ -1,0 +1,13 @@
+// Catches: a named hole printing the wrong binding (or the next positional argument),
+// or named holes consuming positional arguments.
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
+main = (env: Env) Res<IoError> {
+    a = 4;
+    b = a < 3;
+    env.out.println("{b} {} {a} {}", 1, 2).try();
+    Ok
+}
+
+//! out: false 1 4 2

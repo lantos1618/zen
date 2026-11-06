@@ -1,0 +1,7 @@
+// Catches: arguments bound to the wrong parameters (50 - 8 would become 8 - 50), or
+// the call's result dropped.
+
+sub = (a: i32, b: i32) i32 { a - b }
+main = () i32 { sub(50, 8) }
+
+//! exit: 42

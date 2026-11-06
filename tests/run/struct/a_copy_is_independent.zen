@@ -1,0 +1,15 @@
+// Catches: assigning a struct copying a pointer to it instead of its bytes, so writing
+// through the copy changes the original.
+{ Res, IoError } = std.core
+{ Env } = std.env
+
+Point = { x :: i32, y :: i32 }
+
+main = (env: Env) Res<IoError> {
+    a ::= Point(x: 1, y: 2);
+    b ::= a;
+    b.x = 10;
+    env.out.println("{} {} {} {}", a.x, a.y, b.x, b.y)
+}
+
+//! out: 1 2 10 2

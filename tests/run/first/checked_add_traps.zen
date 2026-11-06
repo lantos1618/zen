@@ -1,0 +1,8 @@
+// Catches: `+` lowered as a wrapping add, so i32 MAX + 1 silently becomes MIN.
+// The value arrives through a parameter: `2147483647 + 1` written directly is a provable
+// trap, which ZEN_LANGUAGE.md §8 makes a compile error instead.
+
+bump = (x: i32) i32 { x + 1 }
+main = () i32 { bump(2147483647) }
+
+//! exit: 134

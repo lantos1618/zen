@@ -1,0 +1,7 @@
+// Catches: `_` taking the case an earlier arm already named (true must reach `_`,
+// false must reach its own arm).
+
+pick = (b: bool) i32 { b.match({ false => 5, _ => 7 }) }
+main = () i32 { pick(true) * 10 + pick(false) }
+
+//! exit: 75

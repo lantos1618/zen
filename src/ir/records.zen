@@ -1,0 +1,354 @@
+// COMPILER.md §1.1, one to one. Every table is dense: an ID is its position,
+// so `module.functions[f]` is one index. validate proves `table[i].id == i`.
+// Instruction ids are dense per function too: each of 0..n-1 exactly once.
+
+{ Res, Ok, None, to_usize, to_u64 } = std.core
+{ Vec } = std.collections
+{ str } = std.text
+
+// One ID type: K says what it names, so an Id<Block> can't be passed as an Id<Register>.
+Id*<K> = { index*: u32 }
+
+// What a register ID names; registers have no record of their own.
+Register* = {}
+
+
+ScalarType* = {
+    | Bool
+    | I8
+    | U8
+    | I16
+    | U16
+    | I32
+    | U32
+    | I64
+    | U64
+    | F32
+    | F64
+    | Pointer
+    | FunctionPointer: Id<Signature>,
+
+    // Same variant, and for function pointers the same signature.
+    same* = (self: @Self, other: ScalarType) bool {
+        self.match({
+            FunctionPointer(s) => other.match({ FunctionPointer(t) => s.index == t.index, _ => false }),
+            _                  => self.variant_name().eq(other.variant_name()),
+        })
+    }
+
+    is_integer* = (self: @Self) bool {
+        self.match({
+            I8  => true, U8  => true,
+            I16 => true, U16 => true,
+            I32 => true, U32 => true,
+            I64 => true, U64 => true,
+            _   => false,
+        })
+    }
+
+    is_signed* = (self: @Self) bool {
+        self.match({ I8 => true, I16 => true, I32 => true, I64 => true, _ => false })
+    }
+
+    is_float* = (self: @Self) bool {
+        self.match({ F32 => true, F64 => true, _ => false })
+    }
+
+    width* = (self: @Self) u32 {
+        self.match({
+            Bool => 8,  I8  => 8,  U8  => 8,
+            I16  => 16, U16 => 16,
+            I32  => 32, U32 => 32, F32 => 32,
+            _    => 64,
+        })
+    }
+}
+
+IntegerConstant* = { type*: ScalarType, bits*: u64 }
+
+Constant* = {
+    | Bool: bool
+    | Integer: IntegerConstant
+    | F32Bits: u32
+    | F64Bits: u64
+    | NullPointer
+    | NullFunctionPointer: Id<Signature>,
+
+    type* = (self: @Self) ScalarType {
+        self.match({
+            Bool(_)                => ScalarType.Bool,
+            Integer(c)             => c.type,
+            F32Bits(_)             => ScalarType.F32,
+            F64Bits(_)             => ScalarType.F64,
+            NullPointer            => ScalarType.Pointer,
+            NullFunctionPointer(s) => ScalarType.FunctionPointer(s),
+        })
+    }
+}
+
+Value* = {
+    | Register: Id<Register>
+    | Constant: Constant
+}
+
+Overflow* = {
+    | Checked
+    | Wrapping
+}
+IntOp* = {
+    | Add: Overflow
+    | Subtract: Overflow
+    | Multiply: Overflow
+    | Divide
+    | Remainder
+    | And
+    | Or
+    | Xor
+    | ShiftLeft
+    | ShiftRightLogical
+    | ShiftRightArithmetic,
+
+    is_shift* = (self: @Self) bool {
+        self.match({ ShiftLeft => true, ShiftRightLogical => true, ShiftRightArithmetic => true, _ => false })
+    }
+}
+FloatOp* = {
+    | Add
+    | Subtract
+    | Multiply
+    | Divide
+}
+IntPredicate* = {
+    | Equal
+    | NotEqual
+    | Less
+    | LessEqual
+    | Greater
+    | GreaterEqual,
+
+    is_equality* = (self: @Self) bool { self.match({ Equal => true, NotEqual => true, _ => false }) }
+}
+FloatPredicate* = {
+    | Equal
+    | NotEqual
+    | Less
+    | LessEqual
+    | Greater
+    | GreaterEqual
+    | Unordered
+}
+ConvertOp* = {
+    | IntegerChecked
+    | IntegerWrapping
+    | IntegerToFloat
+    | FloatToIntegerChecked
+    | FloatWidth
+    | BoolToInteger
+    | PointerToInteger
+    | Bitcast
+}
+AddressBase* = {
+    | Register: Id<Register>
+    | StackObject: Id<StackObject>
+    | Symbol: Id<Symbol>
+}
+Callee* = {
+    | Function: Id<Function>
+    | Register: Id<Register>
+}
+Access* = {
+    | Ordinary
+    | Volatile
+}
+MemoryAccess* = { alignment*: u32, access*: Access }
+
+// The trap's program result (§1.2) is its discriminant. Explicit codes are the
+// catch-all, made only by TrapCode.from_discriminant(n), and validation requires n >= 65536.
+TrapCode* = {
+    | IntegerOverflow = 1
+    | DivisionByZero = 2
+    | InvalidShift = 3
+    | InvalidConversion = 4
+    | InvalidValue = 5
+    | StackOverflow = 6
+    | Explicit: u32
+}
+
+Set* = { dst*: Id<Register>, value*: Value }
+Select* = { dst*: Id<Register>, condition*: Value, yes*: Value, no*: Value }
+IntBinary* = { dst*: Id<Register>, op*: IntOp, lhs*: Value, rhs*: Value }
+FloatBinary* = { dst*: Id<Register>, op*: FloatOp, lhs*: Value, rhs*: Value }
+FloatNegate* = { dst*: Id<Register>, value*: Value }
+IntCompare* = { dst*: Id<Register>, op*: IntPredicate, lhs*: Value, rhs*: Value }
+PointerCompare* = { dst*: Id<Register>, op*: IntPredicate, lhs*: Value, rhs*: Value }
+FloatCompare* = { dst*: Id<Register>, op*: FloatPredicate, lhs*: Value, rhs*: Value }
+Convert* = { dst*: Id<Register>, op*: ConvertOp, value*: Value }
+Address* = { dst*: Id<Register>, base*: AddressBase, byte_offset*: Value }
+Load* = { dst*: Id<Register>, address*: Value, memory*: MemoryAccess }
+Store* = { address*: Value, value*: Value, memory*: MemoryAccess }
+Call* = { dst*: Res<Id<Register>>, callee*: Callee, args*: Vec<Value> }
+
+Instruction* = {
+    | Set: Set
+    | Select: Select
+    | IntBinary: IntBinary
+    | FloatBinary: FloatBinary
+    | FloatNegate: FloatNegate
+    | IntCompare: IntCompare
+    | PointerCompare: PointerCompare
+    | FloatCompare: FloatCompare
+    | Convert: Convert
+    | Address: Address
+    | Load: Load
+    | Store: Store
+    | Call: Call
+}
+
+SwitchCase* = { value*: Constant, target*: Id<Block> }
+Jump* = { target*: Id<Block> }
+Branch* = { condition*: Value, yes*: Id<Block>, no*: Id<Block> }
+Switch* = { value*: Value, cases*: Vec<SwitchCase>, default*: Id<Block> }
+Return* = { value*: Res<Value> }
+CallNever* = { callee*: Callee, args*: Vec<Value> }
+Trap* = { code*: TrapCode }
+
+Exit* = {
+    | Jump: Jump
+    | Branch: Branch
+    | Switch: Switch
+    | Return: Return
+    | CallNever: CallNever
+    | Trap: Trap
+}
+
+ReturnContract* = {
+    | Returns: Res<ScalarType>
+    | Never
+}
+Abi* = {
+    | AppleArm64
+    | Aapcs64Linux
+    | SysVAMD64
+}
+Backend* = {
+    | NativeAssembly
+    | C
+}
+CallingConvention* = {
+    | PlatformDefault
+    | Exact: Abi
+}
+
+Signature* = {
+    parameters*: Vec<ScalarType>,
+    result*: ReturnContract,
+    calling_convention*: CallingConvention,
+
+    is_never* = (self: @Self) bool { self.result.match({ Never => true, Returns(_) => false }) }
+}
+
+SymbolKind* = {
+    | Function
+    | Data
+}
+Linkage* = {
+    | Internal
+    | ExternalDefinition
+    | ExternalImport
+}
+Symbol* = {
+    id*: Id<Symbol>,
+    kind*: SymbolKind,
+    linkage*: Linkage,
+    external_name*: Res<str>,
+
+    is_function* = (self: @Self) bool { self.kind.match({ Function => true, Data => false }) }
+    is_imported* = (self: @Self) bool { self.linkage.match({ ExternalImport => true, _ => false }) }
+    is_external* = (self: @Self) bool { self.linkage.match({ Internal => false, _ => true }) }
+    must_be_defined* = (self: @Self) bool { self.linkage.match({ ExternalDefinition => true, _ => false }) }
+}
+
+AddressPart* = { symbol*: Id<Symbol>, addend*: i64, type*: ScalarType }
+InitializerPart* = {
+    | Bytes: Vec<u8>
+    | ZeroBytes: u64
+    | Address: AddressPart,
+
+    size* = (self: @Self) u64 {
+        self.match({ Bytes(b) => b.len.to_u64(), ZeroBytes(n) => n, Address(_) => 8 })
+    }
+}
+Definition* = {
+    | Function: Id<Function>
+    | Global: Id<Global>
+}
+Export* = { symbol*: Id<Symbol>, definition*: Definition }
+Global* = {
+    symbol*: Id<Symbol>, size*: u64, alignment*: u32, mutable*: bool,
+    initializer*: Vec<InitializerPart>,
+}
+StackObject* = { id*: Id<StackObject>, size*: u64, alignment*: u32 }
+InstructionRecord* = { id*: Id<Instruction>, instruction*: Instruction }
+Block* = { id*: Id<Block>, instructions*: Vec<InstructionRecord>, exit*: Exit }
+
+Function* = {
+    id*: Id<Function>,
+    symbol*: Id<Symbol>,
+    signature*: Id<Signature>,
+    parameters*: Vec<Id<Register>>,
+    register_types*: Vec<ScalarType>,       // Id<Register> is the position
+    objects*: Vec<StackObject>,             // Id<StackObject> is the position
+    entry*: Id<Block>,
+    blocks*: Vec<Block>,                    // Id<Block> is the position
+
+    register_type* = (self: @Self, r: Id<Register>) Res<ScalarType> { self.register_types.get(
+        r.index.to_usize()
+    ) }
+    block* = (self: @Self, b: Id<Block>) Res<Block> { self.blocks.get(
+        b.index.to_usize()
+    ) }
+    object* = (self: @Self, o: Id<StackObject>) Res<StackObject> { self.objects.get(
+        o.index.to_usize()
+    ) }
+}
+
+// Function ids are dense across definitions and imports: definitions first, then imports.
+Import* = { function*: Id<Function>, symbol*: Id<Symbol>, signature*: Id<Signature> }
+
+Module* = {
+    signatures*: Vec<Signature>,
+    symbols*: Vec<Symbol>,
+    globals*: Vec<Global>,
+    imports*: Vec<Import>,
+    functions*: Vec<Function>,
+    exports*: Vec<Export>,
+    trap_handler*: Res<Id<Function>>,     // an Import of type (U32) -> Never
+
+    signature* = (self: @Self, s: Id<Signature>) Res<Signature> { self.signatures.get(
+        s.index.to_usize()
+    ) }
+    symbol* = (self: @Self, s: Id<Symbol>) Res<Symbol> { self.symbols.get(
+        s.index.to_usize()
+    ) }
+    global* = (self: @Self, g: Id<Global>) Res<Global> { self.globals.get(
+        g.index.to_usize()
+    ) }
+    function* = (self: @Self, f: Id<Function>) Res<Function> { self.functions.get(
+        f.index.to_usize()
+    ) }
+    import* = (self: @Self, f: Id<Function>) Res<Import> {
+        i = f.index.to_usize();
+        (i < self.functions.len).match({
+            true  => None,
+            false => self.imports.get(i - self.functions.len),
+        })
+    }
+
+    // The signature of a defined or imported function.
+    signature_of* = (self: @Self, f: Id<Function>) Res<Id<Signature>> {
+        self.function(f).match({
+            Ok(function) => Ok(function.signature),
+            None         => Ok(self.import(f).try().signature),
+        })
+    }
+}

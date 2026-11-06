@@ -1,0 +1,7 @@
+// Catches: a non-exhaustive bool match accepted, which would run no arm for false.
+
+f = (b: bool) i32 { b.match({ true => 1 }) }
+main = () i32 { f(true) }
+
+//! error: 3:21
+//! hint: this match doesn't cover both true and false

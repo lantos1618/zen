@@ -1910,10 +1910,11 @@ callback_refused = (span: Span) LowerError {
 }
 
 // `callback(f)` is the code address of a named concrete Zen function whose
-// parameters and result are C words. It captures nothing.
+// parameters and result are C words. It captures nothing. A target that
+// calls C by symbol (the jit) hands C an entry stub at that address.
 native_callback = (lo :: Lowerer, id: ExprId, c: Call, span: Span)
                   Res<Value, LowerError> {
-    lo.c_calls.ensure(unsupported(
+    (lo.c_calls || lo.externs).ensure(unsupported(
         span,
         "a native callback on a target without C"
     )).try();

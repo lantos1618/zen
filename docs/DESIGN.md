@@ -890,7 +890,7 @@ compare = (left: Ptr<()>, right: Ptr<()>) i32 {
 // Pass callback(compare) to a native function-pointer parameter.
 ```
 
-It returns a raw `Ptr<()>` containing the function address. The C backend accepts
+It returns a raw `Ptr<()>` containing the function address. The C and jit backends accept
 only one named, nongeneric free function with a body, explicitly typed immutable
 scalar or pointer parameters, and a scalar, pointer, or unit result. An omitted
 return annotation on a function body means unit and is accepted here too. It rejects
@@ -902,6 +902,12 @@ has stopped invoking it. Thread affinity and synchronization remain the
 caller's responsibility. Raw function/data pointer conversion uses the native
 C toolchain convention supported by the POSIX targets, not a portable ISO C
 guarantee. Objective-C blocks and automatic closure capture are separate features.
+Under the jit (Linux x86-64) the address is a reverse stub entry: C may call it
+while the program is inside a C call, including from a signal handler that
+interrupts that call. A signal that arrives while the jit runs Zen code or makes
+a system call itself is deferred: the stub returns zero at once and the callback
+runs at the interpreter's next safe point (after a C call, a system call, or a
+volatile or atomic load).
 
 # Comptime and `@meta`
 

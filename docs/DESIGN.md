@@ -2546,7 +2546,9 @@ itself is not checked: it is where the masks are built.
 The analysis is intraprocedural and flow-insensitive: names are resolved
 through block and closure scopes to the binding they denote, and once a
 binding is secret it is secret throughout the function, including in
-closures that capture it. Not tracked yet: values leaving a closure through `h.break(v)`,
+closures that capture it. A local function is checked where it is declared
+by the same rules as a top-level one: its parameters and result say what is
+secret, and its calls meet the call rule. Not tracked yet: values leaving a closure through `h.break(v)`,
 calls through function values, globals, and a generic function instantiated
 at a secret type (its parameters are not written `Secret`, so the call rule
 refuses the secret argument instead). None of this reaches the C backend:

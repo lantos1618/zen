@@ -1,0 +1,28 @@
+// tests/corpus/codegen/unit_fields_store_nothing.zen
+// a unit-sized field (here `env: Env`) takes no storage, so building a
+// record writes nothing for it: a one-byte store at its offset would land
+// past the end of the 4-byte record, on whatever the stack puts next
+// (the IR verifier rejects such a store outright)
+
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Tagged = {
+    id: i32,
+    env: Env,
+}
+
+Pair = {
+    first :: Tagged,
+    after: i32,
+}
+
+main = (env: Env) Res<i32> {
+    pair ::= Pair(first: Tagged(id: 0, env: env), after: 255);
+    pair.first = Tagged(id: 1, env: env);
+    rows ::= [Tagged(id: 2, env: env), Tagged(id: 3, env: env)];
+    rows[0] = Tagged(id: 4, env: env);
+    println("{} {} {} {}", pair.first.id, pair.after, rows[0].id, rows[1].id);
+    Ok(0)
+}

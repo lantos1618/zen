@@ -33,7 +33,7 @@
 { Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, SysValue, NativeValue, Secrecy, Reach } = gen.gen_ir
 { SysConstant } = gen.gen_sys
-{ word, integer, float, same, width } = gen.gen_ir
+{ word, integer, float, same, width, empty } = gen.gen_ir
 { LowerError, unsupported } = gen.gen_lower
 { Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
 { to_bound, bound_of, handle_for_place, resolve } = gen.gen_lower_member
@@ -245,8 +245,20 @@ Lowerer* = {
     // blocks and slots
     // -------------------------------------------------------------------
 
+    // A value that takes no storage (a unit field) stores nothing: its
+    // store would land past the end of the record that holds it.
     add* = (self :: @Self, instruction: Instruction) Res<LowerError> {
-        self.code.add(instruction).try(LowerError.OutOfMemory);
+        empty = instruction.match({
+            StoreValue(s) => empty(self.slots.get(s.value).value_or(Scalar.Ptr)),
+            _             => false,
+        });
+        empty.match({
+            true  => Ok,
+            false => {
+                self.code.add(instruction).try(LowerError.OutOfMemory);
+                Ok
+            },
+        })
     }
 
     slot_of* = (self :: @Self, class: Scalar) Res<usize, LowerError> {
@@ -921,7 +933,13 @@ Lowerer* = {
 
     name = (self :: @Self, id: ExprId, text: str, span: Span) Res<Value, LowerError> {
         self.lookup(text).match({
-            Ok(Direct(v))     => self.copy_value(v),
+            Ok(Direct(v))     => self.placed(id, v.ty).match({
+                Ok(p) => {
+                    self.write(p, v).try();
+                    Ok(placed_value(p))
+                },
+                None  => self.copy_value(v),
+            }),
             Ok(Ref(p))        => self.read(p),
             Ok(Capability(t)) => self.constant_unit_of(t),
             Ok(Closure(_))    => Err(unsupported(
@@ -1011,8 +1029,22 @@ Lowerer* = {
         );
         constant.match({
             Ok(d) => self.global_const(d, ty, span),
-            None  => self.variant_for(id, ty, text, span),
+            // A bare variant of a Res (`None`) takes the settled Res its
+            // context wants rather than being remapped from its own form.
+            None  => self.variant_for(
+                id,
+                self.bare_variant_type(id, ty).try(),
+                text,
+                span
+            ),
         })
+    }
+
+    bare_variant_type = (self :: @Self, id: ExprId, ty: TyId) Res<TyId, LowerError> {
+        wanted = self.narrowed(id).try();
+        Ok(
+            (self.is_res(ty) && self.is_res(wanted)).match({ true => wanted, false => ty })
+        )
     }
 
     global_const = (self :: @Self, d: Def, ty: TyId, span: Span) Res<Value, LowerError> {
@@ -1835,7 +1867,8 @@ Lowerer* = {
             drops: self.drops.len,
             defers: self.defers.len
         )).try(LowerError.OutOfMemory);
-        last ::= self.unit().try();
+        last   ::= self.unit().try();
+        placed ::= false;
         block.stmts.loop((h, i, s) {
             // A final `expr;` sema ran as a statement (`sema_hoist.statement_tail`)
             // leaves the block `()`, which the unit-success result lifts to `Ok`.
@@ -1844,17 +1877,21 @@ Lowerer* = {
             last = s.kind.match({
                 Expr(e)     => tail.match({
                     // A semicolon-terminated tail may settle the block value.
-                    // One sema left open (`Ok(None)` beside `Ok(Ok(v))`) is
-                    // lowered at the type the block's value is wanted at;
-                    // a unit block discards its tail whatever its type.
-                    true  => want.match({
-                        Ok(t) => (used && t != self.unit_ty && self.settled(t)
-                            && !self.settled(self.type_of(e.expr).try()))
-                            .match({
-                                true  => self.expr_as(e.expr, t),
+                    // A tail that is the value of the block's place is built
+                    // there; a unit block discards its tail whatever its type.
+                    true  => into.match({
+                        Ok(p) => {
+                            fits = self.tail_into(e.expr, p.ty, used).try();
+                            fits.match({
+                                true  => {
+                                    self.expr_into(e.expr, p.ty, p).try();
+                                    placed = true;
+                                    Ok(placed_value(p))
+                                },
                                 false => self.expr(e.expr),
-                            }),
-                        None  => self.expr(e.expr),
+                            })
+                        },
+                        None  => self.tail_value(e.expr, used, want),
                     }),
                     false => { self.expr(e.expr).try(); self.unit() },
                 }),
@@ -1874,7 +1911,9 @@ Lowerer* = {
             Ok(p) => {
                 block.value.match({
                     Ok(e) => self.expr_into(e, p.ty, p).try(),
-                    None  => self.write(p, self.coerce(last, p.ty).try()).try(),
+                    None  => (!placed).then(() {
+                        self.write(p, self.coerce(last, p.ty).try()).try();
+                    }),
                 });
                 Ok(placed_value(p))
             },
@@ -1898,6 +1937,34 @@ Lowerer* = {
         self.scopes.take(self.scopes.len - 1);
         self.release_locals(mark);
         Ok(value)
+    }
+
+    // A tail sema left open (`Ok(None)` beside `Ok(Ok(v))`) is lowered at
+    // the type the block's value is wanted at.
+    tail_value = (self :: @Self, id: ExprId, used: bool, want: Res<TyId>)
+                 Res<Value, LowerError> {
+        want.match({
+            Ok(t) => (used && t != self.unit_ty && self.settled(t)).match({
+                true  => self.settled(self.type_of(id).try()).match({
+                    true  => self.expr(id),
+                    false => self.expr_as(id, t),
+                }),
+                false => self.expr(id),
+            }),
+            None  => self.expr(id),
+        })
+    }
+
+    // Whether a semicolon-terminated tail is the value of a block built
+    // in a place of `ty`: lowered at that type, not coerced afterwards.
+    tail_into = (self :: @Self, id: ExprId, ty: TyId, used: bool) Res<bool, LowerError> {
+        (used && ty != self.unit_ty).match({
+            true  => {
+                own = self.type_of(id).try();
+                Ok(own == ty || (self.settled(ty) && !self.settled(own)))
+            },
+            false => Ok(false),
+        })
     }
 
     // A final `expr;` sema ran as a statement (`sema_hoist.statement_tail`).
@@ -2158,8 +2225,7 @@ Lowerer* = {
                                 LocalKind.Capability(ty)
                             ),
                             false => {
-                                value = self.bind_value(b.value, ty).try();
-                                slot  = self.copy_value(value).try();
+                                slot = self.local_slot(b.value, ty).try();
                                 self.bind_local(
                                     n.text,
                                     LocalKind.Direct(slot)
@@ -2216,9 +2282,18 @@ Lowerer* = {
         })
     }
 
-    // A capability or closure keeps its binding form; values get a slot.
-    bind_value = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
-        self.expr_as(id, ty)
+    // A fresh binding's slot: a settled value is built straight in it;
+    // otherwise the value's own lowered type names the slot it is copied to.
+    local_slot = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
+        stored = self.settled(ty) && self.check.types.at(ty).match({ Fn(_) => false, _ => true });
+        stored.match({
+            true  => {
+                slot = self.temp(ty).try();
+                self.expr_into(id, ty, slot_place(slot)).try();
+                Ok(slot)
+            },
+            false => self.copy_value(self.expr_as(id, ty).try()),
+        })
     }
 
     // -------------------------------------------------------------------
@@ -3346,18 +3421,14 @@ Lowerer* = {
         bad      = self.label().try();
         self.branch_to(is_ok, good, bad).try();
         self.start(bad);
-        frame   = self.here();
-        failure = self.failure_for(
+        frame = self.here();
+        self.failure_at(
             value,
             variants,
-            frame.ret_ty,
+            slot_place(Value(slot: frame.ret_slot, ty: frame.ret_ty)),
             error,
             span
         ).try();
-        self.add(Instruction.Copy(Move(
-            out: frame.ret_slot,
-            source: failure.slot
-        ))).try();
         // Leaving the frame runs the cleanup of every scope it opened.
         self.unwind(frame.depth).try();
         self.jump(frame.ret_block).try();
@@ -3401,17 +3472,19 @@ Lowerer* = {
         })
     }
 
-    // The frame's result for a failed operand: None stays None; an error
-    // becomes the frame's Err, mapped or replaced when `.try(e)` says so.
-    failure_for = (self :: @Self, value: Value, variants: Vec<VariantAt>, ret: TyId,
-                   error: Res<ExprId>, span: Span) Res<Value, LowerError> {
+    // Write the frame's result for a failed operand at `place`: None stays
+    // None; an error becomes the frame's Err, mapped or replaced when
+    // `.try(e)` says so.
+    failure_at = (self :: @Self, value: Value, variants: Vec<VariantAt>, place: Place,
+                  error: Res<ExprId>, span: Span) Res<LowerError> {
+        ret             = place.ty;
         target_variants = self.variants_of(ret).try();
         variant_index(variants, "Err").match({
             None    => error.match({
-                None  => self.variant_value(ret, "None", None, span),
+                None  => self.variant_at(place, "None", None, span),
                 Ok(e) => {
                     reason = self.replacement(e, ret, None).try();
-                    self.variant_value(ret, "Err", Ok(reason), span)
+                    self.variant_at(place, "Err", Ok(reason), span)
                 },
             }),
             Ok(err) => {
@@ -3428,9 +3501,9 @@ Lowerer* = {
                             target,
                             span
                         ).try();
-                        self.variant_value(ret, "Err", Ok(converted), span)
+                        self.variant_at(place, "Err", Ok(converted), span)
                     },
-                    None  => self.variant_value(ret, "None", None, span),
+                    None  => self.variant_at(place, "None", None, span),
                 })
             },
         })

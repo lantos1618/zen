@@ -25,7 +25,8 @@ IrReason* = { EntryFunction
     | Target
     | Uninitialized
     | Guard
-    | UnguardedPayload }
+    | UnguardedPayload
+    | EmptyStore }
 
 message* = (reason: IrReason) str {
     reason.match({
@@ -42,6 +43,7 @@ message* = (reason: IrReason) str {
         Uninitialized    => "slot is read before initialization on a reachable path",
         Guard            => "a recorded tag guard does not branch on that slot's tag",
         UnguardedPayload => "a payload is read without a test for its alternative on every path",
+        EmptyStore       => "a store writes a value that takes no storage",
     })
 }
 
@@ -286,7 +288,8 @@ Check = {
                 self.expect(value.base, Scalar.Ptr)
             },
             StoreValue(value)    => {
-                self.slot(value.value).try();
+                stored = self.slot(value.value).try();
+                (width(stored) > 0).ensure(self.fault(IrReason.EmptyStore)).try();
                 self.expect(value.base, Scalar.Ptr)
             },
             CopyBytes(value)     => {

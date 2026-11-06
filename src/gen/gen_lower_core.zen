@@ -245,8 +245,20 @@ Lowerer* = {
     // blocks and slots
     // -------------------------------------------------------------------
 
+    // A value that takes no storage (a unit field) stores nothing: its
+    // store would land past the end of the record that holds it.
     add* = (self :: @Self, instruction: Instruction) Res<LowerError> {
-        self.code.add(instruction).try(LowerError.OutOfMemory);
+        empty = instruction.match({
+            StoreValue(s) => width(self.slots.get(s.value).value_or(Scalar.Ptr)) == 0,
+            _             => false,
+        });
+        empty.match({
+            true  => Ok,
+            false => {
+                self.code.add(instruction).try(LowerError.OutOfMemory);
+                Ok
+            },
+        })
     }
 
     slot_of* = (self :: @Self, class: Scalar) Res<usize, LowerError> {

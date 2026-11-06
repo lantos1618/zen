@@ -3,4 +3,3 @@
 # line its jit run prints. `make jitcorpus` fails when a listed test passes,
 # is refused, fails with any other line, or leaves the corpus, and when an
 # unlisted test fails: fix a gap, then delete its line.
-tests/corpus/file-io/posix_stream/main	main.zen:93:43: error: unsupported by this backend: a native callback on a target without C

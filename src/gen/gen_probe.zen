@@ -24,11 +24,15 @@ needs_probe* = (program: Program) bool {
     program.natives.len > 0 || program.functions.find((f) {
         f.blocks.find((block) {
             block.code.find((i) {
-                i.match({ NativeConst(_) => true, _ => false })
+                i.match({ NativeConst(v) => !runtime_value(v), _ => false })
             }).match({ Ok(_) => true, None => false })
         }).match({ Ok(_) => true, None => false })
     }).match({ Ok(_) => true, None => false })
 }
+
+// A value the C library changes as the program runs, so the jit reads it
+// when the instruction runs rather than asking the probe: `errno`.
+runtime_value* = (v: NativeValue) bool { v.header.eq("errno.h") && v.name.eq("errno") }
 
 // The C program whose standard output `resolve` reads; None when a constant
 // has a class the probe cannot print. `target` identifies the host in the
@@ -146,7 +150,7 @@ resolve* = (a: Alloc, program: Program, output: str) Res<bool, AllocError> {
                     code ::= block.code;
                     block.code.loop((h, j, instruction) {
                         instruction.match({
-                            NativeConst(v)  => {
+                            NativeConst(v)  => (!runtime_value(v)).then(() {
                                 k = asked(questions, v, f).value_or(0);
                                 code.set(
                                     j,
@@ -155,7 +159,7 @@ resolve* = (a: Alloc, program: Program, output: str) Res<bool, AllocError> {
                                         value: numbers.get(k).value_or(0)
                                     ))
                                 );
-                            },
+                            }),
                             NativeLayout(m) => {
                                 at    = record_at(
                                     program,
@@ -209,7 +213,7 @@ questions_of = (program: Program, out :: Vec<Question>) Res<bool, AllocError> {
         f.blocks.loop((block) {
             block.code.loop((i) {
                 i.match({
-                    NativeConst(v) => c_integer(f.slots.get(v.out).value_or(Scalar.Unit)).match({
+                    NativeConst(v) => (!runtime_value(v)).then(() { c_integer(f.slots.get(v.out).value_or(Scalar.Unit)).match({
                         None      => { known = false; },
                         Ok(ctype) => asked(out, v, f).match({
                             Ok(_) => (),
@@ -220,7 +224,7 @@ questions_of = (program: Program, out :: Vec<Question>) Res<bool, AllocError> {
                                 ctype: ctype
                             )).try(),
                         }),
-                    }),
+                    }); }),
                     _              => (),
                 });
             });

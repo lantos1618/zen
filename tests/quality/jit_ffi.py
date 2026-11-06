@@ -165,6 +165,98 @@ main = () {
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("the host C compiler could not answer", result.stdout)
 
+    def test_c_calls_back_into_zen_functions(self):
+        header = self.root / "callbacks.h"
+        header.write_text("""
+#pragma once
+double zen_ffi_apply(double (*f)(long, double), long n, double x);
+long zen_ffi_twice(long (*f)(long), long x);
+""")
+        library = self.cc('#include "callbacks.h"\n' + """
+double zen_ffi_apply(double (*f)(long, double), long n, double x) { return f(n, x); }
+long zen_ffi_twice(long (*f)(long), long x) { return f(f(x)); }
+""", "callbacks.so", "-shared", "-fPIC")
+        self.source.write_text('''
+{ println } = std.io
+{ callback } = std.native
+{ Ptr, null_ptr, AllocError } = std.mem
+{ Res, Ok } = std.core
+{ Env } = std.env
+C = c.bind("''' + str(header) + '''", {
+    zen_ffi_apply = (f: Ptr<()>, n: i64, x: f64) f64
+    zen_ffi_twice = (f: Ptr<()>, x: i64) i64
+})
+Sort = c.bind("stdlib.h", "qsort", {
+    sort* = (base: Ptr<()>, count: usize, size: usize, compare: Ptr<()>) ()
+})
+scale = (n: i64, x: f64) f64 {
+    println("scale {}", n);
+    x * 2.0
+}
+step = (x: i64) i64 { x + 1 }
+nested = (x: i64) i64 { C.zen_ffi_twice(callback(step), x) }
+compare = (a: Ptr<()>, b: Ptr<()>) i32 {
+    a.to<i32>().read(0) - b.to<i32>().read(0)
+}
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", C.zen_ffi_apply(callback(scale), 3, 1.25) == 2.5);
+    println("{}", C.zen_ffi_twice(callback(step), 40));
+    println("{}", C.zen_ffi_twice(callback(nested), 0));
+    a ::= env.mem.alloc();
+    values = a.realloc<i32>(null_ptr<i32>(), 3).try();
+    values.write(0, 9);
+    values.write(1, 1);
+    values.write(2, 5);
+    Sort.sort(values.to<()>(), 3, 4, callback(compare));
+    println("{} {} {}", values.read(0), values.read(1), values.read(2));
+    Ok(0)
+}
+''')
+        result = self.jit(LD_PRELOAD=str(library))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "scale 3\ntrue\n42\n4\n1 5 9\n")
+
+    def test_signal_outside_a_c_call_runs_at_the_next_safe_point(self):
+        # kill is a system call the interpreter makes itself, so the handler
+        # arrives while no C call is parked: the stub defers it, and the
+        # interpreter runs it as the system call returns, before `after`.
+        self.source.write_text('''
+{ println } = std.io
+{ callback } = std.native
+{ Ptr } = std.mem
+{ kill } = std.sys
+Signals = c.bind("signal.h", {
+    signal = (number: i32, handler: Ptr<()>) Ptr<()>
+    SIGUSR1: i32
+})
+Native = c.bind("unistd.h", { getpid = () i32 })
+handled = (number: i32) { println("handled {}", number == Signals.SIGUSR1); }
+main = () i32 {
+    Signals.signal(Signals.SIGUSR1, callback(handled));
+    kill(Native.getpid(), Signals.SIGUSR1);
+    println("after");
+    0
+}
+''')
+        result = self.jit()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "handled true\nafter\n")
+
+    def test_errno_is_read_when_the_program_runs(self):
+        self.source.write_text('''
+{ println } = std.io
+{ Ptr } = std.mem
+Native = c.bind("unistd.h", { read = (fd: i32, bytes: Ptr<u8>, count: usize) i64 })
+Errors = c.bind("errno.h", { errno: i32, EBADF: i32 })
+main = () {
+    count = Native.read(-1, "x".ptr(), 1);
+    println("{}", count < 0 && Errors.errno == Errors.EBADF);
+}
+''')
+        result = self.jit()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "true\n")
+
     def test_executable_mapping_refusal_is_reported(self):
         wrapper = self.cc("""
 #include <errno.h>

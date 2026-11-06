@@ -6,10 +6,20 @@
 // from a frame, calls the symbol, and stores both result registers back.
 // General calls use the x86-64 System V stub. The standard malloc/free
 // signatures have typed host calls on every supported JIT platform.
+//
+// C calls back into the program through reverse stubs: a program that both
+// calls C through the stub and takes a code address (`callback(f)`) gets one
+// executable entry per function, and `CodeAddress` yields that entry. The
+// entry saves the argument registers in a block on the C stack and hands it
+// to the interpreter's trampoline, which runs the function and leaves both
+// result registers in the block. The interpreter is only re-entered while it
+// is parked in a C call; at any other moment (a signal during interpreted
+// code) the entry records the arguments, marks the call pending and returns
+// zero, and the interpreter runs it at its next safe point.
 { Alloc, AllocError, Ptr, null_ptr } = std.mem
 { Vec, Map } = std.collections
 { String, str, c_text } = std.text
-{ Res, Ok, Err, None, loop, Range } = std.core
+{ Res, Ok, Err, None, loop, Range, truncate_u8, truncate_u32, shift_right } = std.core
 { mmap, mprotect, munmap, pointer_at, address_of, call_entry } = std.sys
 { Program, Func, Scalar, ForeignCall, float, same } = gen.gen_ir
 { Platform } = gen.gen_sys
@@ -62,8 +72,17 @@ heap_call = (f: Func, call: ForeignCall) Res<HeapCall> {
 
 // Each symbol's address, the stub, and the frame it reads: the function,
 // the stack word count, six integer registers, eight SSE registers, the
-// two results (rax, xmm0), then the stack words.
-Linked* = { symbols*: Map<str, usize>, stub*: usize, frame*: usize }
+// two results (rax, xmm0), then the stack words. `code` is the address of
+// function 0's entry, `state` the reverse stubs' page (0 without them):
+// the trampoline, the parked word, the interpreter's cell, the pending
+// word, then one record per function from STATE_RECORDS.
+Linked* = {
+    symbols* : Map<str, usize>,
+    stub*    : usize,
+    frame*   : usize,
+    code*    : usize,
+    state*   : usize
+}
 
 // `Missing` names a symbol no library defines; `Refused` the function whose
 // C call this host cannot make.
@@ -76,6 +95,28 @@ STACK_WORDS: usize = 16
 FRAME_BYTES: usize = 4096
 STUB_WORDS: usize = 18
 
+// Without reverse stubs, code addresses are function entries above this
+// base that only the interpreter can call.
+CODE_BASE: usize = 1152921504606846976
+ENTRY_BYTES: usize = 16
+COMMON_WORDS: usize = 24
+// Where the common reverse stub's immediate state address sits.
+COMMON_STATE: usize = 95
+STATE_PARKED: usize = 8
+STATE_CELL: usize = 16
+STATE_PENDING: usize = 24
+STATE_RECORDS: usize = 64
+RECORD_BYTES: usize = 256
+
+// A reverse stub's block: the function, six integer registers, eight SSE
+// registers, the two results (rax, xmm0), then the forward frame it saves.
+BLOCK_INTS*: usize = 8
+BLOCK_FLOATS*: usize = 56
+BLOCK_WORD*: usize = 120
+BLOCK_FLOAT*: usize = 128
+BLOCK_SAVED*: usize = 144
+SAVED_BYTES*: usize = 272
+
 // Every C function the program calls, resolved; the stub mapped when there
 // is one.
 link* = (a: Alloc, program: Program, platform: Platform)
@@ -84,11 +125,12 @@ link* = (a: Alloc, program: Program, platform: Platform)
     refused    :: Res<str> = None;
     missing    :: Res<str> = None;
     needs_stub ::= false;
+    calls_back ::= false;
     program.functions.loop((f) {
         f.blocks.loop((block) {
             block.code.loop((i) {
                 i.match({
-                    Foreign(call) => {
+                    Foreign(call)  => {
                         bridged    = heap_call(
                             f,
                             call
@@ -113,7 +155,8 @@ link* = (a: Alloc, program: Program, platform: Platform)
                             },
                         });
                     },
-                    _             => (),
+                    CodeAddress(_) => { calls_back = true; },
+                    _              => (),
                 });
             });
         });
@@ -126,7 +169,9 @@ link* = (a: Alloc, program: Program, platform: Platform)
                 false => Ok(Linking.Ready(Linked(
                     symbols: symbols,
                     stub: 0,
-                    frame: 0
+                    frame: 0,
+                    code: CODE_BASE,
+                    state: 0
                 ))),
                 true  => {
                     stub  = mapped(mmap(0, FRAME_BYTES, 3, 34, -1, 0));
@@ -146,15 +191,130 @@ link* = (a: Alloc, program: Program, platform: Platform)
                                 "the stub for calls of C functions"
                             ))
                         },
-                        true  => Ok(Linking.Ready(Linked(
-                            symbols: symbols,
-                            stub: stub,
-                            frame: frame
-                        ))),
+                        true  => {
+                            linked = Linked(
+                                symbols: symbols,
+                                stub: stub,
+                                frame: frame,
+                                code: CODE_BASE,
+                                state: 0
+                            );
+                            calls_back.match({
+                                false => Ok(Linking.Ready(linked)),
+                                true  => reverse(
+                                    linked,
+                                    program.functions.len
+                                ).match({
+                                    Ok(entries) => Ok(Linking.Ready(entries)),
+                                    None        => Ok(Linking.Refused(
+                                        "the stubs for calls back from C"
+                                    )),
+                                }),
+                            })
+                        },
                     })
                 },
             }),
         }),
+    })
+}
+
+// `linked` with one reverse stub entry for each of `count` functions: entry
+// k loads k into eax and jumps to the common stub after the entries, whose
+// immediate is the state page.
+reverse = (linked: Linked, count: usize) Res<Linked> {
+    common = count * ENTRY_BYTES;
+    size   = round_up(common + COMMON_WORDS * 8, FRAME_BYTES);
+    pages  = round_up(STATE_RECORDS + count * RECORD_BYTES, FRAME_BYTES);
+    code   = mapped(mmap(0, size, 3, 34, -1, 0));
+    state  = mapped(mmap(0, pages, 3, 34, -1, 0));
+    executable ::= false;
+    (code != 0 && state != 0).then(() {
+        Range(0, count).loop((k) {
+            at   = code + k * ENTRY_BYTES;
+            jump = common - k * ENTRY_BYTES - 10;
+            pointer_at(at).write(0, 184);
+            pointer_at(at + 1).to<u32>().write(0, k.truncate_u32());
+            pointer_at(at + 5).write(0, 233);
+            pointer_at(at + 6).to<u32>().write(0, jump.truncate_u32());
+            Range(10, ENTRY_BYTES).loop((i) { pointer_at(at + i).write(0, 204); });
+        });
+        Range(0, COMMON_WORDS).loop((i) { put(code + common + i * 8, common_word(i)); });
+        Range(COMMON_STATE, COMMON_STATE + 8).loop((i) {
+            pointer_at(code + common + i).write(0, state.shift_right((i - COMMON_STATE) * 8).truncate_u8());
+        });
+        executable = mprotect(code, size, 5) == 0;
+    });
+    executable.match({
+        true  => Ok(Linked(
+            symbols: linked.symbols,
+            stub: linked.stub,
+            frame: linked.frame,
+            code: code,
+            state: state
+        )),
+        false => {
+            (code != 0).then(() { munmap(code, size); });
+            (state != 0).then(() { munmap(state, pages); });
+            None
+        },
+    })
+}
+
+round_up = (n: usize, to: usize) usize { (n + to - 1) / to * to }
+
+// The code address of function `index`.
+entry_of* = (
+    linked : Linked,
+    index  : usize
+) usize { linked.code + index * ENTRY_BYTES }
+
+// The function whose code address is `code`; None for any other address.
+function_of* = (linked: Linked, code: usize) Res<usize> {
+    (code >= linked.code && (code - linked.code) % ENTRY_BYTES == 0).ensure().try();
+    Ok((code - linked.code) / ENTRY_BYTES)
+}
+
+// Whether C may call back during this call: the stub makes it, and the
+// reverse stubs exist. A heap call is never re-entered.
+calls_back* = (linked: Linked, f: Func, call: ForeignCall) bool {
+    linked.state != 0 && heap_call(
+        f,
+        call
+    ).match({ Ok(_) => false, None => true })
+}
+
+// The trampoline the reverse stubs call, and the interpreter's cell.
+install* = (linked: Linked, trampoline: usize, cell: usize) {
+    put(linked.state, trampoline.to_u64());
+    put(linked.state + STATE_CELL, cell.to_u64());
+}
+
+// The interpreter's cell, as `install` set it.
+cell_of* = (state: usize) usize { pointer_at(state + STATE_CELL).to<usize>().read(0) }
+
+// Whether a reverse stub may re-enter the interpreter now.
+park* = (state: usize, parked: bool) {
+    pointer_at(state + STATE_PARKED).to<u64>().write_volatile(0, parked.match({ true => 1, false => 0 }));
+}
+
+// Whether any call was deferred since the last look, claimed.
+pending* = (linked: Linked) bool {
+    word = pointer_at(linked.state + STATE_PENDING).to<u64>();
+    (linked.state != 0 && word.read_volatile(0) != 0).match({
+        true  => { word.write_volatile(0, 0); true },
+        false => false,
+    })
+}
+
+// The record of a deferred call of function `index`, claimed; 0 when none
+// is pending.
+claim* = (linked: Linked, index: usize) usize {
+    record = linked.state + STATE_RECORDS + index * RECORD_BYTES;
+    flag   = pointer_at(record).to<u64>();
+    (flag.read_volatile(0) != 0).match({
+        true  => { flag.write_volatile(0, 0); record },
+        false => 0,
     })
 }
 
@@ -298,6 +458,47 @@ stub_word = (i: usize) u64 {
         15 => 38425552237232128,
         16 => 6647858843928231936,
         17 => 12803419,
+        _  => 0,
+    })
+}
+
+// The common reverse stub, little-endian words of its bytes:
+//   push rbp; mov rbp, rsp; sub rsp, 416      (the block, 16-aligned)
+//   mov [rsp], rax; mov [rsp+8..48], rdi, rsi, rdx, rcx, r8, r9
+//   movq [rsp+56..112], xmm0..7; movabs r11, <state>
+//   cmp qword [r11+8], 0; je 1f
+//   mov rdi, rsp; mov rsi, r11; call [r11]
+//   mov rax, [rsp+120]; movq xmm0, [rsp+128]; leave; ret
+//   1: mov rcx, [rsp]; shl rcx, 8; lea rdi, [r11+rcx+64]
+//   mov ecx, 14; 2: mov rdx, [rsp+rcx*8]; mov [rdi+rcx*8], rdx; dec rcx; jnz 2b
+//   mov qword [rdi], 1; mov qword [r11+24], 1
+//   xor eax, eax; pxor xmm0, xmm0; leave; ret
+common_word = (i: usize) u64 {
+    i.match({
+        0  => 11595785290660792405,
+        1  => 5198284857557385217,
+        2  => 2626875425131101321,
+        3  => 9892183125835466768,
+        4  => 2892512217157084236,
+        5  => 15424659605720697164,
+        6  => 2615700845223224388,
+        7  => 7370180736979002944,
+        8  => 15424659743160718863,
+        9  => 2624708044480062564,
+        10 => 7379188073672697440,
+        11 => 52716566642218511,
+        12 => 5260204364768739328,
+        13 => 9892184567526751107,
+        14 => 5193775453659811047,
+        15 => 9547085798439142539,
+        16 => 5243255393026605092,
+        17 => 5262704384837684363,
+        18 => 16188806233229,
+        19 => 1479793993923119104,
+        20 => 14359995099096500431,
+        21 => 4883952585255420167,
+        22 => 7403971663466856728,
+        23 => 14757395220261826319,
         _  => 0,
     })
 }

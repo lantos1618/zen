@@ -11,7 +11,8 @@
 //
 // One thread only: a program that starts threads is refused before it runs.
 
-{ Alloc, AllocError, Ptr } = std.mem
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ callback } = std.native
 { Vec } = std.collections
 { str, String } = std.text
 { Span } = std.source
@@ -25,18 +26,28 @@
     pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy,
     pthread_cond_init, pthread_cond_wait, pthread_cond_signal,
     pthread_cond_broadcast, pthread_cond_destroy, sched_getaffinity, sysconf,
-    pointer_at, address_of, envp
+    pointer_at, address_of, envp, exit_group
 } = std.sys
 {
     Program, Func, Scalar, Instruction, Terminator, Op, Binary, Unary, Convert,
     Print, FloatFormat, SysCall, Load, Store, Update, Compare, TrapKind, Stream, StartValue,
+    ForeignCall,
     trap_message, width, signed, integer, float, same
 } = gen.gen_ir
 { MachineCall, vector_bytes, lane_bytes, machine_refusal } = gen.gen_ir_machine
 { Sys, Platform, constant_value } = gen.gen_sys
 { Code, decode, encode, size_of, minimum, maximum, ceiling, cell_size } = gen.gen_jit_decode
-{ Linked, invoke } = gen.gen_jit_extern
+{
+    Linked, invoke, entry_of, function_of, calls_back, install, cell_of, park,
+    pending, claim, BLOCK_INTS, BLOCK_FLOATS, BLOCK_WORD, BLOCK_FLOAT,
+    BLOCK_SAVED, SAVED_BYTES
+} = gen.gen_jit_extern
 { Image, compile } = gen.gen_jit_native
+{ runtime_value } = gen.gen_probe
+
+// The compiler's own errno is the one the program's C calls set: they run
+// in this process (gen_jit_extern).
+Errno = c.bind("errno.h", { errno: i32 })
 
 // How a run ended. `Returned` continues the caller; the others unwind to
 // the outermost call (or to a guarded call, for a trap).
@@ -80,7 +91,10 @@ need = (f: Func, instruction: Instruction) Res<str> {
     instruction.match({
         Host(_)            => Ok("JavaScript host calls"),
         Wait(_)            => Ok("JavaScript event waits"),
-        NativeConst(_)     => Ok("constants from C headers"),
+        NativeConst(v)     => runtime_value(v).match({
+            true  => None,
+            false => Ok("constants from C headers"),
+        }),
         NativeLayout(_)    => Ok("native C record layouts"),
         Foreign(call)      => (width(slot_ty(f, call.out)) > 8 || call.args.find((slot) { width(slot_ty(f, slot)) > 8 }).match({ Ok(_) => true, None => false })).match({
             true  => Ok("128-bit C arguments or results"),
@@ -191,7 +205,18 @@ execute* = (
                 native: native,
                 linked: linked
             );
+            // C re-enters through `reenter`, which finds the interpreter in
+            // a cell the parked caller keeps current.
+            cell = a.realloc<Interp>(null_ptr<Interp>(), 1).try();
+            (linked.state != 0).then(() {
+                install(
+                    linked,
+                    address_of(callback(reenter).to<u8>()),
+                    address_of(cell.to<u8>())
+                );
+            });
             result = (info == 0).match({ true => Ok(None), false => Ok(Ok(vm.main())) });
+            a.realloc<Interp>(cell, 0).try();
             native.close();
             result
         },
@@ -226,9 +251,26 @@ argv_block = (argv: Vec<str>, anonymous: i32) usize {
     at
 }
 
-// Code addresses are function numbers above this base: `InvokeAt` and the
-// guarded call map them back. Native entry addresses stay private to Image.
-CODE_BASE: usize = 1152921504606846976
+// C's call of a reverse stub while the interpreter is parked in a C call
+// (gen_jit_extern): run the function on the interpreter's own stack, with
+// the forward stub's frame saved around it, and leave the results in
+// `block`. An exit or trap inside the callback ends the process, as it
+// would in a native build.
+reenter = (block: Ptr<u8>, state: Ptr<u8>) {
+    at   = address_of(block);
+    cell = pointer_at(cell_of(address_of(state))).to<Interp>();
+    vm ::= cell.read(0);
+    move_bytes(at + BLOCK_SAVED, vm.linked.frame, SAVED_BYTES);
+    park(vm.linked.state, false);
+    vm.entered(load_usize(at), at, at + BLOCK_WORD).match({
+        Returned  => (),
+        Exited(n) => { exit_group(n); },
+        Trapped   => { exit_group(134); },
+    });
+    move_bytes(vm.linked.frame, at + BLOCK_SAVED, SAVED_BYTES);
+    cell.write(0, vm);
+    park(vm.linked.state, true);
+}
 
 Interp = {
     program: Program,
@@ -268,7 +310,7 @@ Interp = {
         entry    = self.program.entry;
         result   = self.top;
         self.top = self.top + 16;
-        self.invoke_at(CODE_BASE + entry, 0, 0, 0, result).match({
+        self.invoke_at(entry_of(self.linked, entry), 0, 0, 0, result).match({
             Trapped   => 134,
             Exited(n) => n,
             Returned  => {
@@ -342,16 +384,11 @@ Interp = {
     // A call through a code address with up to two word arguments.
     invoke_at = (self :: @Self, code: usize, count: usize, first: usize,
                  second: usize, out: usize) Outcome {
-        (code < CODE_BASE).match({
-            true  => self.fault(
+        self.function_at(code).match({
+            None      => self.fault(
                 "a call through an address that is not a function"
             ),
-            false => self.program.functions.get(code - CODE_BASE).match({
-                None  => self.fault(
-                    "a call through an address that is not a function"
-                ),
-                Ok(_) => {
-                    index = code - CODE_BASE;
+            Ok(index) => {
                     saved = self.top;
                     inner = self.push(index);
                     (inner == 0).match({
@@ -380,8 +417,150 @@ Interp = {
                         },
                     })
                 },
-            }),
         })
+    }
+
+    // The function a code address enters; None for any other address.
+    function_at = (self: @Self, code: usize) Res<usize> {
+        index = function_of(self.linked, code).try();
+        (index < self.program.functions.len).ensure().try();
+        Ok(index)
+    }
+
+    // Function `index` called from C with the argument registers saved at
+    // `block` (gen_jit_extern), its word result left at `out` and a float
+    // result at `block + BLOCK_FLOAT`.
+    entered = (self :: @Self, index: usize, block: usize, out: usize) Outcome {
+        self.program.functions.get(index).match({
+            None  => self.fault(
+                "a native callback of a function that does not exist"
+            ),
+            Ok(f) => {
+                ints   :: usize = 0;
+                floats :: usize = 0;
+                Range(0, f.parameters).loop((i) {
+                    float(slot_ty(f, i)).match({
+                        true  => { floats = floats + 1; },
+                        false => { ints = ints + 1; },
+                    });
+                });
+                (ints > 6 || floats > 8).match({
+                    true  => self.fault(
+                        "a native callback with arguments beyond the registers"
+                    ),
+                    false => {
+                        saved = self.top;
+                        inner = self.push(index);
+                        (inner == 0).match({
+                            true  => self.overflowed(),
+                            false => {
+                                ints   = 0;
+                                floats = 0;
+                                Range(0, f.parameters).loop((i) {
+                                    ty = slot_ty(f, i);
+                                    at = self.cell(index, inner, i);
+                                    float(ty).match({
+                                        true  => {
+                                            word = load_u64(
+                                                block + BLOCK_FLOATS + floats * 8
+                                            );
+                                            set_u64(at, ty.match({
+                                                F32 => word.bit_and(4294967295),
+                                                _   => word,
+                                            }));
+                                            floats = floats + 1;
+                                        },
+                                        false => {
+                                            set_u64(
+                                                at,
+                                                load_u64(
+                                                    block + BLOCK_INTS + ints * 8
+                                                )
+                                            );
+                                            extend(at, ty);
+                                            ints = ints + 1;
+                                        },
+                                    });
+                                });
+                                ended    = (self.native.entries.ptr().read(
+                                    index
+                                ) == 0).match({
+                                    true  => self.perform(index, inner, out),
+                                    false => self.run_native(index, inner, out),
+                                });
+                                self.top = saved;
+                                float(f.result).then(() { set_u64(block + BLOCK_FLOAT, load_u64(out)); });
+                                ended
+                            },
+                        })
+                    },
+                })
+            },
+        })
+    }
+
+    // Run the callbacks C deferred while the interpreter was not parked:
+    // a signal handler that arrived during interpreted code. Their results
+    // are discarded, as the stub already returned zero.
+    serve = (self :: @Self) Res<Outcome> {
+        ended :: Res<Outcome> = None;
+        pending(self.linked).then(() {
+            Range(0, self.program.functions.len).loop((k) {
+                ended.match({
+                    Ok(_) => (),
+                    None  => {
+                        record = claim(self.linked, k);
+                        (record != 0).then(() {
+                            outcome = self.entered(
+                                k,
+                                record,
+                                record + BLOCK_WORD
+                            );
+                            outcome.match({
+                                Returned => (),
+                                _        => { ended = Ok(outcome); },
+                            });
+                        });
+                    },
+                });
+            });
+        });
+        ended
+    }
+
+    // A C call. When C may call back, the interpreter is published in its
+    // cell and parked for the call, then takes back what a callback changed.
+    foreign = (self :: @Self, index: usize, f: Func, frame: usize,
+               call: ForeignCall) Res<Outcome> {
+        back  = calls_back(self.linked, f, call);
+        state = self.linked.state;
+        back.then(() {
+            pointer_at(cell_of(state)).to<Interp>().write(0, self);
+            park(state, true);
+        });
+        got = invoke(
+            self.linked,
+            self.linked.symbols.get(call.symbol).value_or(0),
+            f,
+            call,
+            (slot) { self.cell(index, frame, slot) }
+        );
+        back.then(() {
+            park(state, false);
+            vm        = pointer_at(cell_of(state)).to<Interp>().read(0);
+            self.held = vm.held;
+            self.word = vm.word;
+            self.text = vm.text;
+        });
+        out = self.cell(index, frame, call.out);
+        ty  = slot_ty(f, call.out);
+        ty.match({
+            Unit => (),
+            F64  => set_u64(out, got.float),
+            F32  => set_u64(out, got.float.bit_and(4294967295)),
+            _    => { set_u64(out, got.word); extend(out, ty); },
+        });
+        self.serve()
     }
 
     // Call sites consult the entry table directly so interpreted recursion
@@ -900,7 +1079,10 @@ Interp = {
                 );
                 None
             },
-            System(call)         => self.system(index, f, frame, call),
+            System(call)         => self.system(index, f, frame, call).match({
+                Ok(outcome) => Ok(outcome),
+                None        => self.serve(),
+            }),
             Startup(value)       => {
                 at = self.cell(index, frame, value.out);
                 set_usize(at, value.value.match({
@@ -941,7 +1123,12 @@ Interp = {
                 frame,
                 value
             ); None },
-            VolatileLoad(value)  => { self.load(index, f, frame, value); None },
+            VolatileLoad(value)  => { self.load(
+                index,
+                f,
+                frame,
+                value
+            ); self.serve() },
             VolatileStore(value) => { self.store(
                 index,
                 f,
@@ -959,7 +1146,12 @@ Interp = {
                 );
                 None
             },
-            AtomicLoad(value)    => { self.load(index, f, frame, value); None },
+            AtomicLoad(value)    => { self.load(
+                index,
+                f,
+                frame,
+                value
+            ); self.serve() },
             AtomicStore(value)   => { self.store(
                 index,
                 f,
@@ -976,21 +1168,21 @@ Interp = {
             CodeAddress(value)   => {
                 set_usize(
                     self.cell(index, frame, value.out),
-                    CODE_BASE + value.function
+                    entry_of(self.linked, value.function)
                 );
                 None
             },
             InvokeAt(call)       => {
                 code = self.value(index, frame, call.target);
-                (code < CODE_BASE).match({
-                    true  => Ok(self.fault(
+                self.function_at(code).match({
+                    None       => Ok(self.fault(
                         "a call through an address that is not a function"
                     )),
-                    false => {
+                    Ok(callee) => {
                         ended = self.invoke(
                             index,
                             frame,
-                            code - CODE_BASE,
+                            callee,
                             call.args,
                             self.cell(index, frame, call.out)
                         );
@@ -999,22 +1191,12 @@ Interp = {
                 })
             },
             Machine(call)        => self.machine(index, frame, call),
-            Foreign(call)        => {
-                got = invoke(
-                    self.linked,
-                    self.linked.symbols.get(call.symbol).value_or(0),
-                    f,
-                    call,
-                    (slot) { self.cell(index, frame, slot) }
-                );
-                out = self.cell(index, frame, call.out);
-                ty  = slot_ty(f, call.out);
-                ty.match({
-                    Unit => (),
-                    F64  => set_u64(out, got.float),
-                    F32  => set_u64(out, got.float.bit_and(4294967295)),
-                    _    => { set_u64(out, got.word); extend(out, ty); },
-                });
+            Foreign(call)        => self.foreign(index, f, frame, call),
+            // Only a runtime value is left unresolved by the probe.
+            NativeConst(value)   => {
+                at = self.cell(index, frame, value.out);
+                set_i64(at, Errno.errno.to_i64());
+                extend(at, slot_ty(f, value.out));
                 None
             },
             // The hidden fields of a native record start zero.

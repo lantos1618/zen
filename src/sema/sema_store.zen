@@ -101,15 +101,18 @@ finish_ownership* = (c :: Checker, first: usize) Res<AllocError> {
     c.use_bindings(saved);
 }
 
+// A body is scanned after the bodies it calls, so one outside any recursive
+// group is scanned once with final callee summaries; only the members of a
+// cycle iterate until their summaries stop growing.
 solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
-    work       ::= effects.alloc.Vec<BlockId>();
+    fresh      ::= effects.alloc.Vec<BlockId>();
     pending    ::= effects.alloc.Map<BlockId, bool>();
     dependents ::= effects.alloc.Map<BlockId, Vec<BlockId>>();
     c.own_checks.loop((job) {
         effects.rows.get(job.body).match({
             Ok(_) => (),
             None  => {
-                work.add(job.body).try();
+                fresh.add(job.body).try();
                 pending.set(job.body, true).try();
                 effects.rows.set(
                     job.body,
@@ -122,6 +125,7 @@ solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
             },
         });
     });
+    work   ::= callees_first(c, effects.alloc, fresh).try();
     cursor :: usize = 0;
     loop(() { cursor < work.len }, (h) {
         body   = work.get(cursor).ok_or(AllocError.OutOfMemory).try();
@@ -169,6 +173,163 @@ solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
         });
     });
     Ok
+}
+
+// `bodies` ordered so that every body follows the bodies it calls, except
+// inside a recursive group, whose members stay adjacent. The order is a
+// property of the call graph, so it is deterministic.
+callees_first = (c: Checker, a: Alloc, bodies: Vec<BlockId>)
+                Res<Vec<BlockId>, AllocError> {
+    index ::= a.Map<BlockId, usize>();
+    bodies.loop((h, i, body) { index.set(body, i).try(); });
+    edges ::= a.Vec<Vec<usize>>();
+    bodies.loop((body) {
+        scan ::= CalleeScan(check: c, index: index, out: a.Vec<usize>());
+        c.tree.walk(a, WalkNode.Block(body), scan).try();
+        edges.add(scan.out).try();
+    });
+    components = Components(a, edges).try();
+    order ::= a.Vec<BlockId>();
+    components.order.loop((i) {
+        order.add(bodies.get(i).ok_or(AllocError.OutOfMemory).try()).try();
+    });
+    Ok(order)
+}
+
+// The unsolved bodies a body calls, by their position in `index`.
+CalleeScan = { check: Checker, index: Map<BlockId, usize>, out :: Vec<usize> }
+
+CalleeScan.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id) => self.check.tree.expr_at(id).kind.match({
+                    Call(_) => {
+                        self.check.checked_call(id).when_ok((checked) {
+                            checked.body.when_ok((body) {
+                                self.index.get(body).when_ok((j) {
+                                    (!j.is_in(self.out)).then(() { self.out.add(j).try(); });
+                                });
+                            });
+                        });
+                        Ok
+                    },
+                    _       => Ok,
+                }),
+                _        => Ok,
+            }),
+            Leave(_)    => Ok,
+        })
+    }
+})
+
+// Tarjan's strongly connected components over `edges`, without recursion.
+// `order` lists every node; a component is complete before any component
+// that reaches it, so callees come first.
+Components = {
+    edges: Vec<Vec<usize>>,
+    number :: Vec<usize>,
+    low :: Vec<usize>,
+    on_stack :: Vec<bool>,
+    stack :: Vec<usize>,
+    frames :: Vec<Frame>,
+    next :: usize,
+    order :: Vec<usize>,
+
+    open = (self :: @Self, v: usize) Res<AllocError> {
+        self.next = self.next + 1;
+        self.number.set(v, self.next);
+        self.low.set(v, self.next);
+        self.on_stack.set(v, true);
+        self.stack.add(v).try();
+        self.frames.add(Frame(node: v, child: 0))
+    }
+
+    lower = (self :: @Self, v: usize, to: usize) {
+        (to < self.low.get(v).value_or(0)).then(() { self.low.set(v, to); });
+    }
+
+    // One step of the walk from the frame on top: follow the next edge, or
+    // retire the node and emit its component once it is the component root.
+    step = (self :: @Self) Res<AllocError> {
+        top   = self.frames.len - 1;
+        frame = self.frames.get(top).ok_or(AllocError.OutOfMemory).try();
+        out   = self.edges.get(frame.node).ok_or(AllocError.OutOfMemory).try();
+        out.get(frame.child).match({
+            Ok(w) => {
+                self.frames.set(
+                    top,
+                    Frame(node: frame.node, child: frame.child + 1)
+                );
+                (self.number.get(w).value_or(0) == 0).match({
+                    true  => self.open(w),
+                    false => {
+                        self.on_stack.get(w).value_or(false).then(() {
+                            self.lower(
+                                frame.node,
+                                self.number.get(w).value_or(0)
+                            );
+                        });
+                        Ok
+                    },
+                })
+            },
+            None  => {
+                self.frames.take(top).ok_or(AllocError.OutOfMemory).try();
+                v = frame.node;
+                (self.low.get(v).value_or(0) == self.number.get(v).value_or(0)).then(() {
+                    self.emit(v).try();
+                });
+                (self.frames.len > 0).then(() {
+                    parent = self.frames.get(self.frames.len - 1).ok_or(AllocError.OutOfMemory).try();
+                    self.lower(parent.node, self.low.get(v).value_or(0));
+                });
+                Ok
+            },
+        })
+    }
+
+    emit = (self :: @Self, root: usize) Res<AllocError> {
+        done ::= false;
+        loop(() { !done }, (h) {
+            w = self.stack.take(self.stack.len - 1).ok_or(AllocError.OutOfMemory).try();
+            self.on_stack.set(w, false);
+            self.order.add(w).try();
+            done = w == root;
+        });
+        Ok
+    }
+}
+
+Frame = { node: usize, child: usize }
+
+Components = (a: Alloc, edges: Vec<Vec<usize>>) Res<Components, AllocError> {
+    n = edges.len;
+    components ::= Components(
+        edges: edges,
+        number: a.Vec<usize>(),
+        low: a.Vec<usize>(),
+        on_stack: a.Vec<bool>(),
+        stack: a.Vec<usize>(),
+        frames: a.Vec<Frame>(),
+        next: 0,
+        order: a.Vec<usize>()
+    );
+    Range(0, n).loop((h, i) {
+        components.number.add(0).try();
+        components.low.add(0).try();
+        components.on_stack.add(false).try();
+    });
+    Range(0, n).loop((h, root) {
+        (components.number.get(root).value_or(0) == 0).then(() {
+            components.open(root).try();
+            loop(
+                () { components.frames.len > 0 },
+                (h) { components.step().try(); }
+            );
+        });
+    });
+    Ok(components)
 }
 
 // Written arguments are matched by parameter identity, including named

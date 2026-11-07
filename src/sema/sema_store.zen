@@ -14,7 +14,7 @@
 { TyId } = sema.sema_ty
 { member_type } = sema.sema_member
 { type_from_ast } = sema.sema_denote
-{ WalkVisitor, WalkEvent, WalkNode, walk } = std.ast
+{ WalkVisitor, WalkEvent, WalkNode, Walker, walk } = std.ast
 { Checker, Ctx, Binding, UNRESOLVED } = sema.sema_check
 { Own, check_own_body, store_origin, transfer_store_origin } = sema.sema_own
 { truncate } = sema.sema_check
@@ -101,15 +101,18 @@ finish_ownership* = (c :: Checker, first: usize) Res<AllocError> {
     c.use_bindings(saved);
 }
 
+// A body is scanned after the bodies it calls, so one outside any recursive
+// group is scanned once with final callee summaries; only the members of a
+// cycle iterate until their summaries stop growing.
 solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
-    work       ::= effects.alloc.Vec<BlockId>();
+    fresh      ::= effects.alloc.Vec<BlockId>();
     pending    ::= effects.alloc.Map<BlockId, bool>();
     dependents ::= effects.alloc.Map<BlockId, Vec<BlockId>>();
     c.own_checks.loop((job) {
         effects.rows.get(job.body).match({
             Ok(_) => (),
             None  => {
-                work.add(job.body).try();
+                fresh.add(job.body).try();
                 pending.set(job.body, true).try();
                 effects.rows.set(
                     job.body,
@@ -122,6 +125,12 @@ solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
             },
         });
     });
+    work   ::= callees_first(c, effects.alloc, fresh).try();
+    tables ::= effects.alloc.ScanTables(
+        c.tree.expr_ids(),
+        c.tree.block_ids()
+    ).try();
+    walker ::= Walker(c.tree, effects.alloc);
     cursor :: usize = 0;
     loop(() { cursor < work.len }, (h) {
         body   = work.get(cursor).ok_or(AllocError.OutOfMemory).try();
@@ -129,8 +138,9 @@ solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
         pending.set(body, false).try();
         summary = effects.rows.get(body).ok_or(AllocError.OutOfMemory).try();
         before  = return_count(summary.returns);
-        scan ::= effects.alloc.StoreScan(c, effects, summary).try();
-        c.tree.walk(effects.alloc, WalkNode.Block(body), scan).try();
+        tables.begin();
+        scan ::= effects.alloc.StoreScan(c, effects, summary, tables).try();
+        walker.walk(WalkNode.Block(body), scan).try();
         c.tail_expr(c.tree.block_at(body)).when_ok((value) {
             scan.summary.returns.include_return(
                 "",
@@ -153,6 +163,7 @@ solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
         // Type identities belong to this checker, not to one function scan.
         // Keep the grown cache descriptor when the scan retires.
         effects.plain = scan.effects.plain;
+        tables        = scan.tables;
         changed       = scan.summary.stores.len > summary.stores.len || return_count(
             scan.summary.returns
         ) > before;
@@ -171,12 +182,173 @@ solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
     Ok
 }
 
+// `bodies` ordered so that every body follows the bodies it calls, except
+// inside a recursive group, whose members stay adjacent. The order is a
+// property of the call graph, so it is deterministic.
+callees_first = (c: Checker, a: Alloc, bodies: Vec<BlockId>)
+                Res<Vec<BlockId>, AllocError> {
+    index ::= a.Map<BlockId, usize>();
+    bodies.loop((h, i, body) { index.set(body, i).try(); });
+    edges ::= a.Vec<Vec<usize>>();
+    bodies.loop((body) {
+        scan ::= CalleeScan(check: c, index: index, out: a.Vec<usize>());
+        c.tree.walk(a, WalkNode.Block(body), scan).try();
+        edges.add(scan.out).try();
+    });
+    components = Components(a, edges).try();
+    order ::= a.Vec<BlockId>();
+    components.order.loop((i) {
+        order.add(bodies.get(i).ok_or(AllocError.OutOfMemory).try()).try();
+    });
+    Ok(order)
+}
+
+// The unsolved bodies a body calls, by their position in `index`.
+CalleeScan = { check: Checker, index: Map<BlockId, usize>, out :: Vec<usize> }
+
+CalleeScan.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id) => self.check.tree.expr_at(id).kind.match({
+                    Call(_) => {
+                        self.check.checked_call(id).when_ok((checked) {
+                            checked.body.when_ok((body) {
+                                self.index.get(body).when_ok((j) {
+                                    (!j.is_in(self.out)).then(() { self.out.add(j).try(); });
+                                });
+                            });
+                        });
+                        Ok
+                    },
+                    _       => Ok,
+                }),
+                _        => Ok,
+            }),
+            Leave(_)    => Ok,
+        })
+    }
+})
+
+// Tarjan's strongly connected components over `edges`, without recursion.
+// `order` lists every node; a component is complete before any component
+// that reaches it, so callees come first.
+Components = {
+    edges: Vec<Vec<usize>>,
+    number :: Vec<usize>,
+    low :: Vec<usize>,
+    on_stack :: Vec<bool>,
+    stack :: Vec<usize>,
+    frames :: Vec<Frame>,
+    next :: usize,
+    order :: Vec<usize>,
+
+    open = (self :: @Self, v: usize) Res<AllocError> {
+        self.next = self.next + 1;
+        self.number.set(v, self.next);
+        self.low.set(v, self.next);
+        self.on_stack.set(v, true);
+        self.stack.add(v).try();
+        self.frames.add(Frame(node: v, child: 0))
+    }
+
+    lower = (self :: @Self, v: usize, to: usize) {
+        (to < self.low.get(v).value_or(0)).then(() { self.low.set(v, to); });
+    }
+
+    // One step of the walk from the frame on top: follow the next edge, or
+    // retire the node and emit its component once it is the component root.
+    step = (self :: @Self) Res<AllocError> {
+        top   = self.frames.len - 1;
+        frame = self.frames.get(top).ok_or(AllocError.OutOfMemory).try();
+        out   = self.edges.get(frame.node).ok_or(AllocError.OutOfMemory).try();
+        out.get(frame.child).match({
+            Ok(w) => {
+                self.frames.set(
+                    top,
+                    Frame(node: frame.node, child: frame.child + 1)
+                );
+                (self.number.get(w).value_or(0) == 0).match({
+                    true  => self.open(w),
+                    false => {
+                        self.on_stack.get(w).value_or(false).then(() {
+                            self.lower(
+                                frame.node,
+                                self.number.get(w).value_or(0)
+                            );
+                        });
+                        Ok
+                    },
+                })
+            },
+            None  => {
+                self.frames.take(top).ok_or(AllocError.OutOfMemory).try();
+                v = frame.node;
+                (self.low.get(v).value_or(0) == self.number.get(v).value_or(0)).then(() {
+                    self.emit(v).try();
+                });
+                (self.frames.len > 0).then(() {
+                    parent = self.frames.get(self.frames.len - 1).ok_or(AllocError.OutOfMemory).try();
+                    self.lower(parent.node, self.low.get(v).value_or(0));
+                });
+                Ok
+            },
+        })
+    }
+
+    emit = (self :: @Self, root: usize) Res<AllocError> {
+        done ::= false;
+        loop(() { !done }, (h) {
+            w = self.stack.take(self.stack.len - 1).ok_or(AllocError.OutOfMemory).try();
+            self.on_stack.set(w, false);
+            self.order.add(w).try();
+            done = w == root;
+        });
+        Ok
+    }
+}
+
+Frame = { node: usize, child: usize }
+
+Components = (a: Alloc, edges: Vec<Vec<usize>>) Res<Components, AllocError> {
+    n = edges.len;
+    components ::= Components(
+        edges: edges,
+        number: a.Vec<usize>(),
+        low: a.Vec<usize>(),
+        on_stack: a.Vec<bool>(),
+        stack: a.Vec<usize>(),
+        frames: a.Vec<Frame>(),
+        next: 0,
+        order: a.Vec<usize>()
+    );
+    Range(0, n).loop((h, i) {
+        components.number.add(0).try();
+        components.low.add(0).try();
+        components.on_stack.add(false).try();
+    });
+    Range(0, n).loop((h, root) {
+        (components.number.get(root).value_or(0) == 0).then(() {
+            components.open(root).try();
+            loop(
+                () { components.frames.len > 0 },
+                (h) { components.step().try(); }
+            );
+        });
+    });
+    Ok(components)
+}
+
 // Written arguments are matched by parameter identity, including named
 // arguments and an implicit receiver. Missing defaults carry no caller view.
 actual* = (c: Checker, id: ExprId, call: Call, f: Function, index: usize)
          Res<ExprId> {
-    signature  = c.checked_call(id).try().signature.try();
-    receiver   = signature.receiver;
+    argument(c.checked_call(id).try().signature.try().receiver, call, f, index)
+}
+
+// `actual` for a call whose checked receiver is already in hand.
+argument = (receiver: Res<ExprId>, call: Call, f: Function, index: usize)
+           Res<ExprId> {
     off: usize = receiver.match({ None => 0, Ok(_) => 1 });
     (index < off).match({
         true  => receiver,
@@ -451,6 +623,105 @@ transfer_call_stores* = (c :: Checker, own :: Own, id: ExprId, call: Call)
 }
 
 OriginBinding = { name: str, origins :: Vec<Source>, fields :: Vec<Returned>, target: Res<usize> }
+// The origins and field origins a scan computes per expression and per
+// block, indexed by node id. One table serves every scan of a solve: an
+// entry counts only when its stamp is the current scan's, so a scan never
+// reads what an earlier scan of the same body left.
+ScanTables = {
+    stamp :: usize,
+    values :: Vec<Vec<Source>>,
+    fields :: Vec<Vec<Returned>>,
+    expr_stamps :: Vec<usize>,
+    blocks :: Vec<Vec<Source>>,
+    block_fields :: Vec<Vec<Returned>>,
+    block_stamps :: Vec<usize>,
+
+    begin = (self :: @Self) { self.stamp = self.stamp + 1; }
+
+    current = (self: @Self, stamps: Vec<usize>, i: usize) bool {
+        stamps.get(i).value_or(0) == self.stamp
+    }
+
+    value = (self: @Self, id: ExprId, a: Alloc) Vec<Source> {
+        i = id.index.to_usize();
+        self.current(self.expr_stamps, i).match({
+            true  => self.values.get(i).value_or(a.Vec<Source>()),
+            false => a.Vec<Source>(),
+        })
+    }
+
+    field_value = (self: @Self, id: ExprId, a: Alloc) Vec<Returned> {
+        i = id.index.to_usize();
+        self.current(self.expr_stamps, i).match({
+            true  => self.fields.get(i).value_or(a.Vec<Returned>()),
+            false => a.Vec<Returned>(),
+        })
+    }
+
+    set_expr = (self :: @Self, id: ExprId, origins: Vec<Source>, fields: Vec<Returned>) {
+        i = id.index.to_usize();
+        self.values.set(i, origins);
+        self.fields.set(i, fields);
+        self.expr_stamps.set(i, self.stamp);
+    }
+
+    block = (self: @Self, id: BlockId, a: Alloc) Vec<Source> {
+        i = id.index.to_usize();
+        self.current(self.block_stamps, i).match({
+            true  => self.blocks.get(i).value_or(a.Vec<Source>()),
+            false => a.Vec<Source>(),
+        })
+    }
+
+    block_field = (self: @Self, id: BlockId, a: Alloc) Vec<Returned> {
+        i = id.index.to_usize();
+        self.current(self.block_stamps, i).match({
+            true  => self.block_fields.get(i).value_or(a.Vec<Returned>()),
+            false => a.Vec<Returned>(),
+        })
+    }
+
+    set_block = (self :: @Self, id: BlockId, origins: Vec<Source>, fields: Vec<Returned>) {
+        i = id.index.to_usize();
+        self.blocks.set(i, origins);
+        self.block_fields.set(i, fields);
+        self.block_stamps.set(i, self.stamp);
+    }
+}
+
+ScanTables = (
+    a      : Alloc,
+    exprs  : usize,
+    blocks : usize
+) Res<ScanTables, AllocError> {
+    tables ::= ScanTables(
+        stamp: 0,
+        values: a.Vec<Vec<Source>>(),
+        fields: a.Vec<Vec<Returned>>(),
+        expr_stamps: a.Vec<usize>(),
+        blocks: a.Vec<Vec<Source>>(),
+        block_fields: a.Vec<Vec<Returned>>(),
+        block_stamps: a.Vec<usize>()
+    );
+    tables.values.reserve(exprs).try();
+    tables.fields.reserve(exprs).try();
+    tables.expr_stamps.reserve(exprs).try();
+    Range(0, exprs).loop((h, i) {
+        tables.values.add(a.Vec<Source>()).try();
+        tables.fields.add(a.Vec<Returned>()).try();
+        tables.expr_stamps.add(0).try();
+    });
+    tables.blocks.reserve(blocks).try();
+    tables.block_fields.reserve(blocks).try();
+    tables.block_stamps.reserve(blocks).try();
+    Range(0, blocks).loop((h, i) {
+        tables.blocks.add(a.Vec<Source>()).try();
+        tables.block_fields.add(a.Vec<Returned>()).try();
+        tables.block_stamps.add(0).try();
+    });
+    Ok(tables)
+}
+
 StoreScan = {
     check :: Checker,
     effects :: StoreEffects,
@@ -458,10 +729,7 @@ StoreScan = {
     vars :: Vec<OriginBinding>,
     scopes :: Vec<usize>,
     dependencies :: Vec<BlockId>,
-    values :: Map<ExprId, Vec<Source>>,
-    blocks :: Map<BlockId, Vec<Source>>,
-    fields :: Map<ExprId, Vec<Returned>>,
-    block_fields :: Map<BlockId, Vec<Returned>>,
+    tables :: ScanTables,
     alloc: Alloc,
 
     binding = (self: @Self, name: str) Res<usize> {
@@ -474,11 +742,11 @@ StoreScan = {
     }
 
     origins = (self: @Self, id: ExprId) Vec<Source> {
-        self.values.get(id).value_or(self.alloc.Vec<Source>())
+        self.tables.value(id, self.alloc)
     }
 
     field_values = (self: @Self, id: ExprId) Vec<Returned> {
-        self.fields.get(id).value_or(self.alloc.Vec<Returned>())
+        self.tables.field_value(id, self.alloc)
     }
 
     projected = (self: @Self, id: ExprId, path: str) Res<Vec<Source>, AllocError> {
@@ -520,11 +788,11 @@ StoreScan = {
         })
     }
 
-    bound_sources = (self: @Self, id: ExprId, call: Call, function: Function, sources: Vec<Source>)
+    bound_sources = (self: @Self, receiver: Res<ExprId>, call: Call, function: Function, sources: Vec<Source>)
                     Res<Vec<Source>, AllocError> {
         bound ::= self.alloc.Vec<Source>();
         sources.loop((source) {
-            actual(self.check, id, call, function, source.parameter).when_ok((argument) {
+            argument(receiver, call, function, source.parameter).when_ok((argument) {
                 values = source.field.match({
                     None     => self.origins(argument),
                     Ok(path) => self.projected(argument, path).try(),
@@ -541,11 +809,11 @@ StoreScan = {
         Ok(bound)
     }
 
-    inherit_fields = (self: @Self, id: ExprId, call: Call, function: Function,
+    inherit_fields = (self: @Self, receiver: Res<ExprId>, call: Call, function: Function,
                       returned: Returned, fields :: Vec<Returned>) Res<AllocError> {
 returned.sources.loop((source) {
                             source.projectable.then(() {
-                                actual(self.check, id, call, function, source.parameter).when_ok((argument) {
+                                argument(receiver, call, function, source.parameter).when_ok((argument) {
                                     self.field_values(argument).loop((field) {
                                         suffix = source.field.match({
                                             None => Ok(field.field), Ok(path) => strip_path(field.field, path),
@@ -795,8 +1063,8 @@ returned.sources.loop((source) {
                 (e) { origins.merge(self.origins(e)).try(); }
             ),
             Block(b)      => {
-                origins.merge(self.blocks.get(b).value_or(self.alloc.Vec<Source>())).try();
-                fields = self.block_fields.get(b).value_or(self.alloc.Vec<Returned>());
+                origins.merge(self.tables.block(b, self.alloc)).try();
+                fields = self.tables.block_field(b, self.alloc);
             },
             Match(m)      => { m.arms.loop(
                 (arm) {
@@ -822,15 +1090,26 @@ returned.sources.loop((source) {
                 });
             },
             Call(call)    => {
-                self.check.checked_call(id).when_ok((checked) {
-                    checked.body.when_ok((body) {
+                checked                = self.check.checked_call(id);
+                receiver: Res<ExprId>  = checked.match({
+                    None     => None,
+                    Ok(seen) => seen.signature.match({ None => None, Ok(signature) => signature.receiver }),
+                });
+                selected: Res<Summary> = checked.match({
+                    None     => None,
+                    Ok(seen) => seen.body.match({ None => None, Ok(body) => self.effects.rows.get(
+                        body
+                    ) }),
+                });
+                checked.when_ok((seen) {
+                    seen.body.when_ok((body) {
                         (!body.is_in(self.dependencies)).then(() { self.dependencies.add(body).try(); });
                     });
                 });
-                self.effects.selected_summary(self.check, id).match({
+                selected.match({
                     Ok(summary) => summary.returns.loop((returned) {
                         sources = self.bound_sources(
-                            id,
+                            receiver,
                             call,
                             summary.function,
                             returned.sources
@@ -844,7 +1123,7 @@ returned.sources.loop((source) {
                             ),
                         }).try();
                         self.inherit_fields(
-                            id,
+                            receiver,
                             call,
                             summary.function,
                             returned,
@@ -904,10 +1183,10 @@ returned.sources.loop((source) {
                         }).try();
                     },
                 });
-                self.effects.selected_summary(self.check, id).when_ok((summary) {
+                selected.when_ok((summary) {
                     summary.stores.loop((effect) {
-                        actual(self.check, id, call, summary.function, effect.target).when_ok((target) {
-                            actual(self.check, id, call, summary.function, effect.source.parameter).when_ok((source) {
+                        argument(receiver, call, summary.function, effect.target).when_ok((target) {
+                            argument(receiver, call, summary.function, effect.source.parameter).when_ok((source) {
                                 sources = effect.source.field.match({
                                     None     => self.origins(source),
                                     Ok(path) => self.projected(
@@ -944,8 +1223,8 @@ returned.sources.loop((source) {
             origins = self.alloc.Vec<Source>();
             fields  = self.alloc.Vec<Returned>();
         });
-        self.fields.set(id, fields).try();
-        self.values.set(id, origins)
+        self.tables.set_expr(id, origins, fields);
+        Ok
     }
 }
 
@@ -988,17 +1267,17 @@ StoreScan.impl(WalkVisitor, {
                 },
                 Block(id)    => {
                     block = self.check.tree.block_at(id);
-                    self.blocks.set(
+                    self.tables.set_block(
                         id,
                         block.value.match({ None => self.alloc.Vec<Source>(), Ok(value) => self.origins(
                             value
-                        ) })
-                    ).try();
-                    self.block_fields.set(id, block.value.match({
-                        None => self.alloc.Vec<Returned>(), Ok(value) => self.field_values(
-                            value
-                        ),
-                    })).try();
+                        ) }),
+                        block.value.match({
+                            None => self.alloc.Vec<Returned>(), Ok(value) => self.field_values(
+                                value
+                            ),
+                        })
+                    );
                     truncate(
                         self.vars,
                         self.scopes.take(self.scopes.len - 1).ok_or(AllocError.OutOfMemory).try()
@@ -1010,7 +1289,13 @@ StoreScan.impl(WalkVisitor, {
     }
 })
 
-StoreScan = (a: Alloc, c: Checker, effects: StoreEffects, summary: Summary)
+StoreScan = (
+    a       : Alloc,
+    c       : Checker,
+    effects : StoreEffects,
+    summary : Summary,
+    tables  : ScanTables
+)
             Res<StoreScan, AllocError> {
     vars ::= a.Vec<OriginBinding>();
     summary.function.params.loop((h, i, p) {
@@ -1030,10 +1315,7 @@ StoreScan = (a: Alloc, c: Checker, effects: StoreEffects, summary: Summary)
         vars: vars,
         scopes: a.Vec<usize>(),
         dependencies: a.Vec<BlockId>(),
-        values: a.Map<ExprId, Vec<Source>>(),
-        blocks: a.Map<BlockId, Vec<Source>>(),
-        fields: a.Map<ExprId, Vec<Returned>>(),
-        block_fields: a.Map<BlockId, Vec<Returned>>(),
+        tables: tables,
         alloc: a
     ))
 }

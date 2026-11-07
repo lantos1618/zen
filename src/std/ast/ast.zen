@@ -29,4 +29,4 @@
 
 // Structural visitors preserve enclosing declarations, members, and blocks.
 { DeclParent*, DeclSite*, MemberParent*, MemberSite* } = std.ast.ast_walk
-{ DeclVisit*, MemberVisit*, StmtVisit*, WalkNode*, WalkEvent*, WalkVisitor*, walk* } = std.ast.ast_walk
+{ DeclVisit*, MemberVisit*, StmtVisit*, WalkNode*, WalkEvent*, WalkVisitor*, Walker*, walk* } = std.ast.ast_walk

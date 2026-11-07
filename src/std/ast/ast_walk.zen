@@ -42,29 +42,44 @@ walk* = (
     root    : WalkNode,
     visitor :: WalkVisitor
 ) Res<AllocError> {
-    walker ::= Walker(tree: tree, pending: alloc.Vec<WalkEvent>());
-    walker.node(root).try();
-    loop(() { walker.pending.len > 0 }, (h) {
-        walker.pending.take(walker.pending.len - 1).match({
-            None      => h.break(),
-            Ok(event) => {
-                visitor.visit(event).try();
-                event.match({
-                    Leave(_)    => (),
-                    Enter(node) => {
-                        walker.pending.add(WalkEvent.Leave(node)).try();
-                        first = walker.pending.len;
-                        walker.children(node).try();
-                        walker.reverse_children(first);
-                    },
-                });
-            },
-        });
-    });
-    Ok
+    walker ::= Walker(tree, alloc);
+    walker.walk(root, visitor)
 }
 
-Walker = { tree: Ast, pending :: Vec<WalkEvent> }
+// A walker keeps its event stack between walks, so a caller walking many
+// roots of one tree allocates it once.
+Walker* = {
+    tree: Ast,
+    pending :: Vec<WalkEvent>,
+
+    walk* = (self :: @Self, root: WalkNode, visitor :: WalkVisitor)
+            Res<AllocError> {
+        self.pending.clear();
+        self.node(root).try();
+        loop(() { self.pending.len > 0 }, (h) {
+            self.pending.take(self.pending.len - 1).match({
+                None      => h.break(),
+                Ok(event) => {
+                    visitor.visit(event).try();
+                    event.match({
+                        Leave(_)    => (),
+                        Enter(node) => {
+                            self.pending.add(WalkEvent.Leave(node)).try();
+                            first = self.pending.len;
+                            self.children(node).try();
+                            self.reverse_children(first);
+                        },
+                    });
+                },
+            });
+        });
+        Ok
+    }
+}
+
+Walker* = (tree: Ast, alloc: Alloc) Walker {
+    Walker(tree: tree, pending: alloc.Vec<WalkEvent>())
+}
 
 // Children are recorded in source order. Reverse only the new segment so the
 // LIFO event stack delivers them in that order before their parent's Leave.

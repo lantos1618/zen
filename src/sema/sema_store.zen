@@ -14,7 +14,7 @@
 { TyId } = sema.sema_ty
 { member_type } = sema.sema_member
 { type_from_ast } = sema.sema_denote
-{ WalkVisitor, WalkEvent, WalkNode, walk } = std.ast
+{ WalkVisitor, WalkEvent, WalkNode, Walker, walk } = std.ast
 { Checker, Ctx, Binding, UNRESOLVED } = sema.sema_check
 { Own, check_own_body, store_origin, transfer_store_origin } = sema.sema_own
 { truncate } = sema.sema_check
@@ -130,6 +130,7 @@ solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
         c.tree.expr_ids(),
         c.tree.block_ids()
     ).try();
+    walker ::= Walker(c.tree, effects.alloc);
     cursor :: usize = 0;
     loop(() { cursor < work.len }, (h) {
         body   = work.get(cursor).ok_or(AllocError.OutOfMemory).try();
@@ -139,7 +140,7 @@ solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
         before  = return_count(summary.returns);
         tables.begin();
         scan ::= effects.alloc.StoreScan(c, effects, summary, tables).try();
-        c.tree.walk(effects.alloc, WalkNode.Block(body), scan).try();
+        walker.walk(WalkNode.Block(body), scan).try();
         c.tail_expr(c.tree.block_at(body)).when_ok((value) {
             scan.summary.returns.include_return(
                 "",

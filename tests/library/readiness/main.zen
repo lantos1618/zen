@@ -21,6 +21,7 @@ Native = c.bind("probe.h", {
     fixture_block_open = () i32
     fixture_block_fd = (index: i32) i32
     fixture_block_fill = () i32
+    fixture_block_send = () i32
     fixture_block_half_close = () i32
     fixture_block_finish = () ()
 })
@@ -139,6 +140,21 @@ main = (env: Env) Res<AllocError | ReadinessError> {
     check(readiness.ready_slot(0).try() == 88, 50);
     readiness.remove(block).try();
     Native.fixture_block_finish();
+    // Write interest must not wake on ordinary readable data, only on writable
+    // or peer half-close (EOF).  With the send buffer full and the peer
+    // sending data (but not half-closing), wait must time out without
+    // delivering the watched slot.  A subsequent peer half-close must wake.
+    check(Native.fixture_block_open() == 1, 51);
+    block2 = Native.fixture_block_fd(0);
+    readiness.add(block2, 89, Interest.Write).try();
+    check(Native.fixture_block_fill() == 1, 52);
+    check(Native.fixture_block_send() == 1, 53);
+    check(ready_count(readiness.wait(100).try()) == 0, 54);
+    check(Native.fixture_block_half_close() == 1, 55);
+    check(ready_count(readiness.wait(1000).try()) > 0, 56);
+    check(readiness.ready_slot(0).try() == 89, 57);
+    readiness.remove(block2).try();
+    Native.fixture_block_finish();
     readiness.close(); readiness.close();
     check(Native.fixture_open(fd) == 1, 36);
     check(Native.fixture_fd_count() == before - 1, 37);
@@ -158,6 +174,6 @@ main = (env: Env) Res<AllocError | ReadinessError> {
     check(Native.fixture_fd_count() == before - 1, 43);
     Native.fixture_finish();
     println(
-        "PASS readiness read/write, identity, level triggering, timeout, interruption, modify/remove, EOF under read and write interest, invalid fd and close cleanup"
+        "PASS readiness read/write, identity, level triggering, timeout, interruption, modify/remove, EOF under read and write interest, no spurious write-interest data wake, invalid fd and close cleanup"
     );
 }

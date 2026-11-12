@@ -17,7 +17,9 @@ queue. This is a single-owner, single-thread API, not a concurrent registry.
 
 `add(fd, slot, Interest.Read|Write)` registers an arbitrary usize identity;
 `modify` changes that identity/interest, and `remove` unregisters a descriptor.
-Only one interest is enabled at a time. Explicitly remove a registration before
+Only one interest is enabled at a time; under Write interest a peer half-close
+(EOF on the read side) is also delivered so a full send buffer does not hang the
+waiter, but ordinary readable data is not. Explicitly remove a registration before
 closing a descriptor when duplicates can exist: Linux epoll tracks the underlying
 open file description, so closing one descriptor may leave events active until
 all duplicates are closed. Callers must track add versus modify: duplicate add and
@@ -51,8 +53,9 @@ actor I/O. Such integration needs a wake descriptor and explicit scheduling poli
 Validation: `python3 tests/library/readiness/run.py --zen ./zen --std src --ubsan`
 checks real socketpair read/write readiness, level triggering, identities, interest
 changes, unregister, timeout, signal interruption, EOF under read and write interest
-(including a peer half-close with the send buffer full, so EPOLLOUT is not pending),
-invalid arguments, close-on-exec and explicit/Drop cleanup. A corrupted slot
+(including a peer half-close with the send buffer full, so EPOLLOUT is not pending,
+and a peer data send under Write interest that must not wake the wait), invalid
+arguments, close-on-exec and explicit/Drop cleanup. A corrupted slot
 expectation must fail.
 EOF/error readiness is not a guarantee of a successful subsequent read or write.
 

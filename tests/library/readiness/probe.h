@@ -102,6 +102,16 @@ static int fixture_block_fill(void) {
         return 0;
     }
 }
+// Peer sends ordinary data (not a half-close) to the watched end's receive
+// buffer.  Under Write interest this must NOT wake the wait.
+static int fixture_block_send(void) {
+    static char data[44];
+    for (;;) {
+        ssize_t n = send(fixture_block_pair[1], data, sizeof(data), 0);
+        if (n < 0 && errno == EINTR) continue;
+        return n == (ssize_t)sizeof(data) ? 1 : 0;
+    }
+}
 static int fixture_block_half_close(void) {
     return shutdown(fixture_block_pair[1], SHUT_WR) == 0 ? 1 : 0;
 }
